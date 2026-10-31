@@ -42,8 +42,8 @@ install: build
 	rm -rf "$(INSTALL_DIR)/$(APP_NAME)"
 	ditto "$(RELEASE_APP)" "$(INSTALL_DIR)/$(APP_NAME)"
 	@# Make sure Finder loads the extension from the installed copy, not the build folder.
-	-pluginkit -r "$(abspath $(RELEASE_APP))/Contents/PlugIns/PrettyFolderFinder.appex" 2>/dev/null
-	-pluginkit -r "$(abspath $(DEBUG_APP))/Contents/PlugIns/PrettyFolderFinder.appex" 2>/dev/null
+	-@pluginkit -r "$(abspath $(RELEASE_APP))/Contents/PlugIns/PrettyFolderFinder.appex" 2>/dev/null
+	-@pluginkit -r "$(abspath $(DEBUG_APP))/Contents/PlugIns/PrettyFolderFinder.appex" 2>/dev/null
 	pluginkit -a "$(INSTALL_DIR)/$(APP_NAME)/Contents/PlugIns/PrettyFolderFinder.appex"
 	open "$(INSTALL_DIR)/$(APP_NAME)"
 	@echo "Installed $(INSTALL_DIR)/$(APP_NAME)"
@@ -55,8 +55,18 @@ uninstall:
 	rm -rf "$(INSTALL_DIR)/$(APP_NAME)"
 	@echo "Removed. Your settings and stored pictures are in ~/Library/Application Support/PrettyFolder."
 
-release: build
-	./Scripts/package-release.sh "$(RELEASE_APP)" "$(DIST)"
+# Built apart from your own copies, ad-hoc signed unless DEVELOPER_ID is set, and kept
+# out of Launch Services so Finder doesn't pick its extension up.
+DIST_DERIVED := build/Dist
+DIST_APP     := $(DIST_DERIVED)/Build/Products/Release/$(APP_NAME)
+LSREGISTER   := /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+release:
+	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -derivedDataPath $(DIST_DERIVED) \
+		CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build
+	-@$(LSREGISTER) -u "$(abspath $(DIST_APP))" 2>/dev/null
+	-@pluginkit -r "$(abspath $(DIST_APP))/Contents/PlugIns/PrettyFolderFinder.appex" 2>/dev/null
+	./Scripts/package-release.sh "$(DIST_APP)" "$(DIST)"
 
 icon:
 	swift Scripts/make-app-icon.swift App/Assets.xcassets/AppIcon.appiconset
