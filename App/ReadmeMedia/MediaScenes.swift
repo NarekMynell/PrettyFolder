@@ -64,9 +64,9 @@ extension Studio {
         let thumbnail = Scenery.thumbnail(of: duck, fitting: 96)
 
         // The badge, in each of its looks, where the app puts it for this folder.
-        // Grabbed near its bottom edge, so what's dragged rides above the pointer and the
-        // badge stays in sight.
-        let pressPoint = CGPoint(x: fileFrame.minX + 28, y: fileFrame.minY + 72)
+        // Grabbed by its bottom-right corner, so what's dragged rides up and to the left of
+        // the pointer and the badge's title stays in sight.
+        let pressPoint = CGPoint(x: fileFrame.minX + 86, y: fileFrame.minY + 74)
         let overFolder = CGPoint(x: frames[target].midX - 4, y: frames[target].midY + 8)
         let item = FinderItem(
             url: URL(fileURLWithPath: "/Debugging/"), layout: .icon,
@@ -87,7 +87,7 @@ extension Studio {
             badges[state] = sprite(of: host, size: badgeFrame.size)
         }
         let badgeInset = DropBadgeController.shadowMargin
-        let onBadge = CGPoint(x: badgeFrame.midX + 6, y: badgeFrame.midY + 1)
+        let onBadge = CGPoint(x: badgeFrame.minX + badgeInset + 18, y: badgeFrame.midY + 1)
 
         var path = PointerPath(start: CGPoint(x: 560, y: 380))
         path.move(to: pressPoint, from: 0.4, to: 1.2)
