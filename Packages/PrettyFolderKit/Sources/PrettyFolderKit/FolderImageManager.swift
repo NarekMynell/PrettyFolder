@@ -271,15 +271,18 @@ public actor FolderImageManager {
     }
 
     /// Forgets folders that were deleted or whose icon was changed by something else.
+    /// Folders that just can't be reached right now (a disk that isn't connected, a
+    /// location PrettyFolder may not read) are kept.
     public func prune() {
         var changed = false
         for record in library.records.values {
             guard let folder = resolve(record) else {
+                if Self.mightComeBack(record.lastKnownPath) { continue }
                 library.remove(record.id)
                 changed = true
                 continue
             }
-            if !isStillOurs(record, folder) {
+            if ownership(of: folder, by: record) == .theirs {
                 // Someone replaced or removed the icon; our marker is stale too.
                 if markerID(of: folder) == record.id {
                     ExtendedAttributes.remove(named: Self.markerAttribute, at: folder)
@@ -290,6 +293,15 @@ public actor FolderImageManager {
         }
         library.collectGarbage()
         if changed { persist() }
+    }
+
+    /// A folder that can't be found may still be fine: still at its old path, or on a
+    /// disk that isn't connected at the moment.
+    static func mightComeBack(_ path: String) -> Bool {
+        if FileManager.default.fileExists(atPath: path) { return true }
+        let parts = URL(fileURLWithPath: path).pathComponents
+        guard parts.count > 2, parts[1] == "Volumes" else { return false }
+        return !FileManager.default.fileExists(atPath: "/Volumes/" + parts[2])
     }
 
     // MARK: - Internals
@@ -361,11 +373,32 @@ public actor FolderImageManager {
         return record
     }
 
-    private func isStillOurs(_ record: FolderRecord, _ folder: URL) -> Bool {
-        guard FolderInspector.hasCustomIcon(folder), let resource = FolderInspector.iconResource(of: folder) else {
-            return false
+    private enum Ownership {
+        /// The folder shows exactly the icon PrettyFolder wrote.
+        case ours
+        /// The icon is gone or different: something else changed it.
+        case theirs
+        /// The folder can't be read right now; don't conclude anything.
+        case unknown
+    }
+
+    private func ownership(of folder: URL, by record: FolderRecord) -> Ownership {
+        switch FolderInspector.customIconFlag(folder) {
+        case nil:
+            return .unknown
+        case false?:
+            return .theirs
+        case true?:
+            guard let resource = FolderInspector.iconResource(of: folder) else {
+                let iconFileExists = FileManager.default.fileExists(atPath: FolderInspector.iconFileURL(for: folder).path)
+                return iconFileExists ? .unknown : .theirs
+            }
+            return Self.digest(resource) == record.iconDigest ? .ours : .theirs
         }
-        return Self.digest(resource) == record.iconDigest
+    }
+
+    private func isStillOurs(_ record: FolderRecord, _ folder: URL) -> Bool {
+        ownership(of: folder, by: record) == .ours
     }
 
     private func markerID(of folder: URL) -> UUID? {

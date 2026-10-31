@@ -35,12 +35,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !settings.hasCompletedWelcome {
             actions.showWelcome()
         }
-
-        // Forget folders that were deleted or changed elsewhere while the app was not running.
-        let manager = manager
-        Task.detached(priority: .background) {
-            await manager.prune()
-        }
     }
 
     /// Commands from the Finder extension arrive as `prettyfolder://` URLs.

@@ -191,6 +191,12 @@ import UniformTypeIdentifiers
         #expect(storedPictures().isEmpty)
     }
 
+    @Test func keepsFoldersOnDisksThatAreNotConnected() throws {
+        #expect(FolderImageManager.mightComeBack("/Volumes/Not Connected \(UUID().uuidString)/Photos"))
+        #expect(FolderImageManager.mightComeBack(temp.url.path))
+        #expect(!FolderImageManager.mightComeBack(temp.url.appendingPathComponent("gone").path))
+    }
+
     @Test func removeAllCleansUp() async throws {
         let folders = try ["One", "Two"].map { try temp.folder($0) }
         _ = await manager.apply(imageAt: picture, to: folders)

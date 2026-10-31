@@ -40,12 +40,23 @@ public enum FolderInspector {
 
     /// Whether Finder shows a custom icon for the folder (the `kHasCustomIcon` Finder flag).
     public static func hasCustomIcon(_ url: URL) -> Bool {
-        guard let info = ExtendedAttributes.value(named: "com.apple.FinderInfo", at: url), info.count >= 10 else {
+        customIconFlag(url) == true
+    }
+
+    /// Like `hasCustomIcon`, but `nil` when the folder can't be read right now
+    /// (no permission, disk going away), which is not the same as "no custom icon".
+    static func customIconFlag(_ url: URL) -> Bool? {
+        switch ExtendedAttributes.read(named: "com.apple.FinderInfo", at: url) {
+        case .missing:
             return false
+        case .unreadable:
+            return nil
+        case .value(let info):
+            guard info.count >= 10 else { return false }
+            // FinderInfo starts with a 16-byte FolderInfo; finderFlags is a big-endian UInt16 at offset 8.
+            let flags = UInt16(info[info.startIndex + 8]) << 8 | UInt16(info[info.startIndex + 9])
+            return flags & 0x0400 != 0
         }
-        // FinderInfo starts with a 16-byte FolderInfo; finderFlags is a big-endian UInt16 at offset 8.
-        let flags = UInt16(info[info.startIndex + 8]) << 8 | UInt16(info[info.startIndex + 9])
-        return flags & 0x0400 != 0
     }
 
     /// The hidden `Icon\r` file that holds a folder's custom icon.
@@ -61,16 +72,30 @@ public enum FolderInspector {
 
 /// Thin wrapper over the `xattr` system calls. Never follows symlinks.
 enum ExtendedAttributes {
-    static func value(named name: String, at url: URL) -> Data? {
-        url.withUnsafeFileSystemRepresentation { path -> Data? in
-            guard let path else { return nil }
+    enum Read {
+        case value(Data)
+        /// The item has no such attribute.
+        case missing
+        /// The item or attribute couldn't be read (permissions, the item is gone…).
+        case unreadable
+    }
+
+    static func read(named name: String, at url: URL) -> Read {
+        url.withUnsafeFileSystemRepresentation { path -> Read in
+            guard let path else { return .unreadable }
             let size = getxattr(path, name, nil, 0, 0, XATTR_NOFOLLOW)
-            guard size > 0 else { return nil }
+            if size < 0 { return errno == ENOATTR ? .missing : .unreadable }
+            guard size > 0 else { return .value(Data()) }
             var data = Data(count: size)
             let read = data.withUnsafeMutableBytes { getxattr(path, name, $0.baseAddress, size, 0, XATTR_NOFOLLOW) }
-            guard read >= 0 else { return nil }
-            return data.prefix(read)
+            guard read >= 0 else { return errno == ENOATTR ? .missing : .unreadable }
+            return .value(data.prefix(read))
         }
+    }
+
+    static func value(named name: String, at url: URL) -> Data? {
+        if case .value(let data) = read(named: name, at: url), !data.isEmpty { return data }
+        return nil
     }
 
     @discardableResult
