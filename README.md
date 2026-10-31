@@ -82,7 +82,7 @@ PrettyFolder starts at login and sits in the menu bar; the icon can be hidden in
 - The icon is written with `NSWorkspace.setIcon(_:forFile:options:)`, the same mechanism as pasting a picture in Get Info. Finder keeps it in a hidden `Icon\r` file inside the folder. Nothing is injected into Finder and no system files are touched.
 - The picture is drawn onto the system's own folder artwork at every icon size, so it matches the macOS version you run.
 - The drop badge and the tab button are small separate windows placed over Finder. PrettyFolder only observes mouse events, never alters them, and asks Finder through the Accessibility API which item is under the pointer.
-- The Finder extension is sandboxed; it only tells the app which folders were clicked.
+- The Finder extension is sandboxed; it only tells the app which folders were clicked. If any other app asks PrettyFolder to remove pictures, it asks you first.
 - A copy of each picture is kept in `~/Library/Application Support/PrettyFolder` so a folder's look can be changed later. If anything else changes a folder's icon, PrettyFolder leaves that folder alone.
 - No network access, no analytics.
 

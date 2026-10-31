@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var finderIntegration = FinderIntegration(actions: actions, settings: settings)
     private var statusItem: StatusItemController?
     private var isReady = false
-    private var queuedCommands: [FolderCommand] = []
+    private var queuedCommands: [(FolderCommand, fromOurExtension: Bool)] = []
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "App")
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -23,7 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         finderIntegration.start()
 
         isReady = true
-        queuedCommands.forEach(actions.handle)
+        for (command, fromOurExtension) in queuedCommands {
+            actions.handle(command, fromOurExtension: fromOurExtension)
+        }
         queuedCommands.removeAll()
 
         if !settings.hasLaunchedBefore {
@@ -39,17 +41,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Commands from the Finder extension arrive as `prettyfolder://` URLs.
     func application(_ application: NSApplication, open urls: [URL]) {
+        let fromOurExtension = Self.requestCameFromOurExtension()
         for url in urls {
             guard let command = FolderCommand(url: url) else {
                 log.notice("Ignoring URL \(url.absoluteString, privacy: .private)")
                 continue
             }
             if isReady {
-                actions.handle(command)
+                actions.handle(command, fromOurExtension: fromOurExtension)
             } else {
-                queuedCommands.append(command)
+                queuedCommands.append((command, fromOurExtension))
             }
         }
+    }
+
+    /// Whether the URL being handled was sent by PrettyFolder's own Finder extension, as
+    /// opposed to any other app or a web page (the URL scheme is public). Decided by the
+    /// sending process, which the system attaches to the event and which can't be faked.
+    private static func requestCameFromOurExtension() -> Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              let pid = event.attributeDescriptor(forKeyword: AEKeyword(keySenderPIDAttr))?.int32Value,
+              let sender = NSRunningApplication(processIdentifier: pid)?.bundleURL?.standardizedFileURL.path,
+              let plugIns = Bundle.main.builtInPlugInsURL?.standardizedFileURL.path
+        else { return false }
+        return sender.hasPrefix(plugIns + "/")
     }
 
     /// Opening the app again (from Finder, Spotlight, the Dock) shows Settings.

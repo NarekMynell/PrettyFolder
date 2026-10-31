@@ -21,14 +21,32 @@ final class FolderActions {
         self.settings = settings
     }
 
-    func handle(_ command: FolderCommand) {
-        log.info("Command \(command.action.rawValue, privacy: .public) for \(command.folders.count) folder(s)")
+    /// Runs a `prettyfolder://` command. Commands that only open a window run whoever
+    /// sent them; removing pictures asks first unless the Finder extension sent it.
+    func handle(_ command: FolderCommand, fromOurExtension: Bool) {
+        log.info("Command \(command.action.rawValue, privacy: .public) for \(command.folders.count) folder(s), from the extension: \(fromOurExtension)")
         switch command.action {
         case .chooseImage: chooseImage(for: command.folders)
-        case .removeImage: removeImage(from: command.folders)
+        case .removeImage:
+            if fromOurExtension || confirmRemovalRequestedElsewhere(command.folders) {
+                removeImage(from: command.folders)
+            }
         case .adjust: command.folders.first.map(adjust)
         case .settings: showSettings()
         }
+    }
+
+    private func confirmRemovalRequestedElsewhere(_ folders: [URL]) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = folders.count == 1
+            ? String(localized: "Remove the picture from “\(FileManager.default.displayName(atPath: folders[0].path))”?")
+            : String(localized: "Remove the pictures from \(folders.count) folders?")
+        alert.informativeText = String(localized: "Another app asked PrettyFolder to do this. The folders go back to the standard icon.")
+        alert.addButton(withTitle: String(localized: "Remove"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.layout()
+        AppActivation.bringToFront(alert.window)
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     // MARK: - Pictures
