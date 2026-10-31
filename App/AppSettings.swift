@@ -10,9 +10,10 @@ final class AppSettings {
     private enum Key {
         static let defaultStyle = "DefaultStyle"
         static let showsDropTarget = "ShowsDropTarget"
+        static let showsHoverButtons = "ShowsHoverButtons"
+        /// What the hover buttons' setting was called when there was a single tab button.
         static let opensPickerFromTab = "OpensPickerFromTab"
         static let showsMenuBarIcon = "ShowsMenuBarIcon"
-        static let hasCompletedWelcome = "HasCompletedWelcome"
         static let hasLaunchedBefore = "HasLaunchedBefore"
         static let lastPictureFolder = "LastPictureFolder"
     }
@@ -31,17 +32,13 @@ final class AppSettings {
         didSet { defaults.set(showsDropTarget, forKey: Key.showsDropTarget) }
     }
 
-    /// Clicking a folder's tab opens the picture picker.
-    var opensPickerFromTab: Bool {
-        didSet { defaults.set(opensPickerFromTab, forKey: Key.opensPickerFromTab) }
+    /// Buttons along the top of a folder's icon while the pointer is over it.
+    var showsHoverButtons: Bool {
+        didSet { defaults.set(showsHoverButtons, forKey: Key.showsHoverButtons) }
     }
 
     var showsMenuBarIcon: Bool {
         didSet { defaults.set(showsMenuBarIcon, forKey: Key.showsMenuBarIcon) }
-    }
-
-    var hasCompletedWelcome: Bool {
-        didSet { defaults.set(hasCompletedWelcome, forKey: Key.hasCompletedWelcome) }
     }
 
     /// `false` only on the very first launch.
@@ -58,15 +55,14 @@ final class AppSettings {
         self.defaults = defaults
         defaults.register(defaults: [
             Key.showsDropTarget: true,
-            Key.opensPickerFromTab: true,
+            Key.showsHoverButtons: defaults.object(forKey: Key.opensPickerFromTab) as? Bool ?? true,
             Key.showsMenuBarIcon: true,
         ])
         defaultStyle = defaults.data(forKey: Key.defaultStyle)
             .flatMap { try? JSONDecoder().decode(IconStyle.self, from: $0) } ?? .standard
         showsDropTarget = defaults.bool(forKey: Key.showsDropTarget)
-        opensPickerFromTab = defaults.bool(forKey: Key.opensPickerFromTab)
+        showsHoverButtons = defaults.bool(forKey: Key.showsHoverButtons)
         showsMenuBarIcon = defaults.bool(forKey: Key.showsMenuBarIcon)
-        hasCompletedWelcome = defaults.bool(forKey: Key.hasCompletedWelcome)
         hasLaunchedBefore = defaults.bool(forKey: Key.hasLaunchedBefore)
         lastPictureFolder = defaults.string(forKey: Key.lastPictureFolder).map { URL(fileURLWithPath: $0, isDirectory: true) }
     }

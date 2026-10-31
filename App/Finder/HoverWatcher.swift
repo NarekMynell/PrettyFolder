@@ -1,34 +1,40 @@
 import AppKit
+import PrettyFolderKit
 import os
 
-/// Shows the tab button when the pointer rests on a folder's tab in Finder.
+/// Shows the buttons on a folder while the pointer is over its icon, in Finder's icon
+/// view and on the Desktop.
 ///
 /// Finder is only asked what is under the pointer when the pointer slows down over one
-/// of its windows; while it travels, or sits anywhere else, nothing happens at all.
-final class TabWatcher {
+/// of its windows; while it travels, or sits anywhere else, nothing happens at all. Once
+/// a folder is found, moving around on its icon needs no more questions.
+final class HoverWatcher {
     /// Faster than this (points per second) the pointer is travelling, not aiming.
     private static let aimingSpeed: CGFloat = 900
     private static let queryInterval: TimeInterval = 0.05
-    /// How long a looked-up icon frame is trusted (Finder can rearrange without any input).
-    private static let cacheLifetime: TimeInterval = 1.0
+    /// Icons smaller than this are too small to carry the buttons.
+    private static let smallestIcon: CGFloat = 32
 
     private let finder: FinderProcess
     private let accessibility: FinderAccessibility
-    private let badge: TabBadgeController
-    private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Tab")
+    private let buttons: HoverButtonsController
+    private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Hover")
 
     private var monitors: [Any] = []
     private var lastMove: (point: NSPoint, time: TimeInterval)?
-    private var cached: (item: FinderItem, frame: NSRect, time: TimeInterval)?
+    /// The folder whose icon the pointer is over, and that icon's area on screen.
+    private var hovered: (item: FinderItem, zone: NSRect)?
     private var queryInFlight = false
     private var pendingPoint: NSPoint?
     private var lastQueryTime: TimeInterval = 0
     private var settleTask: Task<Void, Never>?
+    private var showTask: Task<Void, Never>?
 
-    init(finder: FinderProcess, accessibility: FinderAccessibility, badge: TabBadgeController) {
+    init(finder: FinderProcess, accessibility: FinderAccessibility, buttons: HoverButtonsController) {
         self.finder = finder
         self.accessibility = accessibility
-        self.badge = badge
+        self.buttons = buttons
+        buttons.onExit = { [weak self] in self?.pointerMoved() }
     }
 
     var isRunning: Bool { !monitors.isEmpty }
@@ -56,10 +62,11 @@ final class TabWatcher {
     }
 
     private func reset() {
-        cached = nil
+        hovered = nil
         pendingPoint = nil
         settleTask?.cancel()
-        badge.hide()
+        showTask?.cancel()
+        buttons.hide()
     }
 
     private func pointerMoved() {
@@ -67,21 +74,13 @@ final class TabWatcher {
         let now = ProcessInfo.processInfo.systemUptime
         defer { lastMove = (point, now) }
 
-        if badge.isVisible {
-            if badge.contains(point) { return }
-            badge.hide()
-        }
+        // Still on the same folder, or on its buttons: nothing to ask.
+        if buttons.contains(point) { return }
+        if let hovered, hovered.zone.contains(point) { return }
 
-        if let cached, now - cached.time < Self.cacheLifetime, cached.frame.contains(point) {
-            // Still over the same folder icon: decide without asking Finder, unless the
-            // pointer just entered the tab, which is worth a fresh look.
-            if TabBadgeController.tabZone(for: cached.item).contains(point) {
-                pendingPoint = point
-                queryIfPossible()
-            }
-            return
-        }
-        cached = nil
+        hovered = nil
+        showTask?.cancel()
+        buttons.hide()
 
         settleTask?.cancel()
         if let last = lastMove, now > last.time {
@@ -126,16 +125,25 @@ final class TabWatcher {
         queryInFlight = false
         log.debug("Under the pointer: \(item?.url.lastPathComponent ?? "nothing", privacy: .private), \(item.map { "\($0.layout)" } ?? "-", privacy: .public) layout, plain folder \(item?.isPlainFolder ?? false), \(item?.iconFrame.width ?? 0) pt")
         defer { queryIfPossible() }
-        // Small icons have a tab too thin to aim at; list and column views are skipped.
-        guard let item, item.layout == .icon, item.isPlainFolder, item.iconFrame.width >= 32 else {
-            cached = nil
-            return
-        }
-        let frame = ScreenSpace.appKitRect(item.iconFrame)
-        cached = (item, frame, ProcessInfo.processInfo.systemUptime)
-        let point = NSEvent.mouseLocation
-        if NSEvent.pressedMouseButtons == 0, frame.contains(point), TabBadgeController.tabZone(for: item).contains(point) {
-            badge.show(for: item)
+        // List and column views are left alone: their icons are too small for buttons.
+        guard let item, item.layout == .icon, item.isPlainFolder, item.iconFrame.width >= Self.smallestIcon else { return }
+        let zone = ScreenSpace.appKitRect(item.iconFrame)
+        guard NSEvent.pressedMouseButtons == 0, zone.contains(NSEvent.mouseLocation) else { return }
+        if hovered?.item == item, buttons.isVisible { return }
+        hovered = (item, zone)
+
+        let url = item.url
+        showTask?.cancel()
+        showTask = Task { [weak self] in
+            // Only a picture from PrettyFolder gets a remove button. A quick look, but still
+            // a look at the disk, so not on the main thread.
+            let canRemove = await Task.detached(priority: .userInitiated) {
+                FolderImageManager.appearsToHavePicture(url)
+            }.value
+            guard !Task.isCancelled, let self, let hovered = self.hovered, hovered.item.url == url,
+                  NSEvent.pressedMouseButtons == 0, hovered.zone.contains(NSEvent.mouseLocation)
+            else { return }
+            self.buttons.show(for: hovered.item, canRemove: canRemove)
         }
     }
 }

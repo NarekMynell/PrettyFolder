@@ -11,9 +11,9 @@ public struct FolderCommand: Equatable, Sendable {
         case chooseImage = "choose"
         /// Put the folders back to the standard icon.
         case removeImage = "remove"
-        /// Open the per-folder look editor.
+        /// Open the app's window for the folders: their picture, its place and its scaling.
         case adjust = "adjust"
-        /// Open the app settings (the default look lives there).
+        /// Open the app's window without a folder: the default look and the settings.
         case settings = "settings"
 
         /// Whether the action makes sense without any folder attached.

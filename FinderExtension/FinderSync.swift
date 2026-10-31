@@ -4,7 +4,7 @@ import PrettyFolderIPC
 import UniformTypeIdentifiers
 import os
 
-/// Adds the folder picture items to Finder's right-click menu and toolbar button.
+/// Adds Folder Picture… to Finder's right-click menu and to its optional toolbar button.
 ///
 /// The extension is sandboxed and never touches folders itself: it tells the app which
 /// folders were clicked, and the app does the work.
@@ -42,43 +42,23 @@ nonisolated final class FinderSync: FIFinderSync, @unchecked Sendable {
 
     @MainActor
     private func buildMenu(for menuKind: FIMenuKind, folders: [URL]) -> NSMenu? {
-        let menu = NSMenu(title: "")
         let tag = menuKind.rawValue
-
-        guard !folders.isEmpty else {
-            // The toolbar button with nothing selected still offers the settings.
-            guard menuKind == .toolbarItemMenu else { return nil }
+        let menu = NSMenu(title: "")
+        if !folders.isEmpty {
+            // One item; the window it opens has everything else.
+            menu.addItem(item(String(localized: "Folder Picture…"), #selector(openFolders(_:)), symbol: "photo.on.rectangle.angled", tag: tag))
+        } else if menuKind == .toolbarItemMenu {
+            // The toolbar button with nothing to work on still opens the window.
             menu.addItem(item(String(localized: "PrettyFolder Settings…"), #selector(openSettings(_:)), symbol: "gearshape", tag: tag))
-            return menu
+        } else {
+            return nil
         }
-
-        let single = folders.count == 1
-        menu.addItem(item(
-            single ? String(localized: "Choose Folder Picture…") : String(localized: "Choose Picture for \(folders.count) Folders…"),
-            #selector(choosePicture(_:)), symbol: "photo.badge.plus", tag: tag
-        ))
-        menu.addItem(item(
-            single ? String(localized: "Remove Folder Picture") : String(localized: "Remove Pictures from \(folders.count) Folders"),
-            #selector(removePicture(_:)), symbol: "xmark.circle", tag: tag
-        ))
-
-        let options = NSMenu(title: "")
-        if single {
-            options.addItem(item(String(localized: "Adjust This Folder's Look…"), #selector(adjust(_:)), symbol: "crop", tag: tag))
-        }
-        options.addItem(item(String(localized: "Default Look & Settings…"), #selector(openSettings(_:)), symbol: "gearshape", tag: tag))
-        let optionsItem = NSMenuItem(title: String(localized: "Folder Picture Options"), action: nil, keyEquivalent: "")
-        optionsItem.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: nil)
-        optionsItem.submenu = options
-        menu.addItem(optionsItem)
         return menu
     }
 
     // Finder Sync delivers menu actions on its own XPC queue, not the main thread,
     // with a copy of the menu item; only its tag is read, through plain KVC.
-    @objc private func choosePicture(_ sender: Any?) { send(.chooseImage, menuTag: Self.tag(of: sender)) }
-    @objc private func removePicture(_ sender: Any?) { send(.removeImage, menuTag: Self.tag(of: sender)) }
-    @objc private func adjust(_ sender: Any?) { send(.adjust, menuTag: Self.tag(of: sender)) }
+    @objc private func openFolders(_ sender: Any?) { send(.adjust, menuTag: Self.tag(of: sender)) }
     @objc private func openSettings(_ sender: Any?) { send(.settings, menuTag: Self.tag(of: sender)) }
 
     private static func tag(of sender: Any?) -> Int {
@@ -100,13 +80,10 @@ nonisolated final class FinderSync: FIFinderSync, @unchecked Sendable {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        if action != .removeImage {
-            // Finder is in front; let the app come forward with its window.
-            onMain { NSApplication.shared.yieldActivation(toApplicationWithBundleIdentifier: Self.appIdentifier) }
-        }
+        // Finder is in front; let the app come forward with its window.
+        onMain { NSApplication.shared.yieldActivation(toApplicationWithBundleIdentifier: Self.appIdentifier) }
         let configuration = NSWorkspace.OpenConfiguration()
-        // Removing is instant and needs no window; everything else shows one.
-        configuration.activates = action != .removeImage
+        configuration.activates = true
         configuration.addsToRecentItems = false
         NSWorkspace.shared.open([command.url], withApplicationAt: appURL, configuration: configuration) { [log] _, error in
             if let error {

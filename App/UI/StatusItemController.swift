@@ -1,7 +1,7 @@
 import AppKit
 import Observation
 
-/// The menu bar icon. Optional: it can be hidden in Settings.
+/// The menu bar icon. Optional: it can be hidden in the settings.
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let actions: FolderActions
     private let settings: AppSettings
@@ -53,12 +53,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(MenuActionItem.make(title: String(localized: "Turn On the Finder Menu…"), handler: { finderExtension.enable() }))
         }
         if !permission.isGranted {
-            menu.addItem(MenuActionItem.make(title: String(localized: "Allow Accessibility for Drag and Tab…"), handler: { permission.request() }))
+            menu.addItem(MenuActionItem.make(title: String(localized: "Allow Accessibility…"), handler: { permission.request() }))
         }
         if menu.numberOfItems > 0 { menu.addItem(.separator()) }
 
-        menu.addItem(MenuActionItem.make(title: String(localized: "Settings…"), keyEquivalent: ",") { [weak self] in self?.actions.showSettings() })
-        menu.addItem(MenuActionItem.make(title: String(localized: "Welcome & How to Use")) { [weak self] in self?.actions.showWelcome() })
+        menu.addItem(MenuActionItem.make(title: String(localized: "Settings…"), keyEquivalent: ",") { [weak self] in self?.actions.showEditor() })
         menu.addItem(.separator())
         menu.addItem(MenuActionItem.make(title: String(localized: "Quit PrettyFolder"), keyEquivalent: "q") { NSApp.terminate(nil) })
     }
@@ -98,5 +97,30 @@ private extension NSMenu {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.submenu = submenu
         addItem(item)
+    }
+}
+
+/// Menu items that run a closure, so small menus need no target objects.
+enum MenuActionItem {
+    static func make(title: String, keyEquivalent: String = "", handler: @escaping () -> Void) -> NSMenuItem {
+        let target = ClosureTarget(handler)
+        let item = NSMenuItem(title: title, action: #selector(ClosureTarget.run(_:)), keyEquivalent: keyEquivalent)
+        item.target = target
+        // `target` is weak; the represented object keeps the closure alive with the item.
+        item.representedObject = target
+        return item
+    }
+}
+
+/// An Objective-C target that calls a closure.
+final class ClosureTarget: NSObject {
+    private let handler: () -> Void
+
+    init(_ handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+
+    @objc func run(_ sender: Any?) {
+        handler()
     }
 }

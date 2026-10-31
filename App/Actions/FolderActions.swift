@@ -5,15 +5,13 @@ import UniformTypeIdentifiers
 import os
 
 /// Everything the user can do, whichever way they asked: right-click menu, drop badge,
-/// tab button, menu bar or settings.
+/// the buttons on folders, the menu bar or the window.
 final class FolderActions {
     let manager: FolderImageManager
     let settings: AppSettings
 
     private let picker = PicturePicker()
-    private var lookWindows: [String: FolderLookWindowController] = [:]
-    private var settingsWindow: SettingsWindowController?
-    private var welcomeWindow: WelcomeWindowController?
+    private var editor: EditorWindowController?
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Actions")
 
     init(manager: FolderImageManager, settings: AppSettings) {
@@ -31,8 +29,8 @@ final class FolderActions {
             if fromOurExtension || confirmRemovalRequestedElsewhere(command.folders) {
                 removeImage(from: command.folders)
             }
-        case .adjust: command.folders.first.map(adjust)
-        case .settings: showSettings()
+        case .adjust: showEditor(for: command.folders)
+        case .settings: showEditor()
         }
     }
 
@@ -49,28 +47,67 @@ final class FolderActions {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
+    // MARK: - The window
+
+    /// Opens the window for `folders`. Without folders it comes up as it was left, or
+    /// with the default look.
+    func showEditor(for folders: [URL] = []) {
+        let eligible = folders.isEmpty ? [] : checked(folders)
+        guard folders.isEmpty || !eligible.isEmpty else { return }
+        let controller = editor ?? EditorWindowController(actions: self)
+        editor = controller
+        controller.show(folders: eligible)
+    }
+
+    /// Keeps the window up to date when folders it shows change some other way.
+    func picturesChanged(_ folders: [URL]) {
+        editor?.model.reload(ifShowing: folders)
+    }
+
     // MARK: - Pictures
 
-    func chooseImage(for folders: [URL]) {
+    /// Asks for a picture and puts it on `folders`. With a window, the picker is a sheet
+    /// on it; without one (the buttons on a folder), focus goes back to Finder afterwards.
+    func chooseImage(for folders: [URL], attachedTo window: NSWindow? = nil) {
         let eligible = checked(folders)
         guard !eligible.isEmpty else { return }
-        let returnTo = frontmostOtherApp()
-        let offerRemove = eligible.contains(where: FolderInspector.hasCustomIcon)
-        picker.pick(for: eligible, startingIn: settings.lastPictureFolder, offerRemove: offerRemove) { [weak self] result in
+        let returnTo = window == nil ? frontmostOtherApp() : nil
+        let message = eligible.count == 1
+            ? String(localized: "Choose a picture for “\(FileManager.default.displayName(atPath: eligible[0].path))”.")
+            : String(localized: "Choose a picture for \(eligible.count) folders.")
+        picker.pick(message: message, prompt: String(localized: "Use Picture"), startingIn: settings.lastPictureFolder, attachedTo: window) { [weak self] url in
             guard let self else { return }
-            switch result {
-            case .picture(let url):
-                self.settings.lastPictureFolder = url.deletingLastPathComponent()
-                Task {
-                    let outcomes = await self.manager.apply(imageAt: url, to: eligible)
-                    self.finish(outcomes, returningTo: returnTo)
-                }
-            case .remove:
-                self.removeImage(from: eligible, returningTo: returnTo)
-            case .cancelled:
-                self.giveFocusBack(to: returnTo)
+            guard let url else {
+                giveFocusBack(to: returnTo)
+                return
+            }
+            settings.lastPictureFolder = url.deletingLastPathComponent()
+            Task {
+                let outcomes = await self.manager.apply(imageAt: url, to: eligible)
+                self.picturesChanged(eligible)
+                self.finish(outcomes, returningTo: returnTo)
             }
         }
+    }
+
+    /// Asks for a picture to preview the default look with. Nothing on disk changes.
+    func choosePreviewPicture(attachedTo window: NSWindow?, completion: @escaping (SourceImage) -> Void) {
+        picker.pick(
+            message: String(localized: "Preview the default look with one of your pictures."),
+            prompt: String(localized: "Preview"),
+            startingIn: settings.lastPictureFolder,
+            attachedTo: window
+        ) { url in
+            guard let url, let picture = PreviewPicture.load(url) else { return }
+            completion(picture)
+        }
+    }
+
+    /// Puts the picture in a file on `folders`, reporting any failure.
+    func apply(imageAt url: URL, to folders: [URL]) async {
+        let outcomes = await manager.apply(imageAt: url, to: folders)
+        picturesChanged(folders)
+        report(outcomes)
     }
 
     /// Applies a dropped picture. Returns whether it worked, for the badge to show.
@@ -91,6 +128,7 @@ final class FolderActions {
             }
             outcomes = await manager.apply(imageAt: url, to: [folder])
         }
+        picturesChanged([folder])
         let succeeded = outcomes.allSatisfy(\.succeeded)
         if !succeeded {
             // Let the badge show its failure first, then explain.
@@ -103,56 +141,23 @@ final class FolderActions {
     }
 
     func removeImage(from folders: [URL]) {
-        removeImage(from: folders, returningTo: nil)
-    }
-
-    private func removeImage(from folders: [URL], returningTo app: NSRunningApplication?) {
         Task {
             let outcomes = await manager.removeImage(from: folders)
-            for folder in folders { lookWindows[folder.standardizedFileURL.path]?.close() }
-            finish(outcomes, returningTo: app)
+            picturesChanged(folders)
+            report(outcomes)
         }
     }
 
-    func adjust(_ folder: URL) {
-        Task {
-            if let look = await manager.look(for: folder) {
-                showLookWindow(for: look)
-            } else if !checked([folder]).isEmpty {
-                // Nothing to adjust yet: start with a picture.
-                chooseImage(for: [folder])
-            }
-        }
-    }
-
-    // MARK: - Windows
-
-    func showSettings() {
-        let controller = settingsWindow ?? SettingsWindowController(actions: self)
-        settingsWindow = controller
-        controller.present()
-    }
-
-    func showWelcome() {
-        let controller = welcomeWindow ?? WelcomeWindowController(actions: self)
-        welcomeWindow = controller
-        controller.onClose = { [weak self] in
-            self?.settings.hasCompletedWelcome = true
-            self?.welcomeWindow = nil
-        }
-        controller.present()
-    }
-
-    private func showLookWindow(for look: FolderLook) {
-        let key = look.folder.standardizedFileURL.path
-        if let existing = lookWindows[key] {
-            existing.present()
-            return
-        }
-        let controller = FolderLookWindowController(look: look, actions: self)
-        controller.onClose = { [weak self] in self?.lookWindows[key] = nil }
-        lookWindows[key] = controller
-        controller.present()
+    func confirmRemovingAll(count: Int) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = count == 1
+            ? String(localized: "Remove the picture from the folder that has one?")
+            : String(localized: "Remove the pictures from all \(count) folders?")
+        alert.informativeText = String(localized: "The folders go back to the standard icon. The pictures themselves are not touched.")
+        alert.addButton(withTitle: count == 1 ? String(localized: "Remove the Picture") : String(localized: "Remove \(count) Pictures"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.buttons.first?.hasDestructiveAction = true
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     // MARK: - Feedback

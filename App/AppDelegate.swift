@@ -29,13 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         queuedCommands.removeAll()
 
         if !settings.hasLaunchedBefore {
-            // A background helper is expected to start with the Mac; the welcome window
-            // has the switch right there for anyone who'd rather not.
+            // A background helper is expected to start with the Mac; the switch is behind
+            // the gear for anyone who'd rather not. The window shows what still needs
+            // turning on.
             settings.hasLaunchedBefore = true
             LoginItem.shared.setEnabled(true)
-        }
-        if !settings.hasCompletedWelcome {
-            actions.showWelcome()
+            actions.showEditor()
         }
     }
 
@@ -67,9 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return sender.hasPrefix(plugIns + "/")
     }
 
-    /// Opening the app again (from Finder, Spotlight, the Dock) shows Settings.
+    /// Opening the app again (from Finder, Spotlight, the Dock) shows the window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        actions.showSettings()
+        actions.showEditor()
         return false
     }
 
