@@ -106,11 +106,13 @@ private struct DefaultLookTab: View {
         }
         .padding(24)
         .confirmationDialog("Update existing folders too?", isPresented: $askingScope) {
-            Button("Update All \(followers) Folders") { commit(updateExisting: true) }
+            Button(followers == 1 ? LocalizedStringKey("Update It Too") : "Update All \(followers) Folders") { commit(updateExisting: true) }
             Button("Only New Pictures") { commit(updateExisting: false) }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("\(followers) folders use the default look. They can switch to the new look now, or keep the current one while only new pictures get the new look.")
+            Text(followers == 1
+                 ? LocalizedStringKey("One folder uses the default look. It can switch to the new look now, or keep its current look while only new pictures get the new one.")
+                 : "\(followers) folders use the default look. They can switch to the new look now, or keep their current look while only new pictures get the new one.")
         }
     }
 
@@ -246,7 +248,7 @@ private struct FoldersTab: View {
         .formStyle(.grouped)
         .task { await refresh() }
         .confirmationDialog("Remove all folder pictures?", isPresented: $confirmingRemoval) {
-            Button("Remove \(count) Pictures", role: .destructive, action: removeAll)
+            Button(count == 1 ? LocalizedStringKey("Remove the Picture") : "Remove \(count) Pictures", role: .destructive, action: removeAll)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The folders go back to the standard icon. The pictures themselves are not touched.")

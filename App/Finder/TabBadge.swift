@@ -65,7 +65,6 @@ final class TabBadgeController {
         guard panel.isVisible else { return }
         folder = nil
         panel.orderOut(nil)
-        NSCursor.arrow.set()
     }
 
     private func clicked(_ event: NSEvent) {
