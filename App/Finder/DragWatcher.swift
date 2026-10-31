@@ -51,7 +51,7 @@ final class DragWatcher {
     func stop() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
-        endDrag()
+        endDrag(releasedAt: nil)
     }
 
     private func handle(_ event: NSEvent) {
@@ -76,7 +76,8 @@ final class DragWatcher {
                 break
             }
         case .leftMouseUp:
-            endDrag()
+            // Events seen by a global monitor carry screen coordinates.
+            endDrag(releasedAt: event.locationInWindow)
         default:
             break
         }
@@ -162,7 +163,9 @@ final class DragWatcher {
 
     // MARK: - End of the drag
 
-    private func endDrag() {
+    /// - Parameter point: where the button was released; that, not where the pointer is
+    ///   by the time this runs, decides whether the drop went to the badge.
+    private func endDrag(releasedAt point: NSPoint?) {
         phase = .idle
         hovered = nil
         pendingPoint = nil
@@ -171,7 +174,7 @@ final class DragWatcher {
         retryTask = nil
         stopReleaseCheck()
         guard badge.isVisible, !badge.isBusy else { return }
-        if badge.contains(NSEvent.mouseLocation) {
+        if let point, badge.contains(point) {
             // Released on the badge: the drop arrives separately, give it a moment.
             badge.scheduleHide(after: 0.6)
         } else {
@@ -185,7 +188,7 @@ final class DragWatcher {
         stopReleaseCheck()
         releaseCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                if NSEvent.pressedMouseButtons & 1 == 0 { self?.endDrag() }
+                if NSEvent.pressedMouseButtons & 1 == 0 { self?.endDrag(releasedAt: NSEvent.mouseLocation) }
             }
         }
     }
