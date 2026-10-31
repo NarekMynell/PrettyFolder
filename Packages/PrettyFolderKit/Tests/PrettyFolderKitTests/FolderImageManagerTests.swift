@@ -154,6 +154,16 @@ import UniformTypeIdentifiers
         #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
     }
 
+    private func libraryJSON() throws -> [String: Any] {
+        let data = try Data(contentsOf: libraryDirectory.appendingPathComponent("Library.json"))
+        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func recordedPaths() throws -> [String] {
+        let records = try libraryJSON()["records"] as? [[String: Any]] ?? []
+        return records.compactMap { $0["lastKnownPath"] as? String }
+    }
+
     @Test func followsRenamedFolders() async throws {
         let folder = try temp.folder("Before")
         _ = await manager.apply(imageAt: picture, to: [folder])
@@ -163,6 +173,8 @@ import UniformTypeIdentifiers
         try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.4, height: 0.4, mode: .fill), for: renamed)
         await manager.prune()
         #expect(await manager.managedFolderCount() == 1)
+        // The new path sticks; it isn't overwritten by the copy of the record setStyle worked on.
+        #expect(try recordedPaths() == [FolderInspector.canonicalPath(renamed.path)])
     }
 
     @Test func copiesBecomeTheirOwnFolders() async throws {
@@ -182,19 +194,112 @@ import UniformTypeIdentifiers
         #expect(await manager.look(for: original) != nil)
     }
 
-    @Test func forgetsDeletedFolders() async throws {
+    @Test func removingACopyKeepsAnOriginalThatCantBeFound() async throws {
+        let original = try temp.folder("OnAnotherDisk")
+        _ = await manager.apply(imageAt: picture, to: [original])
+        let copy = temp.url.appendingPathComponent("CopyOnDesktop", isDirectory: true)
+        try FileManager.default.copyItem(at: original, to: copy)
+        // Stands in for the original's disk being ejected.
+        let away = try TemporaryDirectory()
+        try FileManager.default.moveItem(at: original, to: away.url.appendingPathComponent("Parked"))
+        try FileManager.default.removeItem(at: away.url)
+
+        _ = await manager.removeImage(from: [copy])
+        #expect(!FolderInspector.hasCustomIcon(copy))
+        #expect(await manager.managedFolderCount() == 1, "the original's record is kept")
+        #expect(storedPictures().count == 1)
+    }
+
+    @Test func aFolderMovedToAnotherDiskKeepsItsRecord() async throws {
+        let original = try temp.folder("Moving")
+        let style = IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fit)
+        _ = await manager.apply(imageAt: picture, to: [original])
+        try await manager.setStyle(style, for: original)
+        // Finder moves across disks by copying and then deleting the original.
+        let moved = temp.url.appendingPathComponent("Moved", isDirectory: true)
+        try FileManager.default.copyItem(at: original, to: moved)
+        try FileManager.default.removeItem(at: original)
+
+        let look = try #require(await manager.look(for: moved))
+        #expect(look.style == style)
+        #expect(await manager.managedFolderCount() == 1, "taken over, not duplicated")
+        #expect(try recordedPaths() == [FolderInspector.canonicalPath(moved.path)])
+    }
+
+    @Test func forgetsFoldersMissingForTooLong() async throws {
         let folder = try temp.folder("Doomed")
         _ = await manager.apply(imageAt: picture, to: [folder])
         try FileManager.default.removeItem(at: folder)
+
         await manager.prune()
+        #expect(await manager.managedFolderCount() == 1, "it may be on a disk that isn't connected")
+        #expect(storedPictures().count == 1)
+
+        await manager.prune(now: Date().addingTimeInterval(FolderImageManager.missingGracePeriod / 2))
+        #expect(await manager.managedFolderCount() == 1)
+
+        await manager.prune(now: Date().addingTimeInterval(FolderImageManager.missingGracePeriod + 60))
         #expect(await manager.managedFolderCount() == 0)
         #expect(storedPictures().isEmpty)
     }
 
-    @Test func keepsFoldersOnDisksThatAreNotConnected() throws {
-        #expect(FolderImageManager.mightComeBack("/Volumes/Not Connected \(UUID().uuidString)/Photos"))
-        #expect(FolderImageManager.mightComeBack(temp.url.path))
-        #expect(!FolderImageManager.mightComeBack(temp.url.appendingPathComponent("gone").path))
+    @Test func aFolderThatComesBackIsNoLongerMissing() async throws {
+        let folder = try temp.folder("Back")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let away = try TemporaryDirectory()
+        let elsewhere = away.url.appendingPathComponent("Back", isDirectory: true)
+        try FileManager.default.moveItem(at: folder, to: elsewhere)
+
+        // Still found through its bookmark, even outside the folder it started in.
+        await manager.prune(now: Date().addingTimeInterval(FolderImageManager.missingGracePeriod + 60))
+        #expect(await manager.managedFolderCount() == 1)
+        #expect(try recordedPaths() == [FolderInspector.canonicalPath(elsewhere.path)])
+    }
+
+    @Test func refusesToRemoveIconsFromPackages() async throws {
+        let app = try temp.folder("Tool.app")
+        let foreign = NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
+            NSColor.systemOrange.setFill()
+            rect.fill()
+            return true
+        }
+        #expect(NSWorkspace.shared.setIcon(foreign, forFile: app.path, options: []))
+        let outcomes = await manager.removeImage(from: [app])
+        #expect(outcomes.count == 1 && !outcomes[0].succeeded)
+        #expect(FolderInspector.hasCustomIcon(app), "the package was not touched")
+    }
+
+    @Test func anUnreadableLibraryIsSetAsideAndItsPicturesKept() async throws {
+        let folder = try temp.folder("Kept")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        #expect(storedPictures().count == 1)
+        try Data("{ not json".utf8).write(to: libraryDirectory.appendingPathComponent("Library.json"))
+
+        let reopened = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard)
+        #expect(await reopened.managedFolderCount() == 0)
+        let files = try FileManager.default.contentsOfDirectory(atPath: libraryDirectory.path)
+        #expect(files.contains { $0.hasPrefix("Library-unreadable-") }, "the bad file is kept for later")
+
+        // Nothing cleans away pictures the unreadable list may still need.
+        await reopened.prune()
+        let other = try temp.folder("Other")
+        let png = temp.file("other.png")
+        TestImages.write(TestImages.solid(width: 50, height: 50, red: 0, green: 0, blue: 1), to: png, type: .png)
+        _ = await reopened.apply(imageAt: png, to: [other])
+        _ = await reopened.removeImage(from: [other])
+        #expect(storedPictures().count == 2)
+    }
+
+    @Test func aLibraryFromANewerVersionIsNeverOverwritten() async throws {
+        let index = libraryDirectory.appendingPathComponent("Library.json")
+        let newer = Data(#"{"version": 99, "records": [], "somethingNew": true}"#.utf8)
+        try newer.write(to: index)
+
+        let reopened = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard)
+        let folder = try temp.folder("Fresh")
+        _ = await reopened.apply(imageAt: picture, to: [folder])
+        #expect(FolderInspector.hasCustomIcon(folder), "the app keeps working")
+        #expect(try Data(contentsOf: index) == newer)
     }
 
     @Test func removeAllCleansUp() async throws {

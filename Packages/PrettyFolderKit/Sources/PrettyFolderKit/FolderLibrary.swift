@@ -18,6 +18,8 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
     var iconDigest: String
     var created: Date
     var updated: Date
+    /// Set while the folder can't be found; the record is dropped after a grace period.
+    var missingSince: Date?
 }
 
 /// Keeps the list of managed folders and the pictures they use, under
@@ -26,24 +28,46 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
 /// Pictures are stored by content hash, so the same picture on many folders is kept once.
 struct FolderLibrary {
     private struct Snapshot: Codable {
-        var version = 1
+        static let currentVersion = 1
+        var version = currentVersion
         var records: [FolderRecord]
     }
 
     let directory: URL
     private(set) var records: [UUID: FolderRecord] = [:]
 
+    /// The list was written by a newer PrettyFolder: use it, but never overwrite it or
+    /// delete pictures it may need.
+    private(set) var isReadOnly = false
+
     var picturesDirectory: URL { directory.appendingPathComponent("Pictures", isDirectory: true) }
     private var indexURL: URL { directory.appendingPathComponent("Library.json", isDirectory: false) }
+    private static let unreadablePrefix = "Library-unreadable-"
 
     init(directory: URL) {
         self.directory = directory
+        guard FileManager.default.fileExists(atPath: indexURL.path) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        if let data = try? Data(contentsOf: indexURL),
-           let snapshot = try? decoder.decode(Snapshot.self, from: data) {
+        do {
+            let snapshot = try decoder.decode(Snapshot.self, from: Data(contentsOf: indexURL))
             records = Dictionary(snapshot.records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            isReadOnly = snapshot.version > Snapshot.currentVersion
+        } catch {
+            // Don't let one bad file wipe everything: keep it next to the new one for a
+            // closer look, and start over. Its pictures stay (see `keepsAllPictures`).
+            let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+            let aside = directory.appendingPathComponent(Self.unreadablePrefix + stamp + ".json")
+            try? FileManager.default.moveItem(at: indexURL, to: aside)
         }
+    }
+
+    /// While a list that couldn't be read is lying around, no stored picture is deleted:
+    /// any of them may belong to it.
+    private var keepsAllPictures: Bool {
+        if isReadOnly { return true }
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return files.contains { $0.hasPrefix(Self.unreadablePrefix) }
     }
 
     func record(_ id: UUID) -> FolderRecord? { records[id] }
@@ -58,6 +82,7 @@ struct FolderLibrary {
     }
 
     func save() throws {
+        guard !isReadOnly else { return }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -83,12 +108,13 @@ struct FolderLibrary {
     }
 
     func deletePictureIfUnused(_ name: String) {
-        guard !records.values.contains(where: { $0.pictureName == name }) else { return }
+        guard !keepsAllPictures, !records.values.contains(where: { $0.pictureName == name }) else { return }
         try? FileManager.default.removeItem(at: pictureURL(named: name))
     }
 
     /// Removes stored pictures that no record points to (left over after a crash, say).
     func collectGarbage() {
+        guard !keepsAllPictures else { return }
         let used = Set(records.values.map(\.pictureName))
         let files = (try? FileManager.default.contentsOfDirectory(atPath: picturesDirectory.path)) ?? []
         for name in files where !used.contains(name) && !name.hasPrefix(".") {

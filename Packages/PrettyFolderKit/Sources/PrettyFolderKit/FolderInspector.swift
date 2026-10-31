@@ -59,6 +59,23 @@ public enum FolderInspector {
         }
     }
 
+    /// The path with symbolic links resolved (`/var/…` becomes `/private/var/…`), which is
+    /// the form bookmarks resolve to. Paths that no longer exist work too: the part that
+    /// still exists is resolved and the rest appended.
+    static func canonicalPath(_ path: String) -> String {
+        var existing = URL(fileURLWithPath: path).standardizedFileURL
+        var missing: [String] = []
+        while existing.path != "/", !FileManager.default.fileExists(atPath: existing.path) {
+            missing.insert(existing.lastPathComponent, at: 0)
+            existing.deleteLastPathComponent()
+        }
+        guard let resolved = realpath(existing.path, nil) else { return path }
+        defer { free(resolved) }
+        var result = URL(fileURLWithPath: String(cString: resolved))
+        for component in missing { result.appendPathComponent(component) }
+        return result.path
+    }
+
     /// The hidden `Icon\r` file that holds a folder's custom icon.
     public static func iconFileURL(for folder: URL) -> URL {
         folder.appendingPathComponent("Icon\r", isDirectory: false)

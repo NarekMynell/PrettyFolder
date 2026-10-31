@@ -86,3 +86,13 @@ import Testing
         #expect(IconGeometry.cornerRadius(for: thin, canvas: 1024) == 3)
     }
 }
+
+@Suite struct CanonicalPathTests {
+    @Test func resolvesExistingAndMissingPaths() throws {
+        let temp = try TemporaryDirectory()
+        let real = FolderInspector.canonicalPath(temp.url.path)
+        #expect(real.hasPrefix("/private/"), "the temporary directory lives under /private")
+        #expect(FolderInspector.canonicalPath(temp.url.appendingPathComponent("gone/deeper").path) == real + "/gone/deeper")
+        #expect(FolderInspector.canonicalPath("/") == "/")
+    }
+}
