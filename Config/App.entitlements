@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Not sandboxed: the app writes the hidden Icon file into whatever folder
+	     you point it at, which a sandboxed app cannot do. Hardened Runtime stays on. -->
+</dict>
+</plist>

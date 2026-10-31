@@ -10,6 +10,11 @@ public struct FolderOutcome: Sendable, Equatable {
 
     public var succeeded: Bool { failure == nil }
 
+    public init(folder: URL, failure: String?) {
+        self.folder = folder
+        self.failure = failure
+    }
+
     static func ok(_ folder: URL) -> FolderOutcome { FolderOutcome(folder: folder, failure: nil) }
     static func failed(_ folder: URL, _ error: Error) -> FolderOutcome {
         FolderOutcome(folder: folder, failure: error.localizedDescription)

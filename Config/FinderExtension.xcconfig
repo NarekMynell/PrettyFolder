@@ -1,0 +1,11 @@
+PRODUCT_NAME = PrettyFolderFinder
+PRODUCT_BUNDLE_IDENTIFIER = com.narekmynell.PrettyFolder.FinderExtension
+INFOPLIST_FILE = Config/FinderExtension-Info.plist
+CODE_SIGN_ENTITLEMENTS = Config/FinderExtension.entitlements
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks
+APPLICATION_EXTENSION_API_ONLY = YES
+SKIP_INSTALL = YES
+
+SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor
+SWIFT_APPROACHABLE_CONCURRENCY = YES
+SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES
