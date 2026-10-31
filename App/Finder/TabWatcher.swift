@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// Shows the tab button when the pointer rests on a folder's tab in Finder.
 ///
@@ -14,6 +15,7 @@ final class TabWatcher {
     private let finder: FinderProcess
     private let accessibility: FinderAccessibility
     private let badge: TabBadgeController
+    private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Tab")
 
     private var monitors: [Any] = []
     private var lastMove: (point: NSPoint, time: TimeInterval)?
@@ -122,6 +124,7 @@ final class TabWatcher {
 
     private func finishQuery(_ item: FinderItem?) {
         queryInFlight = false
+        log.debug("Under the pointer: \(item?.url.lastPathComponent ?? "nothing", privacy: .private), \(item.map { "\($0.layout)" } ?? "-", privacy: .public) layout, plain folder \(item?.isPlainFolder ?? false), \(item?.iconFrame.width ?? 0) pt")
         defer { queryIfPossible() }
         // Small icons have a tab too thin to aim at; list and column views are skipped.
         guard let item, item.layout == .icon, item.isPlainFolder, item.iconFrame.width >= 32 else {

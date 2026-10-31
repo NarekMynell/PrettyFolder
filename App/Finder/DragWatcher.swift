@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// Watches drags anywhere on screen. While a picture is dragged over a folder in Finder,
 /// it shows the "Set as Icon" badge next to that folder.
@@ -20,6 +21,7 @@ final class DragWatcher {
     private let accessibility: FinderAccessibility
     private let badge: DropBadgeController
     private let dragPasteboard = NSPasteboard(name: .drag)
+    private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Drag")
 
     private var monitor: Any?
     private var phase = Phase.idle
@@ -62,6 +64,7 @@ final class DragWatcher {
                 // A selection rectangle or a window move never touches the drag pasteboard.
                 guard dragPasteboard.changeCount != changeCount else { return }
                 let hasPicture = DroppedPicture.isPresent(on: dragPasteboard)
+                log.debug("Drag started, picture: \(hasPicture)")
                 phase = .dragging(hasPicture: hasPicture)
                 if hasPicture {
                     startReleaseCheck()
@@ -106,6 +109,7 @@ final class DragWatcher {
         }
         pendingPoint = nil
         guard let pid = finder.pid, finder.ownsWindow(at: point) else {
+            log.debug("Not over a Finder window")
             update(nil, pointer: point)
             return
         }
@@ -118,6 +122,7 @@ final class DragWatcher {
 
     private func finishQuery(_ item: FinderItem?, pointer: NSPoint) {
         queryInFlight = false
+        log.debug("Under the pointer: \(item?.url.lastPathComponent ?? "nothing", privacy: .private)")
         guard phase == .dragging(hasPicture: true) else { return }
         update(item?.isPlainFolder == true ? item : nil, pointer: pointer)
         queryIfPossible()

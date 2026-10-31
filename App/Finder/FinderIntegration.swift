@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import os
 
 /// Turns the two in-Finder helpers (drop badge, tab button) on and off as settings and
 /// the Accessibility permission change.
@@ -34,8 +35,11 @@ final class FinderIntegration {
         observe()
     }
 
+    private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Finder")
+
     private func apply() {
         let allowed = permission.isGranted
+        log.debug("Accessibility granted: \(allowed); drop badge \(self.settings.showsDropTarget), tab button \(self.settings.opensPickerFromTab)")
         if allowed && settings.showsDropTarget { dragWatcher.start() } else { dragWatcher.stop() }
         if allowed && settings.opensPickerFromTab { tabWatcher.start() } else { tabWatcher.stop() }
     }

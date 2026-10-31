@@ -10,20 +10,31 @@ final class AccessibilityPermission {
 
     private(set) var isGranted = AXIsProcessTrusted()
 
-    @ObservationIgnored private var observer: NSObjectProtocol?
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var pollTimer: Timer?
 
     private init() {
         // Posted whenever the list of trusted apps changes. The new state is applied a
         // moment later, so check again after a short delay.
-        observer = DistributedNotificationCenter.default().addObserver(
+        observers.append(DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.apple.accessibility.api"), object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.refresh()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self?.refresh() }
             }
-        }
+        })
+        // That notification can be missed (or the answer can lag right after an update),
+        // so look again whenever Finder comes to the front, which is when it matters.
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            guard app?.bundleIdentifier == "com.apple.finder" else { return }
+            MainActor.assumeIsolated {
+                if self?.isGranted == false { self?.refresh() }
+            }
+        })
     }
 
     func refresh() {

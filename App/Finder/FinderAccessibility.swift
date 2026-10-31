@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import UniformTypeIdentifiers
+import os
 
 /// A file or folder Finder shows somewhere on screen.
 nonisolated struct FinderItem: Equatable, Sendable {
@@ -37,6 +38,7 @@ nonisolated struct FinderItem: Equatable, Sendable {
 nonisolated final class FinderAccessibility: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.narekmynell.PrettyFolder.finder-accessibility", qos: .userInteractive)
     private let systemWide: AXUIElement
+    private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Accessibility")
 
     init() {
         systemWide = AXUIElementCreateSystemWide()
@@ -52,11 +54,16 @@ nonisolated final class FinderAccessibility: @unchecked Sendable {
 
     private func resolveItem(at point: CGPoint, finderPID: pid_t) -> FinderItem? {
         var hit: AXUIElement?
-        guard AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit) == .success,
-              let hit
-        else { return nil }
+        let status = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit)
+        guard status == .success, let hit else {
+            log.debug("Hit test at \(point.x, privacy: .public),\(point.y, privacy: .public) failed: \(status.rawValue, privacy: .public)")
+            return nil
+        }
         var pid: pid_t = 0
-        guard AXUIElementGetPid(hit, &pid) == .success, pid == finderPID else { return nil }
+        guard AXUIElementGetPid(hit, &pid) == .success, pid == finderPID else {
+            log.debug("Hit belongs to pid \(pid, privacy: .public), not Finder (\(finderPID, privacy: .public))")
+            return nil
+        }
 
         // The hit can be the icon, the name, a table cell or the row; walk up a little.
         var node: AXUIElement? = hit
@@ -65,6 +72,7 @@ nonisolated final class FinderAccessibility: @unchecked Sendable {
             if let item = item(from: current) { return item }
             node = parent(of: current)
         }
+        log.debug("No item at the pointer (hit \(self.role(of: hit) ?? "?", privacy: .public))")
         return nil
     }
 
