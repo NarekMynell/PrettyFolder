@@ -20,6 +20,9 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- The Finder extension reaches the app through prettyfolder:// URLs. The scheme has to
+	     be claimed here: Launch Services refuses a sandboxed extension's request otherwise,
+	     even when it names the app directly. Who sent a request is checked in AppDelegate. -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
