@@ -178,7 +178,8 @@ final class FolderActions {
         if failures.count > 4 { details.append(String(localized: "…and \(failures.count - 4) more.")) }
         var seen = Set<String>()
         alert.informativeText = details.filter { seen.insert($0).inserted }.joined(separator: "\n\n")
-        NSApp.activate()
+        alert.layout()
+        AppActivation.bringToFront(alert.window)
         alert.runModal()
     }
 

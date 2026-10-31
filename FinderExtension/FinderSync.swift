@@ -9,10 +9,11 @@ import os
 /// The extension is sandboxed and never touches folders itself: it tells the app which
 /// folders were clicked, and the app does the work.
 ///
-/// `FIFinderSync` itself is not tied to an actor, so neither is this class; Finder calls
-/// it on the main thread, and the few AppKit calls are explicitly made there.
+/// `FIFinderSync` is not tied to an actor and Finder calls it on background queues, so
+/// this class isn't either; the few AppKit calls are explicitly made on the main thread.
 nonisolated final class FinderSync: FIFinderSync, @unchecked Sendable {
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "FinderExtension")
+    private static let appIdentifier = "com.narekmynell.PrettyFolder"
 
     override init() {
         super.init()
@@ -73,26 +74,36 @@ nonisolated final class FinderSync: FIFinderSync, @unchecked Sendable {
         return menu
     }
 
-    // Menu actions arrive on the main thread, like any menu item's.
-    @MainActor @objc private func choosePicture(_ sender: NSMenuItem) { send(.chooseImage, menuTag: sender.tag) }
-    @MainActor @objc private func removePicture(_ sender: NSMenuItem) { send(.removeImage, menuTag: sender.tag) }
-    @MainActor @objc private func adjust(_ sender: NSMenuItem) { send(.adjust, menuTag: sender.tag) }
-    @MainActor @objc private func openSettings(_ sender: NSMenuItem) { send(.settings, menuTag: sender.tag) }
+    // Finder Sync delivers menu actions on its own XPC queue, not the main thread,
+    // with a copy of the menu item; only its tag is read, through plain KVC.
+    @objc private func choosePicture(_ sender: Any?) { send(.chooseImage, menuTag: Self.tag(of: sender)) }
+    @objc private func removePicture(_ sender: Any?) { send(.removeImage, menuTag: Self.tag(of: sender)) }
+    @objc private func adjust(_ sender: Any?) { send(.adjust, menuTag: Self.tag(of: sender)) }
+    @objc private func openSettings(_ sender: Any?) { send(.settings, menuTag: Self.tag(of: sender)) }
+
+    private static func tag(of sender: Any?) -> Int {
+        ((sender as? NSObject)?.value(forKey: "tag") as? NSNumber)?.intValue ?? -1
+    }
 
     // MARK: - Talking to the app
 
     private func send(_ action: FolderCommand.Action, menuTag: Int) {
         // The tag remembers which kind of menu the item came from.
-        let kind = FIMenuKind(rawValue: UInt(max(menuTag, 0))) ?? .contextualMenuForItems
+        let kind = menuTag >= 0 ? FIMenuKind(rawValue: UInt(menuTag)) ?? .contextualMenuForItems : .contextualMenuForItems
         let folders = action.needsFolders ? targets(for: kind) : []
         guard !action.needsFolders || !folders.isEmpty else { return }
         let command = FolderCommand(action, folders: folders)
+        log.info("Asking the app to \(action.rawValue, privacy: .public) \(folders.count) folder(s)")
 
         // The app sits three levels up: PrettyFolder.app/Contents/PlugIns/<this>.appex
         let appURL = Bundle.main.bundleURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+        if action != .removeImage {
+            // Finder is in front; let the app come forward with its window.
+            onMain { NSApplication.shared.yieldActivation(toApplicationWithBundleIdentifier: Self.appIdentifier) }
+        }
         let configuration = NSWorkspace.OpenConfiguration()
         // Removing is instant and needs no window; everything else shows one.
         configuration.activates = action != .removeImage
@@ -142,7 +153,7 @@ nonisolated final class FinderSync: FIFinderSync, @unchecked Sendable {
         return item
     }
 
-    /// Runs AppKit work on the main thread, where Finder normally calls us anyway.
+    /// Runs AppKit work (building menus) on the main thread.
     private func onMain<T>(_ work: @MainActor () -> T) -> T {
         if Thread.isMainThread {
             return MainActor.assumeIsolated { MainThreadResult(value: work()) }.value

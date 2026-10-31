@@ -26,8 +26,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         queuedCommands.forEach(actions.handle)
         queuedCommands.removeAll()
 
+        if !settings.hasLaunchedBefore {
+            // A background helper is expected to start with the Mac; the welcome window
+            // has the switch right there for anyone who'd rather not.
+            settings.hasLaunchedBefore = true
+            LoginItem.shared.setEnabled(true)
+        }
         if !settings.hasCompletedWelcome {
-            if !LoginItem.shared.isEnabled { LoginItem.shared.setEnabled(true) }
             actions.showWelcome()
         }
 
@@ -57,6 +62,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         actions.showSettings()
         return false
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Windows floated above Finder while the app couldn't come forward (see AppActivation).
+        for window in NSApp.windows where window.level == .floating && !(window is OverlayPanel) {
+            window.level = .normal
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

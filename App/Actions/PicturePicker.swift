@@ -16,8 +16,7 @@ final class PicturePicker {
     /// Shows the picker. Only one is open at a time; asking again brings it to the front.
     func pick(for folders: [URL], startingIn directory: URL?, offerRemove: Bool, completion: @escaping (Result) -> Void) {
         if let panel {
-            NSApp.activate()
-            panel.makeKeyAndOrderFront(nil)
+            AppActivation.bringToFront(panel)
             return
         }
 
@@ -48,7 +47,6 @@ final class PicturePicker {
         }
 
         self.panel = panel
-        NSApp.activate()
         panel.begin { [weak self] response in
             MainActor.assumeIsolated {
                 self?.panel = nil
@@ -61,6 +59,7 @@ final class PicturePicker {
                 }
             }
         }
+        AppActivation.bringToFront(panel)
     }
 }
 

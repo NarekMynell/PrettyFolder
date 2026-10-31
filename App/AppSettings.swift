@@ -13,6 +13,7 @@ final class AppSettings {
         static let opensPickerFromTab = "OpensPickerFromTab"
         static let showsMenuBarIcon = "ShowsMenuBarIcon"
         static let hasCompletedWelcome = "HasCompletedWelcome"
+        static let hasLaunchedBefore = "HasLaunchedBefore"
         static let lastPictureFolder = "LastPictureFolder"
     }
 
@@ -43,6 +44,11 @@ final class AppSettings {
         didSet { defaults.set(hasCompletedWelcome, forKey: Key.hasCompletedWelcome) }
     }
 
+    /// `false` only on the very first launch.
+    var hasLaunchedBefore: Bool {
+        didSet { defaults.set(hasLaunchedBefore, forKey: Key.hasLaunchedBefore) }
+    }
+
     /// Where the picture picker opens next time.
     var lastPictureFolder: URL? {
         didSet { defaults.set(lastPictureFolder?.path, forKey: Key.lastPictureFolder) }
@@ -61,6 +67,7 @@ final class AppSettings {
         opensPickerFromTab = defaults.bool(forKey: Key.opensPickerFromTab)
         showsMenuBarIcon = defaults.bool(forKey: Key.showsMenuBarIcon)
         hasCompletedWelcome = defaults.bool(forKey: Key.hasCompletedWelcome)
+        hasLaunchedBefore = defaults.bool(forKey: Key.hasLaunchedBefore)
         lastPictureFolder = defaults.string(forKey: Key.lastPictureFolder).map { URL(fileURLWithPath: $0, isDirectory: true) }
     }
 }

@@ -25,8 +25,7 @@ class SwiftUIWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     func present() {
-        NSApp.activate()
-        window?.makeKeyAndOrderFront(nil)
+        AppActivation.bringToFront(window)
     }
 
     func windowWillClose(_ notification: Notification) {

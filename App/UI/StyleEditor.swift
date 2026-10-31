@@ -13,7 +13,13 @@ struct StyleEditor: View {
     @State private var dragStart: IconStyle?
     @State private var snappedToCenter = false
 
-    private static let folderIcon = FolderArtwork.makeBaseIcon()
+    /// The plain folder, rendered once at full size so it stays sharp at any editor size.
+    private static let folderImage: Image = {
+        if let bitmap = IconRenderer().render(nil, style: .standard, pixelSize: 1024) {
+            return Image(decorative: bitmap, scale: 1)
+        }
+        return Image(nsImage: FolderArtwork.makeBaseIcon())
+    }()
     private static let snapDistance = 0.012
 
     var body: some View {
@@ -35,7 +41,7 @@ struct StyleEditor: View {
     // MARK: - Drawing
 
     private func draw(in context: inout GraphicsContext, size: CGSize) {
-        context.draw(Image(nsImage: Self.folderIcon), in: CGRect(origin: .zero, size: size))
+        context.draw(Self.folderImage, in: CGRect(origin: .zero, size: size))
         let target = IconGeometry.targetRect(for: style, canvas: size.width, flipped: true)
 
         guard let picture else {
@@ -205,7 +211,7 @@ struct FitModePicker: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 180)
+            .fixedSize()
             Text(mode == .fill
                  ? "The picture covers the whole rectangle; edges that don't fit are cropped."
                  : "The whole picture is visible; it grows until it touches the rectangle's sides.")
@@ -218,10 +224,11 @@ struct FitModePicker: View {
 
 /// Loads a picture for previews: small enough to stay quick, sharp enough for the editor.
 enum PreviewPicture {
+    /// Always a bitmap: vectors are rasterized at full size, so tiny SVGs stay sharp too.
     static func load(_ url: URL) -> NSImage? {
-        guard let picture = try? ImageLoader.load(contentsOf: url) else { return nil }
-        if case .vector(let image) = picture.content { return image }
-        guard let bitmap = picture.bitmap(maxSide: 1024) else { return nil }
+        guard let picture = try? ImageLoader.load(contentsOf: url),
+              let bitmap = picture.bitmap(maxSide: 1024)
+        else { return nil }
         return NSImage(cgImage: bitmap, size: NSSize(width: bitmap.width, height: bitmap.height))
     }
 
