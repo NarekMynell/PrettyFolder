@@ -53,26 +53,39 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard model.isDefaultDirty else { return true }
+        confirmUnsavedDefault { [weak sender] proceed in
+            if proceed { sender?.close() }
+        }
+        return false
+    }
+
+    /// Asks what to do with a default look that hasn't been saved: save it, discard it, or
+    /// stay. `completion` learns whether to go ahead (closing, quitting).
+    func confirmUnsavedDefault(completion: @escaping (Bool) -> Void) {
+        guard let window, model.isDefaultDirty else {
+            completion(true)
+            return
+        }
+        AppActivation.bringToFront(window)
         let alert = NSAlert()
         alert.messageText = String(localized: "Keep the new default look?")
         alert.informativeText = String(localized: "It hasn't been saved yet.")
         alert.addButton(withTitle: String(localized: "Save"))
         alert.addButton(withTitle: String(localized: "Discard"))
         alert.addButton(withTitle: String(localized: "Cancel"))
-        alert.beginSheetModal(for: sender) { [weak self] response in
-            guard let self else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return completion(true) }
             switch response {
             case .alertFirstButtonReturn:
                 model.scope = .standard
-                model.saveDefault()
+                model.saveDefault(completion: completion)
             case .alertSecondButtonReturn:
                 model.revertDefault()
-                sender.close()
+                completion(true)
             default:
-                break
+                completion(false)
             }
         }
-        return false
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -102,7 +115,7 @@ private struct EditorView: View {
                 }
                 HStack {
                     Spacer()
-                    PreferencesButton(actions: model.actions)
+                    PreferencesButton(model: model)
                 }
             }
             .frame(height: 28)
@@ -133,7 +146,7 @@ private struct EditorView: View {
                 model.commitDefault(updateExisting: true)
             }
             Button("Only New Pictures") { model.commitDefault(updateExisting: false) }
-            Button("Cancel", role: .cancel) {}
+            Button("Cancel", role: .cancel) { model.cancelSavingDefault() }
         } message: {
             Text(model.followerCount == 1
                  ? LocalizedStringKey("One folder uses the default look. It can switch to the new look now, or keep its current look while only new pictures get the new one.")
@@ -154,6 +167,7 @@ private struct EditorView: View {
                 picture: model.picture,
                 isEnabled: model.canEdit,
                 side: editorSide,
+                onBegin: { model.beginChange() },
                 onCommit: { model.commit(from: $0) },
                 onReset: { model.reset() }
             )

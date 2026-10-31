@@ -83,6 +83,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let asking = actions.confirmQuit { proceed in
+            NSApp.reply(toApplicationShouldTerminate: proceed)
+        }
+        return asking ? .terminateLater : .terminateNow
+    }
+
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         true
     }

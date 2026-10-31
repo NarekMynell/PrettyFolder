@@ -64,6 +64,14 @@ final class FolderActions {
         editor?.model.reload(ifShowing: folders)
     }
 
+    /// Before quitting: a default look that hasn't been saved is worth a question. Returns
+    /// `false` when there is nothing to ask; otherwise `completion` learns the answer.
+    func confirmQuit(completion: @escaping (Bool) -> Void) -> Bool {
+        guard let editor, editor.model.isDefaultDirty else { return false }
+        editor.confirmUnsavedDefault(completion: completion)
+        return true
+    }
+
     // MARK: - Pictures
 
     /// Asks for a picture and puts it on `folders`. With a window, the picker is a sheet
@@ -146,18 +154,6 @@ final class FolderActions {
             picturesChanged(folders)
             report(outcomes)
         }
-    }
-
-    func confirmRemovingAll(count: Int) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = count == 1
-            ? String(localized: "Remove the picture from the folder that has one?")
-            : String(localized: "Remove the pictures from all \(count) folders?")
-        alert.informativeText = String(localized: "The folders go back to the standard icon. The pictures themselves are not touched.")
-        alert.addButton(withTitle: count == 1 ? String(localized: "Remove the Picture") : String(localized: "Remove \(count) Pictures"))
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        alert.buttons.first?.hasDestructiveAction = true
-        return alert.runModal() == .alertFirstButtonReturn
     }
 
     // MARK: - Feedback

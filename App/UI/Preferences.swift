@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The gear in the window's top corner, with the few settings PrettyFolder has.
 struct PreferencesButton: View {
-    let actions: FolderActions
+    let model: EditorModel
     @State private var isShown = false
 
     var body: some View {
@@ -18,19 +18,19 @@ struct PreferencesButton: View {
         .help("Settings")
         .accessibilityLabel(Text("Settings"))
         .popover(isPresented: $isShown, arrowEdge: .bottom) {
-            PreferencesView(settings: actions.settings, actions: actions)
+            PreferencesView(settings: model.settings, model: model, dismiss: { isShown = false })
         }
     }
 }
 
 private struct PreferencesView: View {
     @Bindable var settings: AppSettings
-    let actions: FolderActions
+    let model: EditorModel
+    let dismiss: () -> Void
 
     @State private var loginItem = LoginItem.shared
     @State private var finderExtension = FinderExtensionStatus.shared
     @State private var permission = AccessibilityPermission.shared
-    @State private var progress = BatchProgress()
     @State private var pictureCount = 0
 
     var body: some View {
@@ -57,15 +57,19 @@ private struct PreferencesView: View {
                     }
                 }
                 Section {
-                    Button("Redraw All Pictures", action: redraw)
-                        .disabled(pictureCount == 0 || progress.isRunning)
-                        .help("After a macOS update changes how folders look, this puts every picture on the new folder.")
-                    Button("Remove All Pictures…", role: .destructive, action: removeAll)
-                        .disabled(pictureCount == 0 || progress.isRunning)
-                        .help("Puts every folder that got a picture from PrettyFolder back to the standard icon.")
-                    if progress.isRunning {
-                        ProgressView(value: Double(progress.done), total: Double(progress.total))
+                    // The window shows the progress; the popover gets out of the way.
+                    Button("Redraw All Pictures") {
+                        dismiss()
+                        model.redrawAll()
                     }
+                    .disabled(pictureCount == 0 || model.progress.isRunning)
+                    .help("After a macOS update changes how folders look, this puts every picture on the new folder.")
+                    Button("Remove All Pictures…", role: .destructive) {
+                        dismiss()
+                        model.removeAll()
+                    }
+                    .disabled(pictureCount == 0 || model.progress.isRunning)
+                    .help("Puts every folder that got a picture from PrettyFolder back to the standard icon.")
                 }
             }
             .formStyle(.grouped)
@@ -97,35 +101,8 @@ private struct PreferencesView: View {
     }
 
     private func countPictures() async {
-        await actions.manager.prune()
-        pictureCount = await actions.manager.managedFolderCount()
-    }
-
-    private func redraw() {
-        progress.start(total: pictureCount)
-        let reporter = progress.reporter
-        let manager = actions.manager
-        Task {
-            let outcomes = await manager.redrawAll(progress: reporter)
-            progress.isRunning = false
-            actions.picturesChanged(outcomes.map(\.folder))
-            actions.report(outcomes)
-            await countPictures()
-        }
-    }
-
-    private func removeAll() {
-        guard actions.confirmRemovingAll(count: pictureCount) else { return }
-        progress.start(total: pictureCount)
-        let reporter = progress.reporter
-        let manager = actions.manager
-        Task {
-            let outcomes = await manager.removeAll(progress: reporter)
-            progress.isRunning = false
-            actions.picturesChanged(outcomes.map(\.folder))
-            actions.report(outcomes)
-            await countPictures()
-        }
+        await model.actions.manager.prune()
+        pictureCount = await model.actions.manager.managedFolderCount()
     }
 }
 

@@ -18,12 +18,15 @@ struct StyleEditor: View {
     let picture: SourceImage?
     var isEnabled = true
     var side: CGFloat = 320
+    /// A change begins: a drag, a pinch, the first of a burst of arrow keys.
+    var onBegin: () -> Void = {}
     /// A change is finished (a drag ended, a nudge settled); gets the style from before it.
     var onCommit: (_ previous: IconStyle) -> Void = { _ in }
     /// A double-click on the picture: back to where it started.
     var onReset: () -> Void = {}
 
     @State private var dragStart: IconStyle?
+    @GestureState private var isGesturing = false
     @State private var nudgeStart: IconStyle?
     @State private var nudgeCommit: Task<Void, Never>?
     @FocusState private var isFocused: Bool
@@ -56,10 +59,17 @@ struct StyleEditor: View {
         .coordinateSpace(name: "editor")
         .contentShape(Rectangle())
         .simultaneousGesture(pinchGesture, including: isEnabled ? .all : .none)
+        // A click anywhere on it is enough for the arrow keys to work.
+        .simultaneousGesture(TapGesture().onEnded { isFocused = isEnabled })
         .focusable(isEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow], phases: [.down, .repeat]) { nudge($0) }
+        .onChange(of: isGesturing) { _, active in
+            // A gesture that ends calls its onEnded first; one that is cancelled (an alert
+            // comes up mid-drag, say) never does, and the picture goes back.
+            if !active { DispatchQueue.main.async { cancelDrag() } }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Picture position"))
         .accessibilityValue(Text(accessibilityDescription))
@@ -154,6 +164,7 @@ struct StyleEditor: View {
 
     private var moveGesture: some Gesture {
         DragGesture(minimumDistance: 1, coordinateSpace: .named("editor"))
+            .updating($isGesturing) { _, gesturing, _ in gesturing = true }
             .onChanged { value in
                 let start = beginDrag()
                 let moved = start.rect.offsetBy(dx: value.translation.width / side, dy: value.translation.height / side)
@@ -172,6 +183,7 @@ struct StyleEditor: View {
 
     private func resizeGesture(_ handle: ResizeHandle) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("editor"))
+            .updating($isGesturing) { _, gesturing, _ in gesturing = true }
             .onChanged { value in
                 let start = beginDrag()
                 let modifiers = NSEvent.modifierFlags
@@ -195,6 +207,7 @@ struct StyleEditor: View {
 
     private var pinchGesture: some Gesture {
         MagnifyGesture()
+            .updating($isGesturing) { _, gesturing, _ in gesturing = true }
             .onChanged { value in
                 let start = beginDrag()
                 let scale = max(value.magnification, 0.05)
@@ -213,14 +226,21 @@ struct StyleEditor: View {
         isFocused = true
         dragStart = style
         isAdjusting = true
+        onBegin()
         return style
     }
 
     private func endDrag() {
         show([])
         isAdjusting = false
-        if let start = dragStart, start != style { onCommit(start) }
+        if let start = dragStart { onCommit(start) }
         dragStart = nil
+    }
+
+    private func cancelDrag() {
+        guard let start = dragStart else { return }
+        style = start
+        endDrag()
     }
 
     /// Shows the guides, with a tap on a Force Touch trackpad as the picture lands on one.
@@ -246,7 +266,10 @@ struct StyleEditor: View {
         case .downArrow: rect.origin.y += step
         default: return .ignored
         }
-        if nudgeStart == nil { nudgeStart = style }
+        if nudgeStart == nil {
+            nudgeStart = style
+            onBegin()
+        }
         style.rect = CGRect(
             x: min(max(rect.minX, 0), 1 - rect.width), y: min(max(rect.minY, 0), 1 - rect.height),
             width: rect.width, height: rect.height
@@ -256,7 +279,7 @@ struct StyleEditor: View {
             try? await Task.sleep(for: .milliseconds(450))
             guard !Task.isCancelled, let start = nudgeStart else { return }
             nudgeStart = nil
-            if start != style { onCommit(start) }
+            onCommit(start)
         }
         return .handled
     }
