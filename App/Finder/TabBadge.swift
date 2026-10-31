@@ -123,14 +123,47 @@ private final class TabButtonView: NSView {
     }
 
     override func cursorUpdate(with event: NSEvent) { NSCursor.pointingHand.set() }
-    override func mouseExited(with event: NSEvent) { onExit?() }
-    override func mouseDown(with event: NSEvent) { onClick?(event) }
+
+    override func mouseExited(with event: NSEvent) {
+        // While the button is held the pointer may wander off and come back.
+        if !isPressed { onExit?() }
+    }
+
+    // A click is a press and a release on the button, like any button: pressing on
+    // the tab and dragging away (to move the folder, say) does nothing.
+    private var isPressed = false {
+        didSet { if isPressed != oldValue { needsDisplay = true } }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) {
+            onClick?(event)
+        } else {
+            isPressed = true
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        isPressed = bounds.contains(convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let clicked = isPressed && bounds.contains(convert(event.locationInWindow, from: nil))
+        isPressed = false
+        if clicked {
+            onClick?(event)
+        } else if !bounds.contains(convert(event.locationInWindow, from: nil)) {
+            onExit?()
+        }
+    }
+
     override func rightMouseDown(with event: NSEvent) { onClick?(event) }
 
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 1, dy: 1)
         let capsule = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
-        NSColor.controlAccentColor.withAlphaComponent(0.95).setFill()
+        let fill = isPressed ? NSColor.controlAccentColor.blended(withFraction: 0.25, of: .black) ?? .controlAccentColor : .controlAccentColor
+        fill.withAlphaComponent(0.95).setFill()
         capsule.fill()
         NSColor.white.withAlphaComponent(0.55).setStroke()
         capsule.lineWidth = 1
