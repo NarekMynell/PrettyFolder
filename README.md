@@ -43,7 +43,7 @@ You can also right-click a folder and choose **Folder Picture…**, for one fold
 
 <img src="docs/window.gif" width="780" alt="In PrettyFolder's window, the rocket picture is dragged until it snaps to the middle of the folder, stretched over the folder's tab where it takes the folder's shape, switched to Fit, then reset. The folder on the Desktop changes along with it.">
 
-Drag the picture to move it and its corners to resize it. It snaps to the folder's edges and middle, and it never spills outside the folder. **Fill** covers the whole frame, **Fit** shows the whole picture. The folder changes right away, and ⌘Z undoes.
+Drag the picture to move it and its corners to resize it. It snaps to the folder's edges and middle, and it never spills outside the folder. **Fill** covers the whole frame, **Fit** shows the whole picture. The folder changes right away, ⌘Z undoes, and **Done** closes the window.
 
 Hold ⇧ to keep the proportions, ⌥ to resize around the middle, ⌘ to turn snapping off. Arrow keys nudge the picture.
 

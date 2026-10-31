@@ -262,7 +262,7 @@ extension Studio {
 
         let windowSize = window.frame.size
         let windowOrigin = CGPoint(x: size.width - windowSize.width - 46, y: (size.height - windowSize.height) / 2 - 6)
-        guard let controls = controls(of: window), controls.buttons.count == 3 else {
+        guard let controls = controls(of: window), controls.buttons.count == 4 else {
             throw MediaError("Couldn't find the window's controls")
         }
         let editor = controls.editor, scaling = controls.scaling

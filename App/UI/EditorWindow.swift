@@ -237,12 +237,22 @@ private struct EditorView: View {
             if model.isEditingFolders {
                 ToolButton(symbol: "trash", help: "Remove the Picture") { model.removePicture() }
                     .disabled(!model.hasCustomIcon)
-            } else {
+            }
+
+            // Folders change as you go, so there is nothing to save for them: Done only
+            // closes. A new default look waits for Save until it is saved or discarded.
+            if !model.isEditingFolders && model.isDefaultDirty {
                 Button("Save") { model.saveDefault() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(!model.isDefaultDirty || model.progress.isRunning)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(model.progress.isRunning)
                     .help("Make this the default look")
+            } else {
+                Button("Done") { model.window?.performClose(nil) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
             }
         }
     }

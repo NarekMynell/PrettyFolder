@@ -220,7 +220,7 @@ final class Studio {
         var editor: CGRect
         /// The Fill / Fit switch.
         var scaling: CGRect
-        /// The round buttons below the folder, left to right.
+        /// The buttons below the folder, left to right: choose, reset, remove, Done.
         var buttons: [CGRect]
     }
 
