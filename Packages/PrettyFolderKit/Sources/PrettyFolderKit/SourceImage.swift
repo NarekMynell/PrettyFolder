@@ -40,8 +40,8 @@ public final class SourceImage {
         }
     }
 
-    /// Draws the picture into `rect` of the current context.
-    func draw(in rect: CGRect, context: CGContext) {
+    /// Draws the picture into `rect` of `context`.
+    public func draw(in rect: CGRect, context: CGContext) {
         switch content {
         case .bitmap(let image):
             context.draw(image, in: rect)

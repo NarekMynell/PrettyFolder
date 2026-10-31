@@ -10,6 +10,7 @@ public struct IconRenderer {
     public static let pixelSizes = [16, 32, 64, 128, 256, 512, 1024]
 
     private let base: NSImage
+    private let silhouettes = SilhouetteCache()
 
     public init(base: NSImage = FolderArtwork.makeBaseIcon()) {
         self.base = base
@@ -50,17 +51,53 @@ public struct IconRenderer {
         NSGraphicsContext.restoreGraphicsState()
 
         if let picture {
-            let target = IconGeometry.targetRect(for: style, canvas: canvas, flipped: false)
-            let drawRect = IconGeometry.imageRect(imageSize: picture.size, in: target, mode: style.mode)
-            let visible = IconGeometry.visibleRect(imageSize: picture.size, in: target, mode: style.mode)
-            let radius = IconGeometry.cornerRadius(for: visible, canvas: canvas)
-
-            context.saveGState()
-            context.addPath(CGPath(roundedRect: visible, cornerWidth: radius, cornerHeight: radius, transform: nil))
-            context.clip()
-            picture.draw(in: drawRect, context: context)
-            context.restoreGState()
+            Self.drawPicture(picture, style: style, canvas: canvas, clippedTo: silhouette(pixelSize: side), in: context)
         }
         return context.makeImage()
+    }
+
+    /// The folder's outline at a pixel size (see `FolderArtwork.silhouette`).
+    public func silhouette(pixelSize side: Int) -> CGImage? {
+        silhouettes.mask(side) { FolderArtwork.silhouette(of: base, side: side) }
+    }
+
+    /// Draws `picture` over a folder already on a `canvas` × `canvas` context with a
+    /// bottom-left origin: rounded, and never outside the folder's outline. The editor
+    /// previews with this too, so what it shows is what the icon gets.
+    public static func drawPicture(
+        _ picture: SourceImage,
+        style: IconStyle,
+        canvas: CGFloat,
+        clippedTo silhouette: CGImage?,
+        in context: CGContext
+    ) {
+        let target = IconGeometry.targetRect(for: style, canvas: canvas, flipped: false)
+        let drawRect = IconGeometry.imageRect(imageSize: picture.size, in: target, mode: style.mode)
+        let visible = IconGeometry.visibleRect(imageSize: picture.size, in: target, mode: style.mode)
+        let radius = IconGeometry.cornerRadius(for: visible, canvas: canvas)
+
+        context.saveGState()
+        if let silhouette {
+            context.clip(to: CGRect(x: 0, y: 0, width: canvas, height: canvas), mask: silhouette)
+        }
+        context.addPath(CGPath(roundedRect: visible, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        context.clip()
+        picture.draw(in: drawRect, context: context)
+        context.restoreGState()
+    }
+}
+
+/// The outline is the same for every picture, so each size is worked out once.
+private final class SilhouetteCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var masks: [Int: CGImage] = [:]
+
+    func mask(_ side: Int, make: () -> CGImage?) -> CGImage? {
+        lock.withLock {
+            if let mask = masks[side] { return mask }
+            let mask = make()
+            masks[side] = mask
+            return mask
+        }
     }
 }
