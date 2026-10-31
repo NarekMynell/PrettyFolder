@@ -68,6 +68,13 @@ public actor FolderImageManager {
         self.defaultStyle = defaultStyle
     }
 
+    /// A quick guess at whether `folder` shows a picture from PrettyFolder: it carries the
+    /// marker and a custom icon. Cheap enough to ask while the pointer moves; the icon
+    /// itself isn't compared, so ask the manager before relying on it.
+    public static func appearsToHavePicture(_ folder: URL) -> Bool {
+        ExtendedAttributes.value(named: markerAttribute, at: folder) != nil && FolderInspector.hasCustomIcon(folder)
+    }
+
     /// `~/Library/Application Support/PrettyFolder`
     public static var standardDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first

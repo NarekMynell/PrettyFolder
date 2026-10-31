@@ -96,3 +96,61 @@ import Testing
         #expect(FolderInspector.canonicalPath("/") == "/")
     }
 }
+
+@Suite struct IconSnappingTests {
+    let shape = FolderArtwork.shape
+    let snapping = IconSnapping(threshold: 0.02)
+
+    @Test func centersAMovedPicture() {
+        let width = 0.4
+        let nearlyCentered = CGRect(x: shape.bounds.midX - width / 2 + 0.012, y: 0.4, width: width, height: 0.3)
+        let (rect, guides) = snapping.move(nearlyCentered)
+        #expect(abs(rect.midX - shape.bounds.midX) < 1e-9)
+        #expect(rect.size == nearlyCentered.size)
+        #expect(guides.contains(SnapGuide(.vertical, at: shape.bounds.midX)))
+    }
+
+    @Test func linesUpWithTheFront() {
+        let rect = CGRect(x: 0.3, y: shape.front.minY - 0.015, width: 0.3, height: 0.2)
+        let (snapped, guides) = snapping.move(rect)
+        #expect(abs(snapped.minY - shape.front.minY) < 1e-9)
+        #expect(guides.contains(SnapGuide(.horizontal, at: shape.front.minY)))
+    }
+
+    @Test func leavesFarAwayPicturesAlone() {
+        let rect = CGRect(x: 0.27, y: 0.42, width: 0.31, height: 0.2)
+        let (snapped, guides) = snapping.move(rect)
+        #expect(snapped == rect)
+        #expect(guides.isEmpty)
+    }
+
+    @Test func resizingSnapsToWhereThePictureIsCentered() {
+        let left = 0.2
+        let mirrored = 2 * shape.bounds.midX - left
+        let rect = CGRect(x: left, y: 0.4, width: mirrored - left - 0.01, height: 0.3)
+        let (snapped, guides) = snapping.resize(rect, moving: .right, symmetric: false)
+        #expect(abs(snapped.minX - left) < 1e-12)
+        #expect(abs(snapped.maxX - mirrored) < 1e-9)
+        #expect(guides.contains(SnapGuide(.vertical, at: shape.bounds.midX)))
+    }
+
+    @Test func resizingSnapsToTheFolderEdges() {
+        let rect = CGRect(x: 0.3, y: 0.4, width: 0.3, height: shape.bounds.maxY - 0.4 - 0.01)
+        let (snapped, guides) = snapping.resize(rect, moving: [.right, .bottom], symmetric: false)
+        #expect(abs(snapped.maxY - shape.bounds.maxY) < 1e-9)
+        #expect(guides.contains(SnapGuide(.horizontal, at: shape.bounds.maxY)))
+    }
+
+    @Test func symmetricResizingKeepsTheMiddle() {
+        let rect = CGRect(x: shape.bounds.minX + 0.01, y: 0.4, width: 1 - 2 * (shape.bounds.minX + 0.01), height: 0.3)
+        let (snapped, _) = snapping.resize(rect, moving: [.left, .right], symmetric: true)
+        #expect(abs(snapped.midX - rect.midX) < 1e-9)
+        #expect(abs(snapped.minX - shape.bounds.minX) < 1e-9)
+    }
+
+    @Test func neverSnapsBelowTheMinimumSize() {
+        let tiny = CGRect(x: 0.47, y: 0.5, width: IconStyle.minimumSide, height: IconStyle.minimumSide)
+        let (snapped, _) = snapping.resize(tiny, moving: .left, symmetric: false)
+        #expect(snapped.width >= IconStyle.minimumSide - 1e-9)
+    }
+}
