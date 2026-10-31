@@ -20,12 +20,15 @@ final class FinderIntegration {
         dropBadge.onDrop = { [weak actions] picture, folder in
             await actions?.apply(picture, to: folder) ?? false
         }
-        hoverButtons.onAction = { [weak actions] action, folder in
-            guard let actions else { return }
-            switch action {
-            case .choose: actions.chooseImage(for: [folder])
-            case .remove: actions.removeImage(from: [folder])
-            case .settings: actions.showEditor(for: [folder])
+        hoverButtons.onAction = { [weak self, weak actions] action, folder in
+            // Only for the folder that is still under the buttons.
+            self?.hoverWatcher.confirm(folder) {
+                guard let actions else { return }
+                switch action {
+                case .choose: actions.chooseImage(for: [folder])
+                case .remove: actions.removeImage(from: [folder])
+                case .settings: actions.showEditor(for: [folder])
+                }
             }
         }
     }

@@ -38,6 +38,9 @@ final class HoverButtonsController {
 
     init() {
         panel.contentView = bar
+        // The system draws the shadow, outside the panel, so it never catches a click
+        // meant for the folder around the buttons.
+        panel.hasShadow = true
         bar.onAction = { [weak self] action in self?.perform(action) }
         bar.onExit = { [weak self] in self?.onExit?() }
     }
@@ -46,7 +49,7 @@ final class HoverButtonsController {
 
     /// Whether `point` (AppKit screen coordinates) is over the buttons.
     func contains(_ point: NSPoint) -> Bool {
-        isVisible && panel.frame.insetBy(dx: HoverBarView.margin, dy: HoverBarView.margin).contains(point)
+        isVisible && panel.frame.contains(point)
     }
 
     /// Shows the buttons on `item`'s icon; the remove button only when there is a picture.
@@ -55,13 +58,16 @@ final class HoverButtonsController {
         let icon = ScreenSpace.appKitRect(item.iconFrame)
         let layout = HoverBarView.Layout(icon: icon, buttonCount: actions.count)
         let screen = ScreenSpace.visibleFrame(containing: icon)
-        var frame = layout.panelFrame
-        frame.origin.x = min(max(frame.minX, screen.minX - HoverBarView.margin), screen.maxX - frame.width + HoverBarView.margin)
-        frame.origin.y = min(max(frame.minY, screen.minY - HoverBarView.margin), screen.maxY - frame.height + HoverBarView.margin)
+        var frame = layout.barFrame
+        frame.origin.x = min(max(frame.minX, screen.minX), screen.maxX - frame.width)
+        frame.origin.y = min(max(frame.minY, screen.minY), screen.maxY - frame.height)
 
         folder = item.url
         bar.configure(actions: actions, layout: layout)
-        if panel.frame != frame { panel.setFrame(frame, display: true) }
+        if panel.frame != frame {
+            panel.setFrame(frame, display: true)
+            panel.invalidateShadow()
+        }
         guard !panel.isVisible else { return }
         panel.alphaValue = 0
         panel.orderFrontRegardless()
@@ -87,9 +93,6 @@ final class HoverButtonsController {
 
 /// The dark capsule with the buttons in it.
 final class HoverBarView: NSView {
-    /// Room around the capsule for its shadow.
-    static let margin: CGFloat = 6
-
     /// Where the capsule and its buttons go on a folder icon.
     struct Layout: Equatable {
         let buttonSize: CGFloat
@@ -108,8 +111,6 @@ final class HoverBarView: NSView {
             let centerFromTop = max(height / 2 + 1, icon.height * FolderArtwork.shape.tab.midY)
             barFrame = NSRect(x: (icon.midX - width / 2).rounded(), y: (icon.maxY - centerFromTop - height / 2).rounded(), width: width, height: height)
         }
-
-        var panelFrame: NSRect { barFrame.insetBy(dx: -HoverBarView.margin, dy: -HoverBarView.margin) }
     }
 
     var onAction: ((HoverButtonsController.Action) -> Void)?
@@ -133,8 +134,8 @@ final class HoverBarView: NSView {
         self.layout = layout
         for (index, button) in buttons.enumerated() {
             button.frame = NSRect(
-                x: Self.margin + layout.padding + CGFloat(index) * (layout.buttonSize + layout.spacing),
-                y: Self.margin + layout.padding,
+                x: layout.padding + CGFloat(index) * (layout.buttonSize + layout.spacing),
+                y: layout.padding,
                 width: layout.buttonSize,
                 height: layout.buttonSize
             )
@@ -150,8 +151,7 @@ final class HoverBarView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        let capsule = bounds.insetBy(dx: Self.margin, dy: Self.margin)
-        addTrackingArea(NSTrackingArea(rect: capsule, options: [.mouseEnteredAndExited, .activeAlways], owner: self))
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -159,18 +159,10 @@ final class HoverBarView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: Self.margin, dy: Self.margin)
+        let rect = bounds
         let capsule = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
-
-        NSGraphicsContext.saveGraphicsState()
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.3)
-        shadow.shadowBlurRadius = 4
-        shadow.shadowOffset = NSSize(width: 0, height: -1)
-        shadow.set()
         NSColor(white: 0.1, alpha: 0.78).setFill()
         capsule.fill()
-        NSGraphicsContext.restoreGraphicsState()
 
         let edge = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: rect.height / 2 - 0.5, yRadius: rect.height / 2 - 0.5)
         edge.lineWidth = 1

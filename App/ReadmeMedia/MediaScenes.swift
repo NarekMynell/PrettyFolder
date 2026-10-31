@@ -155,8 +155,8 @@ extension Studio {
             let view = HoverBarView()
             view.configure(actions: [.choose, .remove, .settings], layout: layout)
             view.highlight(highlight, pressed: pressed)
-            let image = sprite(of: view, size: layout.panelFrame.size)
-            return (image, Stage.stageRect(fromAppKit: layout.panelFrame), layout)
+            let image = sprite(of: view, size: layout.barFrame.size)
+            return (image, Stage.stageRect(fromAppKit: layout.barFrame), layout)
         }
         func button(_ action: HoverButtonsController.Action, in layout: HoverBarView.Layout) -> CGPoint {
             let index = CGFloat([HoverButtonsController.Action.choose, .remove, .settings].firstIndex(of: action)!)
@@ -213,13 +213,13 @@ extension Studio {
             if t >= ghostShown && t < trashRelease {
                 let onTrash = t >= 2.15
                 let image = t >= trashPress ? ghostTrashPressed : onTrash ? ghostTrash : ghostBar
-                bitmap.draw(image, in: ghostBarFrame, alpha: CGFloat(progress(t, ghostShown, ghostShown + 0.12)))
+                drawBar(image, in: ghostBarFrame, alpha: CGFloat(progress(t, ghostShown, ghostShown + 0.12)), on: bitmap)
                 if onTrash { cursor = .pointingHand }
             }
             if t >= monkeyShown && t < settingsRelease {
                 let onSettings = t >= 4.6
                 let image = t >= settingsPress ? monkeySettingsPressed : onSettings ? monkeySettings : monkeyBar
-                bitmap.draw(image, in: monkeyBarFrame, alpha: CGFloat(progress(t, monkeyShown, monkeyShown + 0.12)))
+                drawBar(image, in: monkeyBarFrame, alpha: CGFloat(progress(t, monkeyShown, monkeyShown + 0.12)), on: bitmap)
                 if onSettings { cursor = .pointingHand }
             }
             if t >= windowShown {
@@ -232,6 +232,16 @@ extension Studio {
             Scenery.drawCursor(cursor, at: pointer, on: bitmap)
             try sequence.add(bitmap.image)
         }
+    }
+
+    /// The buttons on a folder, with the shadow the system gives their window.
+    private func drawBar(_ image: CGImage, in frame: CGRect, alpha: CGFloat, on bitmap: Bitmap) {
+        bitmap.context.saveGState()
+        bitmap.context.setAlpha(alpha)
+        bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.4), blur: 7, offset: CGSize(width: 0, height: 2.5)) {
+            bitmap.draw(image, in: frame)
+        }
+        bitmap.context.restoreGState()
     }
 
     // MARK: - The window

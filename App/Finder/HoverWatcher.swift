@@ -7,13 +7,16 @@ import os
 ///
 /// Finder is only asked what is under the pointer when the pointer slows down over one
 /// of its windows; while it travels, or sits anywhere else, nothing happens at all. Once
-/// a folder is found, moving around on its icon needs no more questions.
+/// a folder is found, moving around on its icon needs no more questions, only a look now
+/// and then to see that the folder is still there.
 final class HoverWatcher {
     /// Faster than this (points per second) the pointer is travelling, not aiming.
     private static let aimingSpeed: CGFloat = 900
     private static let queryInterval: TimeInterval = 0.05
-    /// Icons smaller than this are too small to carry the buttons.
-    private static let smallestIcon: CGFloat = 32
+    /// How often to check, while the buttons are up, that their folder is still under them.
+    private static let recheckInterval: TimeInterval = 0.4
+    /// On icons smaller than this the buttons would cover most of the folder.
+    private static let smallestIcon: CGFloat = 48
 
     private let finder: FinderProcess
     private let accessibility: FinderAccessibility
@@ -22,19 +25,39 @@ final class HoverWatcher {
 
     private var monitors: [Any] = []
     private var lastMove: (point: NSPoint, time: TimeInterval)?
-    /// The folder whose icon the pointer is over, and that icon's area on screen.
-    private var hovered: (item: FinderItem, zone: NSRect)?
+    /// A folder's icon and its area on screen.
+    private typealias Hovered = (item: FinderItem, zone: NSRect)
+
+    /// The folder whose icon the pointer is over.
+    private var hovered: Hovered?
+    /// The folder the buttons were last shown for.
+    private var shown: Hovered?
     private var queryInFlight = false
     private var pendingPoint: NSPoint?
     private var lastQueryTime: TimeInterval = 0
     private var settleTask: Task<Void, Never>?
     private var showTask: Task<Void, Never>?
+    private var recheckTimer: Timer?
+    private var recheckInFlight = false
+    // Only touched in init and deinit; removing observers is thread-safe.
+    nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
     init(finder: FinderProcess, accessibility: FinderAccessibility, buttons: HoverButtonsController) {
         self.finder = finder
         self.accessibility = accessibility
         self.buttons = buttons
         buttons.onExit = { [weak self] in self?.pointerMoved() }
+        // Another app or another Space changes what is under the pointer without moving it.
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reset() }
+            })
+        }
+    }
+
+    deinit {
+        observers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
     }
 
     var isRunning: Bool { !monitors.isEmpty }
@@ -66,6 +89,7 @@ final class HoverWatcher {
         pendingPoint = nil
         settleTask?.cancel()
         showTask?.cancel()
+        stopRechecking()
         buttons.hide()
     }
 
@@ -80,6 +104,7 @@ final class HoverWatcher {
 
         hovered = nil
         showTask?.cancel()
+        stopRechecking()
         buttons.hide()
 
         settleTask?.cancel()
@@ -144,6 +169,66 @@ final class HoverWatcher {
                   NSEvent.pressedMouseButtons == 0, hovered.zone.contains(NSEvent.mouseLocation)
             else { return }
             self.buttons.show(for: hovered.item, canRemove: canRemove)
+            self.shown = hovered
+            self.startRechecking()
         }
+    }
+
+    // MARK: - Is the folder still there?
+
+    /// Runs `action` only if the folder the buttons were shown for is still under them.
+    /// Finder may have moved on in the meantime, by keyboard say, with the pointer still.
+    func confirm(_ folder: URL, then action: @escaping () -> Void) {
+        guard let shown, shown.item.url == folder else { return }
+        Task {
+            if await isStillThere(shown) { action() }
+        }
+    }
+
+    /// Keyboard navigation, another view, a deleted folder: Finder can change what is under
+    /// the pointer without the pointer moving. While the buttons are up, look now and then.
+    private func startRechecking() {
+        guard recheckTimer == nil else { return }
+        recheckTimer = Timer.scheduledTimer(withTimeInterval: Self.recheckInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recheck() }
+        }
+    }
+
+    private func stopRechecking() {
+        recheckTimer?.invalidate()
+        recheckTimer = nil
+    }
+
+    private func recheck() {
+        guard buttons.isVisible, let shown else {
+            stopRechecking()
+            return
+        }
+        guard !recheckInFlight else { return }
+        recheckInFlight = true
+        Task {
+            let stillThere = await isStillThere(shown)
+            recheckInFlight = false
+            if !stillThere, self.shown?.item.url == shown.item.url {
+                log.debug("The folder under the buttons changed; hiding them")
+                reset()
+            }
+        }
+    }
+
+    /// Asks Finder whether the folder is still where it was, looking at a spot on its icon
+    /// below the buttons.
+    private func isStillThere(_ folder: Hovered) async -> Bool {
+        let probe = NSPoint(x: folder.zone.midX, y: folder.zone.minY + folder.zone.height * 0.3)
+        guard let pid = finder.pid, finder.ownsWindow(at: probe) else { return false }
+        let accessibility = self.accessibility
+        let item = await withCheckedContinuation { (continuation: CheckedContinuation<FinderItem?, Never>) in
+            accessibility.item(at: ScreenSpace.accessibilityPoint(probe), finderPID: pid) { item in
+                continuation.resume(returning: item)
+            }
+        }
+        guard let item, item.url == folder.item.url else { return false }
+        let frame = ScreenSpace.appKitRect(item.iconFrame)
+        return abs(frame.minX - folder.zone.minX) < 2 && abs(frame.minY - folder.zone.minY) < 2
     }
 }
