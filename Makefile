@@ -5,6 +5,7 @@
 #   make run         build a debug copy and start it from the build folder
 #   make uninstall   quit the app and remove it (see README for the folder icons)
 #   make release     build a zip for GitHub Releases (notarized if NOTARY_PROFILE is set)
+#   make readme-media  redraw the pictures and animations in docs/ (needs ffmpeg)
 
 PROJECT      := PrettyFolder.xcodeproj
 SCHEME       := PrettyFolder
@@ -20,7 +21,7 @@ VERSION       = $(shell /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionSt
 
 XCODEBUILD   := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -derivedDataPath $(DERIVED)
 
-.PHONY: build debug test run install uninstall release icon clean
+.PHONY: build debug test run install uninstall release readme-media icon clean
 
 build:
 	$(XCODEBUILD) -configuration Release build
@@ -67,6 +68,11 @@ release:
 	-@$(LSREGISTER) -u "$(abspath $(DIST_APP))" 2>/dev/null
 	-@pluginkit -r "$(abspath $(DIST_APP))/Contents/PlugIns/PrettyFolderFinder.appex" 2>/dev/null
 	./Scripts/package-release.sh "$(DIST_APP)" "$(DIST)"
+
+# The animations are drawn by a debug build from the app's own views, off screen.
+# The pictures on the folders come from Scripts/make-demo-pictures.py (Blender).
+readme-media: debug
+	./Scripts/make-readme-media.sh "$(DEBUG_APP)" docs
 
 icon:
 	swift Scripts/make-app-icon.swift App/Assets.xcassets/AppIcon.appiconset

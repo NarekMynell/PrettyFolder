@@ -40,11 +40,11 @@ final class DropBadgeController {
     @discardableResult
     func show(for item: FinderItem, pointer: NSPoint) -> Bool {
         guard !isBusy else { return false }
-        guard let frame = frame(for: item, avoiding: pointer) else { return false }
+        guard let frame = Self.frame(for: item, avoiding: pointer) else { return false }
         cancelHide()
         folder = item.url
         if model.state != .ready { model.state = .ready }
-        let size = fontSize(for: item)
+        let size = Self.fontSize(for: item)
         if model.fontSize != size { model.fontSize = size }
         if panel.frame != frame { panel.setFrame(frame, display: true) }
         if !panel.isVisible {
@@ -117,14 +117,16 @@ final class DropBadgeController {
     /// Room around the pill for its shadow.
     static let shadowMargin: CGFloat = 8
 
-    private func fontSize(for item: FinderItem) -> CGFloat {
+    static func fontSize(for item: FinderItem) -> CGFloat {
         switch item.layout {
         case .icon: min(max(item.iconFrame.height * 0.16, 11), 13)
         case .row: 11
         }
     }
 
-    private func frame(for item: FinderItem, avoiding pointer: NSPoint) -> NSRect? {
+    /// Where the badge goes for `item`, shadow margin included; `nil` when it would land
+    /// under the pointer.
+    static func frame(for item: FinderItem, avoiding pointer: NSPoint) -> NSRect? {
         let font = fontSize(for: item)
         let height = item.layout == .icon ? min(max(item.iconFrame.height * 0.36, 24), 32) : 22
         let width = DropBadgeContent.width(fontSize: font, height: height)
