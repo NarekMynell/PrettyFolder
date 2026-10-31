@@ -210,7 +210,8 @@ enum PromiseReceiving {
         } catch {
             return nil
         }
-        let expected = max(receiver.fileNames.count, 1)
+        // File names are only known once the files arrive; the promised types are known now.
+        let expected = max(receiver.fileTypes.count, 1)
         return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             let state = OSAllocatedUnfairLock(initialState: (finished: false, pending: expected))
             let finish: @Sendable (URL?) -> Void = { url in
@@ -220,7 +221,9 @@ enum PromiseReceiving {
                 }
                 if first { continuation.resume(returning: url) }
             }
-            receiver.receivePromisedFiles(atDestination: directory, options: [:], operationQueue: queue) { url, error in
+            // AppKit calls this on `queue`, not the main thread. It must not inherit the
+            // main-actor isolation of this file, or Swift's isolation check stops the app.
+            receiver.receivePromisedFiles(atDestination: directory, options: [:], operationQueue: queue) { @Sendable url, error in
                 let allArrived = state.withLock { state -> Bool in
                     state.pending -= 1
                     return state.pending <= 0
