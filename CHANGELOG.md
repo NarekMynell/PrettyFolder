@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0
+
+- One window for everything: the folder's picture, where it sits on the folder, the default look, and the few settings behind the gear. It replaces the Settings, folder look and welcome windows.
+- Move and resize the picture right on the folder. It snaps to the folder's edges and middle; arrow keys nudge it, ⇧ keeps its proportions, ⌥ resizes around the middle and ⌘ turns snapping off. The folder changes right away, and ⌘Z undoes.
+- A picture made bigger than the folder is clipped to the folder's outline instead of covering the space around it.
+- Pointing at a folder brings up buttons to choose a picture, remove it or open the window. They replace the button on the folder's tab.
+- Drop a picture on the window to put it on the folder.
+- Finder's right-click menu has a single item, **Folder Picture…**, which opens the window.
+
 ## 1.0.1
 
 - Fixed a crash when a picture dragged out of Photos, Safari or Mail was dropped on the **Set as Icon** badge.
