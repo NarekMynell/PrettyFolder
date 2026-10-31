@@ -23,14 +23,16 @@ final class DropBadgeController {
     init() {
         targetView = DropTargetView(model: model)
         panel.contentView = targetView
+        targetView.isAccepting = { [weak self] in self?.folder != nil && self?.isBusy == false }
         targetView.onDrop = { [weak self] picture in self?.accept(picture) }
     }
 
-    var isVisible: Bool { panel.isVisible }
+    /// Shown and meant for a folder (not fading out after a hide).
+    var isVisible: Bool { panel.isVisible && folder != nil }
 
     /// Whether `point` (AppKit screen coordinates) is over the badge.
     func contains(_ point: NSPoint) -> Bool {
-        panel.isVisible && panel.frame.insetBy(dx: Self.shadowMargin - 2, dy: Self.shadowMargin - 2).contains(point)
+        isVisible && panel.frame.insetBy(dx: Self.shadowMargin - 2, dy: Self.shadowMargin - 2).contains(point)
     }
 
     /// Shows the badge for `item`. Returns `false` when it would land under the pointer:
@@ -48,6 +50,9 @@ final class DropBadgeController {
         if !panel.isVisible {
             panel.alphaValue = 0
             panel.orderFrontRegardless()
+        }
+        // Also brings it back if it was in the middle of fading out.
+        if panel.alphaValue < 1 {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.12
                 panel.animator().alphaValue = 1
@@ -57,7 +62,7 @@ final class DropBadgeController {
     }
 
     func hide(animated: Bool = true) {
-        guard panel.isVisible, !isBusy else { return }
+        guard panel.isVisible, folder != nil, !isBusy else { return }
         cancelHide()
         model.state = .ready
         folder = nil
@@ -166,6 +171,8 @@ final class DropBadgeModel {
 /// Hosts the SwiftUI pill and is the actual drag destination.
 private final class DropTargetView: NSView {
     var onDrop: ((DroppedPicture) -> Void)?
+    /// `false` while the badge is fading out or busy: drops then go nowhere, so refuse them.
+    var isAccepting: () -> Bool = { false }
     private let model: DropBadgeModel
     private var lastOperation: NSDragOperation = []
 
@@ -197,7 +204,7 @@ private final class DropTargetView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard model.state == .ready || model.state == .targeted,
+        guard isAccepting(), model.state == .ready || model.state == .targeted,
               DroppedPicture.isPresent(on: sender.draggingPasteboard)
         else {
             lastOperation = []
@@ -217,7 +224,7 @@ private final class DropTargetView: NSView {
     }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        lastOperation == .copy
+        lastOperation == .copy && isAccepting()
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
