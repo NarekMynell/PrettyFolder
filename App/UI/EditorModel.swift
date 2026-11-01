@@ -6,15 +6,16 @@ import PrettyFolderKit
 /// look that new pictures get.
 ///
 /// A folder's look is written to the folder as soon as a change is finished, so Finder
-/// shows it right away; every change can be undone. The default look can change many
-/// folders at once, so it is only saved on request, with a question about those folders.
+/// shows it right away; every change to a look can be undone, each on its own. The default
+/// look can change many folders at once, so it is only saved on request, with a question
+/// about those folders.
 @Observable
 final class EditorModel {
     enum Scope: Hashable {
         /// The folders the window was opened for.
         case folders
         /// The default look.
-        case standard
+        case defaultLook
     }
 
     @ObservationIgnored let actions: FolderActions
@@ -23,10 +24,11 @@ final class EditorModel {
     /// Called after the folders' icons changed, so the window can show the new one.
     @ObservationIgnored var onFoldersChanged: (() -> Void)?
 
-    /// The folders being edited; empty when the window only edits the default look.
+    /// The folders being edited; empty when the window only edits the default look. They are
+    /// followed when they are renamed or moved while the window is open.
     private(set) var folders: [URL] = []
     /// What the editor works on. A change still going on is finished first, where it began.
-    var scope: Scope = .standard {
+    var scope: Scope = .defaultLook {
         willSet { if newValue != scope { finishPendingChange() } }
     }
 
@@ -64,15 +66,27 @@ final class EditorModel {
         var style: IconStyle?
         var alignment: PictureAlignment
 
-        static let standard = Look(style: nil, alignment: .centered)
+        /// The default look, picture in the middle: what a folder has to begin with.
+        static let followingDefault = Look(style: nil, alignment: .centered)
+    }
+
+    /// Which parts of the looks a change writes, so that it never writes over the other part
+    /// with what the window last read: a new picture comes in the middle, say.
+    private enum Parts {
+        case style, alignment, both
     }
 
     /// Each folder's look.
     @ObservationIgnored private var looks: [URL: Look] = [:]
+    /// The folders as they were opened, to find them after a rename or a move.
+    @ObservationIgnored private var bookmarks: [Data?] = []
     @ObservationIgnored private var folderPictureURL: URL?
     @ObservationIgnored private var loadGeneration = 0
     @ObservationIgnored private var writeGeneration = 0
     @ObservationIgnored private var writing: Task<Void, Never>?
+    /// A reload found a change in the editor going on, or newer writes, and left the looks
+    /// alone; it is run again once they are done.
+    @ObservationIgnored private var reloadIsDue = false
     /// The editor's change in progress (a drag, a pinch, a burst of arrow keys): what it
     /// was made in, and where it started from.
     @ObservationIgnored private var pendingChange: (scope: Scope, folders: [URL], start: Placement)?
@@ -129,7 +143,7 @@ final class EditorModel {
     var canEdit: Bool { isEditingFolders ? hasPicture : true }
     var movesPicture: Bool { isEditingFolders && hasPicture }
     var canReset: Bool {
-        isEditingFolders ? hasPicture && !(followsDefault && isPictureCentered) : defaultDraft != .standard
+        isEditingFolders ? hasPicture && !(followsDefault && isPictureCentered) : defaultDraft != IconStyle.standard
     }
 
     private var placement: Placement { (style, alignment) }
@@ -141,6 +155,7 @@ final class EditorModel {
         if folders != self.folders {
             undoManager?.removeAllActions(withTarget: self)
             self.folders = folders
+            bookmarks = folders.map { try? $0.bookmarkData() }
             managedFolders = []
             looks = [:]
             folderPicture = nil
@@ -151,8 +166,26 @@ final class EditorModel {
             folderStyle = settings.defaultStyle
             folderAlignment = .centered
         }
-        scope = folders.isEmpty ? .standard : .folders
+        scope = folders.isEmpty ? .defaultLook : .folders
         reload()
+    }
+
+    /// The window closed: the pictures go, and come back with the next `reload`. So do the
+    /// undo steps, since the pictures may change before the window opens again.
+    func windowClosed() {
+        finishPendingChange()
+        undoManager?.removeAllActions(withTarget: self)
+        guides = []
+        isAdjusting = false
+        folderPicture = nil
+        folderPictureURL = nil
+        previewPicture = nil
+    }
+
+    /// Before quitting: finishes the change going on in the editor and waits for every write.
+    func finishEditing() async {
+        finishPendingChange()
+        await writing?.value
     }
 
     /// Reloads the window if it shows any of `changed`.
@@ -163,25 +196,46 @@ final class EditorModel {
         }
     }
 
-    /// Reads the folders again: their picture, their look, whether they have an icon.
+    /// Reads the folders again: where they are, their picture, their look, whether they have
+    /// an icon.
     func reload() {
+        reloadIsDue = false
         loadGeneration += 1
         let generation = loadGeneration
         let writesSoFar = writeGeneration
-        let folders = self.folders
+        let bookmarks = self.bookmarks
         let manager = actions.manager
         let queuedWrites = writing
         Task {
             // Read the folders as they are once the writes already on their way are done.
             await queuedWrites?.value
+            // Renamed or moved since the window opened? The disk is asked off the main thread.
+            let moved = await Task.detached(priority: .userInitiated) { Self.locations(of: bookmarks) }.value
+            guard generation == loadGeneration else { return }
+            for (index, location) in moved.enumerated() where index < folders.count {
+                if let location, location.path != folders[index].path { folders[index] = location }
+            }
+            let folders = self.folders
             var found: [(folder: URL, look: FolderLook)] = []
             for folder in folders {
                 if let look = await manager.look(for: folder) { found.append((folder, look)) }
+            }
+            let pictureURL = found.first?.look.pictureURL
+            let picture: SourceImage? = if let pictureURL, pictureURL != folderPictureURL {
+                await Task.detached(priority: .userInitiated) { PreviewPicture.load(pictureURL) }.value
+            } else {
+                folderPicture
             }
             // Something newer is on its way.
             guard generation == loadGeneration else { return }
             managedFolders = found.map(\.folder)
             hasCustomIcon = folders.contains(where: FolderInspector.hasCustomIcon)
+            if pictureURL != folderPictureURL, folderPictureURL != nil {
+                // Another picture, or none. What was being done to the old one, and undoing
+                // what was done to it, would put that onto this one.
+                pendingChange = nil
+                undoManager?.removeAllActions(withTarget: self)
+            }
             // A change in the editor, or one made since this started, is newer than what was read.
             if pendingChange == nil, writesSoFar == writeGeneration {
                 looks = Dictionary(
@@ -192,17 +246,23 @@ final class EditorModel {
                 folderAlignment = found.first?.look.alignment ?? .centered
                 followsDefault = found.allSatisfy(\.look.followsDefault)
                 isPictureCentered = found.allSatisfy { $0.look.alignment == .centered }
-            }
-            if let first = found.first?.look {
-                if first.pictureURL != folderPictureURL {
-                    folderPicture = PreviewPicture.load(first.pictureURL)
-                    folderPictureURL = first.pictureURL
-                }
             } else {
-                folderPicture = nil
-                folderPictureURL = nil
+                reloadIsDue = true
+            }
+            if pictureURL != folderPictureURL {
+                folderPicture = picture
+                folderPictureURL = pictureURL
             }
             onFoldersChanged?()
+        }
+    }
+
+    /// Where the folders are now, from their bookmarks; `nil` for one that can't be found.
+    nonisolated private static func locations(of bookmarks: [Data?]) -> [URL?] {
+        bookmarks.map { bookmark in
+            guard let bookmark else { return nil }
+            var stale = false
+            return try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale)
         }
     }
 
@@ -219,16 +279,25 @@ final class EditorModel {
         // Already finished, because the scope or the folders changed under it.
         guard let pending = pendingChange else { return }
         pendingChange = nil
-        guard pending.scope == scope, pending.folders == folders else { return }
-        record(from: pending.start, in: scope)
+        if pending.scope == scope, pending.folders == folders {
+            record(from: pending.start, in: scope)
+        }
+        if reloadIsDue { reload() }
     }
 
-    /// Finishes a change that is still going on, in what it was made in.
+    /// Finishes a change that is still going on, in what it was made in, as an undo step of
+    /// its own: whatever comes next in the same moment (Fit, reset) is undone separately.
     private func finishPendingChange() {
         guard let pending = pendingChange else { return }
         pendingChange = nil
-        guard pending.folders == folders else { return }
-        record(from: pending.start, in: pending.scope)
+        if pending.folders == folders {
+            record(from: pending.start, in: pending.scope)
+            if let undoManager, undoManager.groupingLevel > 0, !undoManager.isUndoing, !undoManager.isRedoing {
+                undoManager.endUndoGrouping()
+                undoManager.beginUndoGrouping()
+            }
+        }
+        if reloadIsDue { reload() }
     }
 
     /// Keeps a finished change: writes it to the folders, or keeps it in the draft, and
@@ -239,11 +308,11 @@ final class EditorModel {
             let style = folderStyle, alignment = folderAlignment
             let restyled = style != previous.style, moved = alignment != previous.alignment
             guard hasFolders, hasPicture, restyled || moved else { return }
-            change { look in
+            change(writing: restyled && moved ? .both : restyled ? .style : .alignment) { look in
                 if restyled { look.style = style }
                 if moved { look.alignment = alignment }
             }
-        case .standard:
+        case .defaultLook:
             guard defaultDraft != previous.style else { return }
             registerUndo(restoringDraft: previous.style)
         }
@@ -262,31 +331,32 @@ final class EditorModel {
         finishPendingChange()
         if isEditingFolders {
             guard canReset else { return }
-            change { $0 = .standard }
+            change(writing: .both) { $0 = .followingDefault }
         } else {
-            guard defaultDraft != .standard else { return }
+            guard defaultDraft != IconStyle.standard else { return }
             let previous = defaultDraft
-            defaultDraft = .standard
+            defaultDraft = IconStyle.standard
             registerUndo(restoringDraft: previous)
         }
     }
 
-    /// Makes the same change to every folder's look.
-    private func change(_ edit: (inout Look) -> Void) {
+    /// Makes the same change to every folder: what the editor shows becomes theirs. With
+    /// several folders, they all get the look the editor shows for the first one.
+    private func change(writing parts: Parts, _ edit: (inout Look) -> Void) {
         let before = looks
         var after: [URL: Look] = [:]
         for folder in managedFolders {
-            var look = before[folder] ?? .standard
+            var look = before[folder] ?? .followingDefault
             edit(&look)
             after[folder] = look
         }
-        apply(after)
+        apply(after, writing: parts)
         registerUndo(restoring: before)
     }
 
-    /// Shows each folder's look and writes it. Writes happen one after another, in the
-    /// order they were asked for.
-    private func apply(_ newLooks: [URL: Look]) {
+    /// Shows each folder's look and writes the parts that changed. Writes happen one after
+    /// another, in the order they were asked for; if any fails, the folders are read again.
+    private func apply(_ newLooks: [URL: Look], writing parts: Parts) {
         looks = newLooks
         let first = managedFolders.first.flatMap { newLooks[$0] }
         folderStyle = first?.style ?? settings.defaultStyle
@@ -301,13 +371,19 @@ final class EditorModel {
             var failures: [FolderOutcome] = []
             for (folder, look) in newLooks {
                 do {
-                    try await manager.setStyle(look.style, alignment: look.alignment, for: folder)
+                    switch parts {
+                    case .style: try await manager.setStyle(look.style, for: folder)
+                    case .alignment: try await manager.setAlignment(look.alignment, for: folder)
+                    case .both: try await manager.setStyle(look.style, alignment: look.alignment, for: folder)
+                    }
                 } catch {
                     failures.append(FolderOutcome(folder: folder, failure: error.localizedDescription))
                 }
             }
             actions.report(failures)
             onFoldersChanged?()
+            // What the window shows isn't what is on the folders, or a reload waited for this.
+            if !failures.isEmpty || reloadIsDue { reload() }
         }
     }
 
@@ -317,10 +393,10 @@ final class EditorModel {
         let folders = self.folders
         undoManager.registerUndo(withTarget: self) { model in
             guard model.folders == folders else { return }
-            model.finishPendingChange()
+            model.dropPendingChange()
             let current = model.looks
             model.scope = .folders
-            model.apply(looks.filter { model.managedFolders.contains($0.key) })
+            model.apply(looks.filter { model.managedFolders.contains($0.key) }, writing: .both)
             model.registerUndo(restoring: current)
         }
         undoManager.setActionName(String(localized: "Change Look"))
@@ -329,13 +405,19 @@ final class EditorModel {
     private func registerUndo(restoringDraft draft: IconStyle) {
         guard let undoManager else { return }
         undoManager.registerUndo(withTarget: self) { model in
-            model.finishPendingChange()
+            model.dropPendingChange()
             let current = model.defaultDraft
-            model.scope = .standard
+            model.scope = .defaultLook
             model.defaultDraft = draft
             model.registerUndo(restoringDraft: current)
         }
         undoManager.setActionName(String(localized: "Change Default Look"))
+    }
+
+    /// Undo goes back past anything the editor still had going; recording it now would put it
+    /// among the redo steps. (The editor finishes its arrow keys before it undoes.)
+    private func dropPendingChange() {
+        pendingChange = nil
     }
 
     // MARK: - Pictures
@@ -359,8 +441,13 @@ final class EditorModel {
     /// A picture dropped on the editor: for the folders, or to preview the default look with.
     func drop(_ file: DroppedImageFile) {
         guard isEditingFolders else {
-            if let picture = PreviewPicture.load(file.url) { previewPicture = picture }
-            file.discard()
+            Task {
+                let url = file.url
+                if let picture = await Task.detached(priority: .userInitiated, operation: { PreviewPicture.load(url) }).value {
+                    previewPicture = picture
+                }
+                file.discard()
+            }
             return
         }
         let folders = self.folders
@@ -414,8 +501,10 @@ final class EditorModel {
         completion?(false)
     }
 
+    /// The draft is thrown away, and so are its undo steps.
     func revertDefault() {
         defaultDraft = settings.defaultStyle
+        undoManager?.removeAllActions(withTarget: self)
     }
 
     // MARK: - Every folder

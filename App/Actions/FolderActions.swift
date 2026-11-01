@@ -42,14 +42,19 @@ final class FolderActions {
         controller.show(folders: eligible)
     }
 
-    /// Keeps the window up to date when folders it shows change some other way.
     /// A folder's new icon is on disk; the window shows it in its title bar straight away.
     func iconWritten(_ folder: URL, icon: RenderedIcon) {
         editor?.showIcon(icon, for: folder)
     }
 
+    /// Keeps the window up to date when folders it shows change some other way.
     func picturesChanged(_ folders: [URL]) {
         editor?.model.reload(ifShowing: folders)
+    }
+
+    /// Before quitting: finishes the window's change going on and waits for its writes.
+    func finishEditing() async {
+        await editor?.model.finishEditing()
     }
 
     /// Before quitting: a default look that hasn't been saved is worth a question. Returns
@@ -94,8 +99,11 @@ final class FolderActions {
             startingIn: settings.lastPictureFolder,
             attachedTo: window
         ) { url in
-            guard let url, let picture = PreviewPicture.load(url) else { return }
-            completion(picture)
+            guard let url else { return }
+            Task {
+                let picture = await Task.detached(priority: .userInitiated) { PreviewPicture.load(url) }.value
+                if let picture { completion(picture) }
+            }
         }
     }
 
@@ -170,12 +178,20 @@ final class FolderActions {
         return eligible
     }
 
+    /// Explains what went wrong, if anything did. Never in the middle of a drag in the
+    /// window: the alert waits until the mouse is let go.
     func report(_ outcomes: [FolderOutcome]) {
         let failures = outcomes.filter { !$0.succeeded }
         guard !failures.isEmpty else { return }
         for failure in failures {
             log.error("\(failure.folder.path, privacy: .private): \(failure.failure ?? "", privacy: .public)")
         }
+        RunLoop.main.perform(inModes: [.default]) { [weak self] in
+            MainActor.assumeIsolated { self?.explain(failures) }
+        }
+    }
+
+    private func explain(_ failures: [FolderOutcome]) {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = failures.count == 1

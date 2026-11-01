@@ -5,8 +5,6 @@ import PrettyFolderKit
 final class PicturePicker {
     private var panel: NSOpenPanel?
 
-    var isOpen: Bool { panel != nil }
-
     /// Shows the picker, as a sheet on `window` when there is one. Only one picker is open
     /// at a time; asking again brings it to the front. `completion` gets `nil` on Cancel.
     func pick(message: String, prompt: String, startingIn directory: URL?, attachedTo window: NSWindow?, completion: @escaping (URL?) -> Void) {

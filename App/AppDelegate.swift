@@ -33,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Forget folders whose icon was changed elsewhere, and pictures left over from a crash.
+        Task { [manager] in await manager.prune() }
+
         isReady = true
         for (command, fromOurExtension) in queuedCommands {
             actions.handle(command, fromOurExtension: fromOurExtension)
@@ -94,11 +97,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    /// Quitting waits for a new default look to be saved or discarded, then for the window's
+    /// last change to be written, and lets the folder being written finish: nothing is cut off
+    /// halfway. Long runs (Redraw All, Remove All) stop at the next folder.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let asking = actions.confirmQuit { proceed in
-            NSApp.reply(toApplicationShouldTerminate: proceed)
+        let asking = actions.confirmQuit { [weak self] proceed in
+            guard proceed else { return NSApp.reply(toApplicationShouldTerminate: false) }
+            self?.finishWriting()
         }
-        return asking ? .terminateLater : .terminateNow
+        if !asking { finishWriting() }
+        return .terminateLater
+    }
+
+    private func finishWriting() {
+        let finished = OneTimeReply()
+        Task { [actions, manager] in
+            await actions.finishEditing()
+            await manager.stop()
+            finished.reply()
+        }
+        // A folder on a disk that stopped answering mustn't keep the app from quitting.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { finished.reply() }
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -113,5 +132,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log.notice("Asking another running copy (pid \(other.processIdentifier)) to quit")
             other.terminate()
         }
+    }
+}
+
+/// Tells AppKit once that quitting can go ahead, whichever is first: the work being done or
+/// the time running out.
+private final class OneTimeReply {
+    private var replied = false
+
+    func reply() {
+        guard !replied else { return }
+        replied = true
+        NSApp.reply(toApplicationShouldTerminate: true)
     }
 }

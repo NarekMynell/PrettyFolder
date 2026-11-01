@@ -7,7 +7,9 @@ import UniformTypeIdentifiers
 ///
 /// Bitmaps are decoded once, already downsampled and rotated according to their EXIF
 /// orientation. Vector files (PDF, SVG) stay vector so they are sharp at every icon size.
-public final class SourceImage {
+/// It never changes once made, so it can be decoded on one thread and drawn on another
+/// (an `NSImage` inside is only ever drawn, one thread at a time).
+public final class SourceImage: @unchecked Sendable {
     public enum Content {
         case bitmap(CGImage)
         case vector(NSImage)

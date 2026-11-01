@@ -96,7 +96,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             guard let self else { return completion(true) }
             switch response {
             case .alertFirstButtonReturn:
-                model.scope = .standard
+                model.scope = .defaultLook
                 model.saveDefault(completion: completion)
             case .alertSecondButtonReturn:
                 model.revertDefault()
@@ -108,8 +108,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        model.guides = []
-        model.isAdjusting = false
+        model.windowClosed()
+    }
+
+    /// Back from Finder: the folders may have been renamed, or their pictures changed there.
+    func windowDidBecomeKey(_ notification: Notification) {
+        if model.hasFolders { model.reload() }
     }
 }
 
@@ -126,7 +130,7 @@ private struct EditorView: View {
                 if model.hasFolders {
                     Picker("Edit", selection: $model.scope) {
                         Text(model.folders.count == 1 ? "This Folder" : "These Folders").tag(EditorModel.Scope.folders)
-                        Text("Default").tag(EditorModel.Scope.standard)
+                        Text("Default").tag(EditorModel.Scope.defaultLook)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -349,7 +353,12 @@ struct DroppedImageFile: Transferable {
             .appendingPathComponent("PrettyFolder-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         url = directory.appendingPathComponent(file.lastPathComponent)
-        try FileManager.default.copyItem(at: file, to: url)
+        do {
+            try FileManager.default.copyItem(at: file, to: url)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     /// Deletes the copy once it has been used.

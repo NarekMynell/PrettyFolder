@@ -38,6 +38,7 @@ struct StyleEditor: NSViewRepresentable {
 
     func updateNSView(_ view: StyleEditorView, context: Context) {
         view.actions = StyleEditorView.Actions(
+            current: { (style, alignment) },
             change: { style = $0; alignment = $1 },
             showGuides: { guides = $0 },
             adjust: { isAdjusting = $0 },
@@ -58,12 +59,14 @@ struct StyleEditor: NSViewRepresentable {
 /// What the editor draws and how it takes the mouse, the trackpad and the keyboard. The
 /// pointer always shows what pressing there would do: a resize arrow on a handle, a hand
 /// over a picture that can move, the arrow on the rectangle's edge, which moves it.
-final class StyleEditorView: NSView, NSViewToolTipOwner {
+final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     /// Room around the folder, so the handles of a rectangle at its edges show and can be
     /// grabbed whole. The folder's top-left corner is the origin all the same.
     static let margin: CGFloat = 12
 
     struct Actions {
+        /// The look as the model has it now.
+        var current: () -> (IconStyle, PictureAlignment) = { (.standard, .centered) }
         var change: (IconStyle, PictureAlignment) -> Void = { _, _ in }
         var showGuides: ([SnapGuide]) -> Void = { _ in }
         var adjust: (Bool) -> Void = { _ in }
@@ -115,7 +118,6 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 320))
         wantsLayer = true
         setBoundsOrigin(NSPoint(x: -Self.margin, y: -Self.margin))
-        addToolTip(bounds, owner: self, userData: nil)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(String(localized: "Picture position"))
@@ -129,20 +131,19 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         setBoundsOrigin(NSPoint(x: -Self.margin, y: -Self.margin))
-        removeAllToolTips()
-        addToolTip(bounds, owner: self, userData: nil)
+        updateToolTips()
     }
 
-    /// Takes what SwiftUI has. A drag or a pinch going on is newer than the look it brings,
-    /// which is the editor's own change coming back.
+    /// Takes what SwiftUI has. While a drag or a pinch goes on, the editor's own look is the
+    /// one that counts; once it's over, the model's is taken again (`catchUp`).
     func update(
         style: IconStyle, alignment: PictureAlignment, guides: [SnapGuide], isAdjusting: Bool,
         picture: SourceImage?, isEnabled: Bool, movesPicture: Bool, side: CGFloat
     ) {
         var moved = false
         if dragged == nil, pinch == nil, style != self.style || alignment != self.alignment {
-            // Changed from elsewhere (undo, the reset button, another folder's look): any
-            // nudges in a row were finished there, before the change.
+            // Changed from elsewhere (undo, the reset button, another folder's look): the model
+            // finished any nudges in a row before making the change.
             nudgeEnd?.cancel()
             nudgeEnd = nil
             self.style = style
@@ -160,8 +161,24 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
         self.isEnabled = isEnabled
         self.movesPicture = movesPicture
         self.side = side
+        // Turned off in the middle of a pinch (the picture was taken off in Finder, say).
+        if !isEnabled { endPinch(restoring: true) }
         setAccessibilityValue(accessibilityDescription)
-        if changed { queueCursorUpdate() }
+        if changed {
+            updateToolTips()
+            queueCursorUpdate()
+        }
+    }
+
+    /// After a drag or a pinch, shows the look the model has: the gesture's own, once the
+    /// model took it, or another one if the model moved on meanwhile (to other folders, say).
+    private func catchUp() {
+        let (style, alignment) = actions.current()
+        guard style != self.style || alignment != self.alignment else { return }
+        self.style = style
+        self.alignment = alignment
+        needsDisplay = true
+        setAccessibilityValue(accessibilityDescription)
     }
 
     // MARK: - Parts
@@ -179,21 +196,30 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
     func part(at point: CGPoint) -> Part {
         guard isEnabled else { return .none }
         let target = target
-        let shortSide = min(target.width, target.height)
-        // Handles win where they overlap the edge; on a small rectangle they reach less far,
-        // so there is still an inside to grab.
-        let reach = min(11, max(5, shortSide / 4))
+        // Handles win where they overlap the edge.
+        let reach = handleReach(for: target)
         let nearest = ResizeHandle.allCases
             .map { (handle: $0, distance: hypot(point.x - $0.position(in: target).x, point.y - $0.position(in: target).y)) }
             .min { $0.distance < $1.distance }
         if let nearest, nearest.distance <= reach {
             return .handle(nearest.handle)
         }
-        let inside = min(4, shortSide / 6)
+        let inside = edgeInside(for: target)
         let onEdge = target.insetBy(dx: -6, dy: -6).contains(point) && !target.insetBy(dx: inside, dy: inside).contains(point)
         if onEdge { return .frame }
         if target.contains(point) { return pictureCanMove ? .picture : .frame }
         return .none
+    }
+
+    /// How far a handle can be grabbed from: less on a small rectangle, so there is still an
+    /// inside to grab.
+    private func handleReach(for target: CGRect) -> CGFloat {
+        min(11, max(5, min(target.width, target.height) / 4))
+    }
+
+    /// How far into the rectangle its edge can be grabbed.
+    private func edgeInside(for target: CGRect) -> CGFloat {
+        min(4, min(target.width, target.height) / 6)
     }
 
     /// The pointer over `part`.
@@ -286,21 +312,61 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
         finishNudge()
         windowObservers.forEach(NotificationCenter.default.removeObserver)
         windowObservers = []
+        endPinch(restoring: true)
         guard let newWindow else { return }
+        let center = NotificationCenter.default
         // A window that becomes key under a still pointer gets no mouse moves to set it right.
-        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
-            windowObservers.append(NotificationCenter.default.addObserver(forName: name, object: newWindow, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.updateCursor() }
-            })
+        windowObservers.append(center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: newWindow, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.queueCursorUpdate() }
+        })
+        // An alert or another window takes over: a pinch can't finish, and the pointer is no
+        // longer the editor's to set.
+        windowObservers.append(center.addObserver(forName: NSWindow.didResignKeyNotification, object: newWindow, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.windowResignedKey() }
+        })
+    }
+
+    private func windowResignedKey() {
+        endPinch(restoring: true)
+        if hovered != .none, let window, bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
+            NSCursor.arrow.set()
         }
+        setHovered(.none)
+    }
+
+    /// A tool tip for each part, so moving from one to another brings up its own words.
+    private func updateToolTips() {
+        removeAllToolTips()
+        guard isEnabled, dragged == nil else { return }
+        let target = target
+        let reach = handleReach(for: target)
+        for handle in ResizeHandle.allCases {
+            let center = handle.position(in: target)
+            addToolTip(NSRect(x: center.x - reach, y: center.y - reach, width: 2 * reach, height: 2 * reach), owner: self, userData: nil)
+        }
+        let band = target.insetBy(dx: -6, dy: -6)
+        let inside = edgeInside(for: target)
+        for edge in [NSRect(x: band.minX, y: band.minY, width: band.width, height: 6 + inside),
+                     NSRect(x: band.minX, y: target.maxY - inside, width: band.width, height: 6 + inside),
+                     NSRect(x: band.minX, y: band.minY, width: 6 + inside, height: band.height),
+                     NSRect(x: target.maxX - inside, y: band.minY, width: 6 + inside, height: band.height)] {
+            addToolTip(edge, owner: self, userData: nil)
+        }
+        addToolTip(target.insetBy(dx: inside, dy: inside), owner: self, userData: nil)
     }
 
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
         switch part(at: point) {
-        case .handle: String(localized: "Drag to resize. ⇧ keeps the proportions, ⌥ resizes around the middle.")
-        case .frame: String(localized: "Drag to move the frame.")
-        case .picture: String(localized: "Drag to move the picture in its frame. Double-click puts it back in the middle.")
-        case .none: ""
+        case .handle(let handle) where handle.isCorner:
+            String(localized: "Drag to resize. ⇧ keeps the proportions, ⌥ resizes around the middle.")
+        case .handle:
+            String(localized: "Drag to resize. ⌥ resizes around the middle.")
+        case .frame:
+            String(localized: "Drag to move the frame.")
+        case .picture:
+            String(localized: "Drag to move the picture in its frame. Double-click puts it back in the middle.")
+        case .none:
+            ""
         }
     }
 
@@ -355,7 +421,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
                 follow(event.modifierFlags)
             case .flagsChanged:
                 follow(event.modifierFlags)
-            case .keyDown where event.keyCode == 53:
+            case .keyDown where event.charactersIgnoringModifiers == "\u{1b}":
                 if let origin { set(origin.style, origin.alignment) }
                 stop.pointee = true
             case .leftMouseUp:
@@ -371,7 +437,9 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
             setAdjusting(false)
             actions.commit()
         }
+        catchUp()
         needsDisplay = true
+        updateToolTips()
         updateCursor(afterDrag: true)
     }
 
@@ -407,15 +475,15 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
     }
 
     override func magnify(with event: NSEvent) {
-        guard isEnabled, dragged == nil else { return }
         switch event.phase {
         case .began:
+            guard isEnabled, dragged == nil, pinch == nil else { return }
             finishNudge()
             pinch = (style, 0)
             actions.begin()
             setAdjusting(true)
         case .changed:
-            guard var current = pinch else { return }
+            guard isEnabled, var current = pinch else { return }
             current.magnification += event.magnification
             pinch = current
             let start = current.start
@@ -423,24 +491,57 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
             let width = min(max(start.width * scale, IconStyle.minimumSide), 1)
             let height = min(max(start.height * scale, IconStyle.minimumSide), 1)
             set(rect: CGRect(x: start.rect.midX - width / 2, y: start.rect.midY - height / 2, width: width, height: height))
-        case .ended, .cancelled:
-            guard let current = pinch else { return }
-            if event.phase == .cancelled { set(current.start, alignment) }
-            pinch = nil
-            setAdjusting(false)
-            actions.commit()
-            updateCursor()
+            queueCursorUpdate()
+        case .ended:
+            endPinch(restoring: false)
+        case .cancelled:
+            endPinch(restoring: true)
         default:
             break
         }
     }
 
+    /// Finishes a pinch, kept or put back where it started. Also when its end never comes:
+    /// the editor turned off, or an alert or another window took over.
+    private func endPinch(restoring: Bool) {
+        guard let current = pinch else { return }
+        if restoring { set(current.start, alignment) }
+        pinch = nil
+        setAdjusting(false)
+        actions.commit()
+        catchUp()
+        updateToolTips()
+        queueCursorUpdate()
+    }
+
+    /// One change, made at once and undone as one: a double-click, an action from VoiceOver.
+    private func change(_ make: () -> Void) {
+        guard isEnabled, dragged == nil, pinch == nil else { return }
+        finishNudge()
+        actions.begin()
+        make()
+        actions.commit()
+        updateToolTips()
+        queueCursorUpdate()
+    }
+
     /// A double-click on a picture that was moved puts it back in the middle.
     private func centerPicture() {
         guard alignment != .centered else { return }
-        actions.begin()
-        set(style, .centered)
-        actions.commit()
+        change { set(style, .centered) }
+    }
+
+    /// The rectangle `offset` points away.
+    private func moveFrame(by offset: CGSize) {
+        let rect = style.rect.offsetBy(dx: offset.width / side, dy: offset.height / side)
+        change { set(rect: rect) }
+    }
+
+    /// The rectangle `factor` times as big, around its middle.
+    private func scaleFrame(by factor: CGFloat) {
+        let width = min(max(style.width * factor, IconStyle.minimumSide), 1)
+        let height = min(max(style.height * factor, IconStyle.minimumSide), 1)
+        change { set(rect: CGRect(x: style.rect.midX - width / 2, y: style.rect.midY - height / 2, width: width, height: height)) }
     }
 
     // MARK: - Keyboard
@@ -461,9 +562,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
             return super.keyDown(with: event)
         }
         if modifiers.contains(.option) {
-            guard pictureCanMove, let picture else { return }
-            let moved = IconGeometry.alignment(alignment, movedBy: offset, imageSize: picture.size, in: target, mode: style.mode)
-            guard moved != alignment else { return }
+            guard let moved = picture(movedBy: offset) else { return }
             nudge { set(style, moved) }
         } else {
             let rect = style.rect.offsetBy(dx: offset.width / side, dy: offset.height / side)
@@ -471,10 +570,18 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
         }
     }
 
+    /// Where the picture goes when moved by `offset` points; `nil` when it can't move that way.
+    private func picture(movedBy offset: CGSize) -> PictureAlignment? {
+        guard pictureCanMove, let picture else { return nil }
+        let moved = IconGeometry.alignment(alignment, movedBy: offset, imageSize: picture.size, in: target, mode: style.mode)
+        return moved == alignment ? nil : moved
+    }
+
     private func nudge(_ change: () -> Void) {
         if nudgeEnd == nil { actions.begin() }
         nudgeEnd?.cancel()
         change()
+        queueCursorUpdate()
         nudgeEnd = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(450))
             guard !Task.isCancelled else { return }
@@ -487,11 +594,96 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
         nudgeEnd.cancel()
         self.nudgeEnd = nil
         actions.commit()
+        updateToolTips()
     }
 
     override func resignFirstResponder() -> Bool {
         finishNudge()
         return super.resignFirstResponder()
+    }
+
+    // MARK: - Undo
+
+    /// ⌘Z right after arrow keys undoes them, as a change of their own; during a pinch there
+    /// is nothing finished to undo yet.
+    @objc func undo(_ sender: Any?) {
+        guard dragged == nil, pinch == nil else { return }
+        finishNudge()
+        undoManager?.undo()
+    }
+
+    @objc func redo(_ sender: Any?) {
+        guard dragged == nil, pinch == nil, nudgeEnd == nil else { return }
+        undoManager?.redo()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard let undoManager, dragged == nil, pinch == nil else { return false }
+        switch menuItem.action {
+        case #selector(undo(_:)):
+            // Arrow keys still being pressed are about to become a change.
+            guard nudgeEnd == nil else {
+                menuItem.title = undoManager.undoMenuTitle(forUndoActionName: "")
+                return true
+            }
+            menuItem.title = undoManager.undoMenuItemTitle
+            return undoManager.canUndo
+        case #selector(redo(_:)):
+            menuItem.title = undoManager.redoMenuItemTitle
+            return nudgeEnd == nil && undoManager.canRedo
+        default:
+            return true
+        }
+    }
+
+    // MARK: - VoiceOver and the keyboard
+
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        guard isEnabled else { return nil }
+        func action(_ name: String, _ perform: @escaping (StyleEditorView) -> Void) -> NSAccessibilityCustomAction {
+            NSAccessibilityCustomAction(name: name) { [weak self] in
+                guard let self else { return false }
+                perform(self)
+                return true
+            }
+        }
+        let step: CGFloat = 10
+        var list = [
+            action(String(localized: "Move Frame Left")) { $0.moveFrame(by: CGSize(width: -step, height: 0)) },
+            action(String(localized: "Move Frame Right")) { $0.moveFrame(by: CGSize(width: step, height: 0)) },
+            action(String(localized: "Move Frame Up")) { $0.moveFrame(by: CGSize(width: 0, height: -step)) },
+            action(String(localized: "Move Frame Down")) { $0.moveFrame(by: CGSize(width: 0, height: step)) },
+            action(String(localized: "Make Frame Bigger")) { $0.scaleFrame(by: 1.1) },
+            action(String(localized: "Make Frame Smaller")) { $0.scaleFrame(by: 1 / 1.1) },
+        ]
+        if pictureCanMove {
+            for (name, offset) in [(String(localized: "Move Picture Left"), CGSize(width: -step, height: 0)),
+                                   (String(localized: "Move Picture Right"), CGSize(width: step, height: 0)),
+                                   (String(localized: "Move Picture Up"), CGSize(width: 0, height: -step)),
+                                   (String(localized: "Move Picture Down"), CGSize(width: 0, height: step))] {
+                list.append(action(name) { editor in
+                    guard let moved = editor.picture(movedBy: offset) else { return }
+                    editor.change { editor.set(editor.style, moved) }
+                })
+            }
+            list.append(action(String(localized: "Center Picture")) { $0.centerPicture() })
+        }
+        return list
+    }
+
+    // A focus ring for those who move around with the keyboard; a click shows the frame
+    // and its handles instead.
+    override var focusRingType: NSFocusRingType {
+        get { NSApp.isFullKeyboardAccessEnabled ? .exterior : .none }
+        set {}
+    }
+
+    override var focusRingMaskBounds: NSRect {
+        NSRect(x: 0, y: 0, width: side, height: side)
+    }
+
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: focusRingMaskBounds, xRadius: 8, yRadius: 8).fill()
     }
 
     // MARK: - Changes
@@ -530,8 +722,11 @@ final class StyleEditorView: NSView, NSViewToolTipOwner {
     }
 
     private var accessibilityDescription: String {
-        let percent = { (value: Double) in "\(Int((value * 100).rounded()))%" }
-        return "\(percent(style.width)) wide, \(percent(style.height)) tall, \(style.mode == .fill ? "fill" : "fit")"
+        let width = style.width.formatted(.percent.precision(.fractionLength(0)))
+        let height = style.height.formatted(.percent.precision(.fractionLength(0)))
+        return style.mode == .fill
+            ? String(localized: "\(width) wide, \(height) tall, fills its frame")
+            : String(localized: "\(width) wide, \(height) tall, fits in its frame")
     }
 
     // MARK: - Drawing
@@ -727,7 +922,8 @@ enum ResizeHandle: CaseIterable {
 /// Pictures for the editor: small enough to stay quick, sharp enough for its size.
 enum PreviewPicture {
     /// Always a bitmap: vectors are rasterized at full size, so tiny SVGs stay sharp too.
-    static func load(_ url: URL) -> SourceImage? {
+    /// Reads and decodes the file, so better not on the main thread.
+    nonisolated static func load(_ url: URL) -> SourceImage? {
         guard let picture = try? ImageLoader.load(contentsOf: url),
               let bitmap = picture.bitmap(maxSide: 1024)
         else { return nil }
