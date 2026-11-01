@@ -239,21 +239,6 @@ enum Scenery {
         }
     }
 
-    /// A click: a ring around the pointer that grows and fades as `age` goes from 0 to 1.
-    static func drawClick(at point: CGPoint, age: Double, on bitmap: Bitmap) {
-        let radius = 5 + 13 * CGFloat(ease(age))
-        bitmap.appKit {
-            let ring = NSBezierPath(ovalIn: NSRect(x: point.x - radius, y: point.y - radius, width: 2 * radius, height: 2 * radius))
-            // A dark edge under the white, so it shows on light pictures too.
-            ring.lineWidth = 4.5
-            NSColor.black.withAlphaComponent(0.35 * (1 - age)).setStroke()
-            ring.stroke()
-            ring.lineWidth = 2.5
-            NSColor.white.withAlphaComponent(0.9 * (1 - age)).setStroke()
-            ring.stroke()
-        }
-    }
-
     /// Two fingertips around the pointer, moving apart as `spread` goes from 0 to 1: a pinch.
     static func drawPinch(around point: CGPoint, spread: Double, alpha: Double, on bitmap: Bitmap) {
         guard alpha > 0 else { return }
@@ -269,6 +254,38 @@ enum Scenery {
                     tip.lineWidth = 1.5
                     tip.stroke()
                 }
+            }
+        }
+    }
+
+    /// A small mouse beside the pointer with its right button held down, shown as much as
+    /// `alpha` says: a drag with the right button.
+    static func drawRightButton(beside point: CGPoint, alpha: Double, on bitmap: Bitmap) {
+        guard alpha > 0 else { return }
+        let alpha = CGFloat(alpha)
+        let body = CGRect(x: point.x + 15, y: point.y + 17, width: 18, height: 26)
+        let split = body.minY + body.height * 0.42
+        bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.35 * alpha), blur: 3, offset: CGSize(width: 0, height: 1)) {
+            bitmap.appKit {
+                let shape = NSBezierPath(roundedRect: body, xRadius: 9, yRadius: 9)
+                NSColor.white.withAlphaComponent(0.95 * alpha).setFill()
+                shape.fill()
+                // The right button, pressed.
+                NSGraphicsContext.saveGraphicsState()
+                shape.addClip()
+                NSColor(srgbRed: 0.04, green: 0.52, blue: 1, alpha: alpha).setFill()
+                NSBezierPath(rect: NSRect(x: body.midX, y: body.minY, width: body.width / 2, height: split - body.minY)).fill()
+                NSGraphicsContext.restoreGraphicsState()
+                let seams = NSBezierPath()
+                seams.move(to: NSPoint(x: body.minX, y: split))
+                seams.line(to: NSPoint(x: body.maxX, y: split))
+                seams.move(to: NSPoint(x: body.midX, y: body.minY))
+                seams.line(to: NSPoint(x: body.midX, y: split))
+                seams.lineWidth = 1
+                NSColor.black.withAlphaComponent(0.4 * alpha).setStroke()
+                seams.stroke()
+                shape.lineWidth = 1.2
+                shape.stroke()
             }
         }
     }

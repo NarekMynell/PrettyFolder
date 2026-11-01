@@ -41,11 +41,11 @@ You can also right-click a folder and choose **Folder Picture…**, for one fold
 
 ### Fine-tune it
 
-<img src="docs/window.gif" width="780" alt="In PrettyFolder's window, the frame around the rocket picture is dragged until it snaps to the folder's front, then stretched over the folder's tab where it takes the folder's shape. A double-click takes hold of the rocket, which is slid sideways inside the frame, and a pinch zooms in on it. Then it is switched to Fit and reset. The folder on the Desktop changes along with it.">
+<img src="docs/window.gif" width="780" alt="In PrettyFolder's window, a pinch makes the frame around the rocket picture bigger until its sides snap to the folder's sides. The frame is dragged until it snaps to the folder's front, then stretched over the folder's tab where it takes the folder's shape. With the right mouse button held down, the rocket is slid sideways inside the frame. Then it is switched to Fit and reset. The folder on the Desktop changes along with it.">
 
-Drag the frame to move it and its handles to resize it. To move the picture inside the frame, double-click and drag: with **Fill**, which covers the whole frame, to pick the part that shows; with **Fit**, which shows the whole picture, to pick where it sits. Pinch or scroll to zoom the picture in and out. Everything snaps to the folder's edges and middle, the zoom to where the picture just fills or fits the frame, and the picture never spills outside the folder. Where it covers both the back and the front of the folder, it takes on the folder's light and shade. The folder changes right away, ⌘Z undoes, and **Done** closes the window.
+Drag the frame to move it and its handles to resize it, or pinch or scroll to make it bigger or smaller; the picture grows and shrinks with it. To move the picture inside the frame, drag it with the right mouse button (or hold Control, or double-click and drag): with **Fill**, which covers the whole frame, to pick the part that shows; with **Fit**, which shows the whole picture, to pick where it sits. Everything snaps to the folder's edges and middle, and the picture never spills outside the folder. Where it covers both the back and the front of the folder, it takes on the folder's light and shade. The folder changes right away, ⌘Z undoes, and **Done** closes the window.
 
-Hold ⇧ to keep the proportions, ⌥ to resize around the middle, ⌘ to turn snapping off. Arrow keys nudge the frame, ⌥ and arrow keys the picture, and ⌘+ and ⌘− zoom.
+Hold ⇧ to keep the proportions, ⌥ to resize around the middle, ⌘ to turn snapping off. Arrow keys nudge the frame, ⌥ and arrow keys the picture, and ⌘+ and ⌘− make the frame bigger or smaller.
 
 **Default** is the look new pictures get. When you save it, PrettyFolder asks whether the folders already using it should change too.
 
