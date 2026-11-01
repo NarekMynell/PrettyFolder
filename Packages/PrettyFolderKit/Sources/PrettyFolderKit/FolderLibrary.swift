@@ -13,8 +13,7 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
     var pictureName: String
     /// The folder's own look; `nil` means it follows the default look.
     public var style: IconStyle?
-    /// Where the picture sits in the look's rectangle and how big; `nil` in the middle, at the
-    /// size the look gives it.
+    /// Where the picture sits in the look's rectangle; `nil` in the middle.
     public var placement: PicturePlacement?
     /// SHA-256 of the icon resource PrettyFolder wrote. If the folder's icon no longer
     /// matches, somebody else changed it and PrettyFolder keeps its hands off.
@@ -40,7 +39,7 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
         self.missingSince = missingSince
     }
 
-    /// Before pictures could be zoomed, where one sat was kept as its alignment.
+    /// Where the picture sat used to be kept as its alignment.
     private enum EarlierKeys: String, CodingKey {
         case alignment
     }

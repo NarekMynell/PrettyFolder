@@ -150,7 +150,7 @@ final class Studio {
     }
 
     /// The icon PrettyFolder makes: the folder with `picture` on it, or the plain folder.
-    func icon(_ picture: SourceImage?, style: IconStyle = .standard, placement: PicturePlacement = .natural, side: CGFloat) -> CGImage {
+    func icon(_ picture: SourceImage?, style: IconStyle = .standard, placement: PicturePlacement = .centered, side: CGFloat) -> CGImage {
         renderer.render(picture, style: style, placement: placement, pixelSize: Int((side * Stage.scale).rounded()))!
     }
 

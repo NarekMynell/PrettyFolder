@@ -27,7 +27,7 @@ public struct FolderLook: Sendable, Equatable {
     public let pictureURL: URL
     /// The style currently in effect.
     public let style: IconStyle
-    /// Where the picture sits in the style's rectangle, and how big.
+    /// Where the picture sits in the style's rectangle.
     public let placement: PicturePlacement
     /// `true` when the folder follows the default look.
     public let followsDefault: Bool
@@ -189,7 +189,7 @@ public actor FolderImageManager {
                 let stale = existing == nil ? staleRecord(of: folder) : nil
                 let bookmark = try folder.bookmarkData()
                 let style = existing?.style ?? defaultStyle
-                let image = try drawn[style] ?? draw(picture, style: style, placement: .natural)
+                let image = try drawn[style] ?? draw(picture, style: style, placement: .centered)
                 drawn[style] = image
                 let icon = try writeIcon(image, to: folder)
                 let now = Date()
@@ -281,7 +281,7 @@ public actor FolderImageManager {
             folder: folder,
             pictureURL: library.pictureURL(named: record.pictureName),
             style: record.style ?? defaultStyle,
-            placement: record.placement ?? .natural,
+            placement: record.placement ?? .centered,
             followsDefault: record.style == nil
         )
     }
@@ -291,7 +291,7 @@ public actor FolderImageManager {
     public func setStyle(_ style: IconStyle?, placement: PicturePlacement, for folder: URL) async throws {
         try await change(folder) { record in
             record.style = style
-            record.placement = placement == .natural ? nil : placement
+            record.placement = placement == .centered ? nil : placement
         }
     }
 
@@ -301,9 +301,9 @@ public actor FolderImageManager {
         try await change(folder) { $0.style = style }
     }
 
-    /// Moves or zooms one folder's picture inside its look, which stays as it is.
+    /// Moves one folder's picture inside its look, which stays as it is.
     public func setPlacement(_ placement: PicturePlacement, for folder: URL) async throws {
-        try await change(folder) { $0.placement = placement == .natural ? nil : placement }
+        try await change(folder) { $0.placement = placement == .centered ? nil : placement }
     }
 
     /// Changes a folder's record with `edit`, as it is when the change comes in, and redraws it.
@@ -313,7 +313,7 @@ public actor FolderImageManager {
         }
         let picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
         edit(&record)
-        let icon = try writeIcon(draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .natural), to: folder)
+        let icon = try writeIcon(draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .centered), to: folder)
         record.iconDigest = icon.digest
         record.updated = Date()
         library.upsert(record)
@@ -469,7 +469,7 @@ public actor FolderImageManager {
                         picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
                         open = (record.pictureName, picture)
                     }
-                    let image = try draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .natural)
+                    let image = try draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .centered)
                     let icon = try writeIcon(image, to: folder)
                     record.iconDigest = icon.digest
                     record.updated = Date()

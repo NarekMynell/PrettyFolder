@@ -18,7 +18,7 @@ public struct IconRenderer {
     }
 
     /// A multi-resolution icon, ready for `NSWorkspace.setIcon(_:forFile:options:)`.
-    public func makeIcon(with picture: SourceImage, style: IconStyle, placement: PicturePlacement = .natural) -> NSImage? {
+    public func makeIcon(with picture: SourceImage, style: IconStyle, placement: PicturePlacement = .centered) -> NSImage? {
         let icon = NSImage(size: NSSize(width: 512, height: 512))
         for side in Self.pixelSizes {
             let rendered: Bool = autoreleasepool {
@@ -37,7 +37,7 @@ public struct IconRenderer {
     /// One square bitmap of the folder with the picture on it.
     /// Passing `nil` draws the plain folder, which the editor uses as a backdrop.
     public func render(
-        _ picture: SourceImage?, style: IconStyle, placement: PicturePlacement = .natural, pixelSize side: Int
+        _ picture: SourceImage?, style: IconStyle, placement: PicturePlacement = .centered, pixelSize side: Int
     ) -> CGImage? {
         guard side > 0, let context = CGContext(
             data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
@@ -71,7 +71,7 @@ public struct IconRenderer {
     public static func drawPicture(
         _ picture: SourceImage,
         style: IconStyle,
-        placement: PicturePlacement = .natural,
+        placement: PicturePlacement = .centered,
         canvas: CGFloat,
         on surface: FolderSurface?,
         in context: CGContext

@@ -84,7 +84,8 @@ enum MainMenu {
         edit.addItem(withTitle: String(localized: "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         main.addItem(submenu: edit, title: edit.title)
 
-        // Zooms the picture in the window. ⌘= as well as ⌘+, which needs Shift on many keyboards.
+        // Makes the picture's frame in the window bigger or smaller. ⌘= as well as ⌘+, which
+        // needs Shift on many keyboards.
         let view = NSMenu(title: String(localized: "View"))
         view.addItem(withTitle: String(localized: "Zoom In"), action: #selector(StyleEditorView.zoomIn(_:)), keyEquivalent: "+")
         view.addItem(withTitle: String(localized: "Zoom In"), action: #selector(StyleEditorView.zoomIn(_:)), keyEquivalent: "=")

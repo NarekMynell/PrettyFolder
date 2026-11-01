@@ -113,40 +113,12 @@ import Testing
                 == CGRect(x: 60, y: 0, width: 50, height: 50))
     }
 
-    @Test func zoomScalesThePictureFromTheSizeItsModeGivesIt() {
-        let target = CGRect(x: 0, y: 0, width: 100, height: 50)
-        let square = CGSize(width: 400, height: 400)
-        // Filled it is 100 across; twice that, centered, sticks out 50 on each side.
-        let filled = IconGeometry.imageRect(imageSize: square, in: target, mode: .fill, placement: PicturePlacement(x: 0.5, y: 0.5, zoom: 2), flipped: true)
-        #expect(filled == CGRect(x: -50, y: -75, width: 200, height: 200))
-        // Fitted it is 50 across; half that leaves room all around, and all of it shows.
-        let small = PicturePlacement(x: 0, y: 1, zoom: 0.5)
-        let fitted = IconGeometry.imageRect(imageSize: square, in: target, mode: .fit, placement: small, flipped: true)
-        #expect(fitted == CGRect(x: 0, y: 25, width: 25, height: 25))
-        #expect(IconGeometry.visibleRect(imageSize: square, in: target, mode: .fit, placement: small, flipped: true) == fitted)
-    }
-
-    @Test func aZoomedPictureShowsWhereItOverlapsItsRectangle() {
-        let target = CGRect(x: 0, y: 0, width: 100, height: 50)
-        let square = CGSize(width: 400, height: 400)
-        // Fitted and zoomed to 1.5: 75 square, inside across, sticking out up and down.
-        let bigger = PicturePlacement(x: 1, y: 0.5, zoom: 1.5)
-        #expect(IconGeometry.visibleRect(imageSize: square, in: target, mode: .fit, placement: bigger, flipped: true)
-                == CGRect(x: 25, y: 0, width: 75, height: 50))
-        // Filled and zoomed out to 0.8: 80 square, covering the height but not the width.
-        let smaller = PicturePlacement(x: 0, y: 0.5, zoom: 0.8)
-        #expect(IconGeometry.visibleRect(imageSize: square, in: target, mode: .fill, placement: smaller, flipped: true)
-                == CGRect(x: 0, y: 0, width: 80, height: 50))
-    }
-
     @Test func roomIsWhatSticksOutOrIsLeftOver() {
         let target = CGRect(x: 0, y: 0, width: 100, height: 50)
         let square = CGSize(width: 400, height: 400)
         #expect(IconGeometry.room(imageSize: square, in: target, mode: .fill) == CGSize(width: 0, height: 50))
         #expect(IconGeometry.room(imageSize: square, in: target, mode: .fit) == CGSize(width: 50, height: 0))
         #expect(IconGeometry.room(imageSize: CGSize(width: 200, height: 100), in: target, mode: .fill) == .zero)
-        // Zoomed, a picture of the rectangle's own shape gets room too.
-        #expect(IconGeometry.room(imageSize: CGSize(width: 200, height: 100), in: target, mode: .fill, zoom: 2) == CGSize(width: 100, height: 50))
         #expect(IconGeometry.room(imageSize: .zero, in: target, mode: .fill) == .zero)
     }
 
@@ -154,77 +126,66 @@ import Testing
         let target = CGRect(x: 0, y: 0, width: 100, height: 50)
         let square = CGSize(width: 400, height: 400)
         // Filled: 50 points stick out. Dragging the picture down 10 shows 10 more of its top.
-        let down = IconGeometry.placement(.natural, movedBy: CGSize(width: 30, height: 10), imageSize: square, in: target, mode: .fill)
+        let down = IconGeometry.placement(.centered, movedBy: CGSize(width: 30, height: 10), imageSize: square, in: target, mode: .fill)
         #expect(down == PicturePlacement(x: 0.5, y: 0.3))
-        let far = IconGeometry.placement(.natural, movedBy: CGSize(width: 0, height: 500), imageSize: square, in: target, mode: .fill)
+        let far = IconGeometry.placement(.centered, movedBy: CGSize(width: 0, height: 500), imageSize: square, in: target, mode: .fill)
         #expect(far.y == 0)
         // Fitted: 50 points of room across. Dragging right moves it right.
-        let right = IconGeometry.placement(.natural, movedBy: CGSize(width: 10, height: 10), imageSize: square, in: target, mode: .fit)
+        let right = IconGeometry.placement(.centered, movedBy: CGSize(width: 10, height: 10), imageSize: square, in: target, mode: .fit)
         #expect(right == PicturePlacement(x: 0.7, y: 0.5))
         let rect = IconGeometry.imageRect(imageSize: square, in: target, mode: .fit, placement: right, flipped: true)
         #expect(rect.minX == 35)
-        // Zoomed in, the picture moves along both ways, and keeps its zoom.
-        let zoomed = IconGeometry.placement(PicturePlacement(x: 0.5, y: 0.5, zoom: 2), movedBy: CGSize(width: 25, height: 0), imageSize: square, in: target, mode: .fill)
-        #expect(zoomed == PicturePlacement(x: 0.25, y: 0.5, zoom: 2))
     }
 
-    @Test func zoomingKeepsThePointUnderThePointerWhereItIs() {
-        let target = CGRect(x: 0, y: 0, width: 100, height: 50)
-        let square = CGSize(width: 400, height: 400)
-        let start = PicturePlacement(x: 0.5, y: 0.5, zoom: 2)
-        let anchor = CGPoint(x: 30, y: 20)
-        let before = IconGeometry.imageRect(imageSize: square, in: target, mode: .fill, placement: start, flipped: true)
-        let zoomed = IconGeometry.placement(start, zoomedTo: 3, around: anchor, imageSize: square, in: target, mode: .fill)
-        let after = IconGeometry.imageRect(imageSize: square, in: target, mode: .fill, placement: zoomed, flipped: true)
-        #expect(zoomed.zoom == 3)
-        // The same point of the picture, by its share of the picture, before and after.
-        #expect(abs((anchor.x - before.minX) / before.width - (anchor.x - after.minX) / after.width) < 1e-9)
-        #expect(abs((anchor.y - before.minY) / before.height - (anchor.y - after.minY) / after.height) < 1e-9)
+    @Test func scalingKeepsTheShapeAndTheMiddle() {
+        let rect = IconStyle.standard.rect
+        let bigger = IconGeometry.scaled(rect, by: 1.1)
+        #expect(abs(bigger.width - rect.width * 1.1) < 1e-9 && abs(bigger.height - rect.height * 1.1) < 1e-9)
+        #expect(abs(bigger.midX - rect.midX) < 1e-9 && abs(bigger.midY - rect.midY) < 1e-9)
+        let back = IconGeometry.scaled(bigger, by: 1 / 1.1)
+        #expect(abs(back.width - rect.width) < 1e-9 && abs(back.minY - rect.minY) < 1e-9)
     }
 
-    @Test func zoomingOutNeverLeavesAGapOrPushesThePictureOut() {
-        let target = CGRect(x: 0, y: 0, width: 100, height: 50)
-        let square = CGSize(width: 400, height: 400)
-        // Zoomed in and pushed against the left edge, zooming out around the right edge
-        // would open a gap on the left; the picture stays against it instead.
-        let start = PicturePlacement(x: 0, y: 0.5, zoom: 3)
-        let zoomed = IconGeometry.placement(start, zoomedTo: 1.2, around: CGPoint(x: 100, y: 25), imageSize: square, in: target, mode: .fill)
-        let rect = IconGeometry.imageRect(imageSize: square, in: target, mode: .fill, placement: zoomed, flipped: true)
-        #expect(rect.minX <= target.minX && rect.maxX >= target.maxX)
-        // Zoomed far out, a fitted picture stays inside its rectangle.
-        let small = IconGeometry.placement(.natural, zoomedTo: 0.25, around: CGPoint(x: 0, y: 0), imageSize: square, in: target, mode: .fit)
-        let inside = IconGeometry.imageRect(imageSize: square, in: target, mode: .fit, placement: small, flipped: true)
-        #expect(target.contains(inside))
-        #expect(small.zoom == 0.25)
+    @Test func scalingStopsAtTheCanvasAndAtTheSmallestSide() {
+        let rect = IconStyle.standard.rect
+        // It grows until it is as wide as the canvas, and no further.
+        let biggest = IconGeometry.scaled(rect, by: 10)
+        #expect(abs(biggest.width - 1) < 1e-9 && abs(biggest.height - rect.height / rect.width) < 1e-9)
+        #expect(abs(biggest.minX) < 1e-9)
+        // It shrinks until its shorter side is the smallest there is.
+        let smallest = IconGeometry.scaled(rect, by: 0.01)
+        #expect(abs(smallest.height - IconStyle.minimumSide) < 1e-9)
+        #expect(abs(smallest.width / smallest.height - rect.width / rect.height) < 1e-9)
+        // Nothing to go by, nothing changes.
+        #expect(IconGeometry.scaled(rect, by: .nan) == rect)
+        #expect(IconGeometry.scaled(rect, by: 0) == rect)
     }
 
-    @Test func fittingZoomsAreWhereThePictureMeetsItsRectangle() {
-        let target = CGRect(x: 0, y: 0, width: 100, height: 50)
-        let square = CGSize(width: 400, height: 400)
-        // Filled, it fits at half the size; fitted, it fills at twice the size.
-        #expect(IconGeometry.fittingZooms(imageSize: square, in: target, mode: .fill) == [1, 0.5])
-        #expect(IconGeometry.fittingZooms(imageSize: square, in: target, mode: .fit) == [1, 2])
-        #expect(IconGeometry.fittingZooms(imageSize: CGSize(width: 2, height: 1), in: target, mode: .fit) == [1])
+    @Test func aScaledRectangleStaysOnTheCanvas() {
+        // Against the right edge, it grows to the left.
+        let rect = CGRect(x: 0.6, y: 0.3, width: 0.4, height: 0.2)
+        let bigger = IconGeometry.scaled(rect, by: 1.5)
+        #expect(abs(bigger.maxX - 1) < 1e-9 && abs(bigger.width - 0.6) < 1e-9)
+        #expect(abs(bigger.midY - rect.midY) < 1e-9)
     }
 }
 
 @Suite struct PicturePlacementTests {
-    @Test func staysBetweenTheEdgesAndWithinTheZoomRange() {
+    @Test func staysBetweenTheEdges() {
         #expect(PicturePlacement(x: -1, y: 2) == PicturePlacement(x: 0, y: 1))
-        #expect(PicturePlacement(x: .nan, y: .infinity, zoom: .nan) == .natural)
-        #expect(PicturePlacement(x: 0.5, y: 0.5, zoom: 100).zoom == PicturePlacement.zoomRange.upperBound)
-        #expect(PicturePlacement(x: 0.5, y: 0.5, zoom: 0).zoom == PicturePlacement.zoomRange.lowerBound)
-        #expect(PicturePlacement(x: 0.1, y: 0.9, zoom: 3).centered == PicturePlacement(x: 0.5, y: 0.5, zoom: 3))
+        #expect(PicturePlacement(x: .nan, y: .infinity) == .centered)
     }
 
     @Test func decodingAlsoClamps() throws {
-        let placement = try JSONDecoder().decode(PicturePlacement.self, from: Data(#"{"x": 1.5, "y": 0.25, "zoom": 20}"#.utf8))
-        #expect(placement == PicturePlacement(x: 1, y: 0.25, zoom: PicturePlacement.zoomRange.upperBound))
+        let placement = try JSONDecoder().decode(PicturePlacement.self, from: Data(#"{"x": 1.5, "y": 0.25}"#.utf8))
+        #expect(placement == PicturePlacement(x: 1, y: 0.25))
     }
 
-    @Test func placementsFromBeforeZoomAreAtTheirNaturalSize() throws {
-        let placement = try JSONDecoder().decode(PicturePlacement.self, from: Data(#"{"x": 0.5, "y": 0}"#.utf8))
-        #expect(placement == PicturePlacement(x: 0.5, y: 0, zoom: 1))
+    @Test func aZoomFromAnEarlierBuildIsLetGo() throws {
+        let placement = try JSONDecoder().decode(PicturePlacement.self, from: Data(#"{"x": 0.2, "y": 0.8, "zoom": 3}"#.utf8))
+        #expect(placement == PicturePlacement(x: 0.2, y: 0.8))
+        let saved = try #require(String(data: JSONEncoder().encode(placement), encoding: .utf8))
+        #expect(!saved.contains("zoom"))
     }
 
     @Test func recordsWithoutOneHaveThePictureInTheMiddle() throws {
@@ -234,7 +195,7 @@ import Testing
         #expect(record.style == nil)
     }
 
-    @Test func recordsKeepWhereTheirPictureWasPutBeforeItCouldBeZoomed() throws {
+    @Test func recordsKeepWhereTheirPictureWasPutAsAnAlignment() throws {
         let json = #"{"id": "6F1D7E0A-6C49-4E1E-9C55-5B1B8E6C2B11", "bookmark": "", "lastKnownPath": "/tmp/a", "pictureName": "a.jpg", "alignment": {"x": 0.5, "y": 0.012}, "iconDigest": "", "created": 0, "updated": 0}"#
         let record = try JSONDecoder().decode(FolderRecord.self, from: Data(json.utf8))
         #expect(record.placement == PicturePlacement(x: 0.5, y: 0.012))
@@ -320,22 +281,34 @@ import Testing
         #expect(away.y == 0.8)
         #expect(none.isEmpty)
 
-        // Zoomed in, it moves both ways, sticks to the middle both ways, and keeps its zoom.
-        let (zoomed, both) = snapping.pan(PicturePlacement(x: 0.52, y: 0.49, zoom: 2), imageSize: square, in: rect, mode: .fill)
-        #expect(zoomed == PicturePlacement(x: 0.5, y: 0.5, zoom: 2))
-        #expect(both.count == 2)
+        // Fitted, it moves across instead, and sticks to the middle that way.
+        let (fitted, across) = snapping.pan(PicturePlacement(x: 0.52, y: 0.1), imageSize: square, in: rect, mode: .fit)
+        #expect(fitted == PicturePlacement(x: 0.5, y: 0.1))
+        #expect(across == [SnapGuide(.vertical, at: rect.midX, along: rect.minY...rect.maxY)])
     }
 
-    @Test func aZoomSticksWhereThePictureMeetsItsRectangle() {
-        let rect = CGRect(x: 0.2, y: 0.4, width: 0.4, height: 0.2)
-        let square = CGSize(width: 100, height: 100)
-        // Its own size, and in Fill the size at which all of it shows.
-        #expect(snapping.zoom(1.03, imageSize: square, in: rect, mode: .fill) == (1, true))
-        #expect(snapping.zoom(0.51, imageSize: square, in: rect, mode: .fill) == (0.5, true))
-        let free = snapping.zoom(1.3, imageSize: square, in: rect, mode: .fill)
-        #expect(free.zoom == 1.3 && !free.snapped)
-        // Out of range is brought back into it.
-        #expect(snapping.zoom(50, imageSize: square, in: rect, mode: .fit).zoom == PicturePlacement.zoomRange.upperBound)
+    @Test func aScaledFrameSticksWhereItsEdgesMeetTheFolder() {
+        // Centered on the folder, its sides just inside the folder's: growing a little more
+        // puts them right on the folder's sides, both at once.
+        let middle = CGPoint(x: shape.bounds.midX, y: shape.front.midY)
+        let half = shape.bounds.width / 2 - 0.01
+        let rect = CGRect(x: middle.x - half, y: middle.y - 0.1, width: 2 * half, height: 0.2)
+        let (snapped, guides) = snapping.scale(rect)
+        #expect(abs(snapped.minX - shape.bounds.minX) < 1e-9 && abs(snapped.maxX - shape.bounds.maxX) < 1e-9)
+        #expect(abs(snapped.width / snapped.height - rect.width / rect.height) < 1e-9, "it keeps its shape")
+        #expect(abs(snapped.midX - middle.x) < 1e-9 && abs(snapped.midY - middle.y) < 1e-9, "and its middle")
+        #expect(Set(guides) == [SnapGuide(.vertical, at: shape.bounds.minX), SnapGuide(.vertical, at: shape.bounds.maxX)])
+    }
+
+    @Test func aScaledFrameAwayFromTheLinesIsLeftAlone() {
+        // Its middle is on the folder's middle, but that doesn't change while it grows.
+        let rect = CGRect(x: shape.bounds.midX - 0.25, y: shape.front.midY - 0.1, width: 0.5, height: 0.2)
+        let (snapped, guides) = snapping.scale(rect)
+        #expect(snapped == rect)
+        #expect(guides.isEmpty)
+        // Sticking would take it below the smallest size: it doesn't.
+        let tiny = CGRect(x: shape.bounds.midX + 0.03 - IconStyle.minimumSide / 2, y: 0.36, width: IconStyle.minimumSide, height: IconStyle.minimumSide)
+        #expect(snapping.scale(tiny).rect == tiny)
     }
 
     @Test func neverSnapsBelowTheMinimumSize() {

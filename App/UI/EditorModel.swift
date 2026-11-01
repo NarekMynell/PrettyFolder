@@ -38,13 +38,12 @@ final class EditorModel {
     private(set) var folderPicture: SourceImage?
     /// The look the editor shows for them: the first one's.
     private(set) var folderStyle: IconStyle
-    /// Where their picture sits in that look, and how big: the first one's.
-    private(set) var folderPlacement = PicturePlacement.natural
+    /// Where their picture sits in that look: the first one's.
+    private(set) var folderPlacement = PicturePlacement.centered
     /// Whether all of them follow the default look.
     private(set) var followsDefault = true
-    /// Whether all of their pictures sit in the middle of their rectangle, at the size the
-    /// look gives them.
-    private(set) var isPictureNatural = true
+    /// Whether all of their pictures sit in the middle of their rectangle.
+    private(set) var isPictureCentered = true
     /// Whether any of them has a custom icon at all, from PrettyFolder or not.
     private(set) var hasCustomIcon = false
 
@@ -63,14 +62,13 @@ final class EditorModel {
     let progress = BatchProgress()
 
     /// A folder's own look (`nil` when it follows the default look) and where its picture sits
-    /// in it, and how big.
+    /// in it.
     private struct Look: Equatable {
         var style: IconStyle?
         var placement: PicturePlacement
 
-        /// The default look, picture in the middle at its natural size: what a folder has to
-        /// begin with.
-        static let followingDefault = Look(style: nil, placement: .natural)
+        /// The default look, picture in the middle: what a folder has to begin with.
+        static let followingDefault = Look(style: nil, placement: .centered)
     }
 
     /// Which parts of the looks a change writes, so that it never writes over the other part
@@ -134,10 +132,10 @@ final class EditorModel {
         }
     }
 
-    /// Where the picture sits in the look, and how big. Only the folders' own picture moves
-    /// and zooms: the default look always has it in the middle, at its natural size.
+    /// Where the picture sits in the look. Only the folders' own picture moves: the default
+    /// look always has it in the middle.
     var placement: PicturePlacement {
-        get { isEditingFolders ? folderPlacement : .natural }
+        get { isEditingFolders ? folderPlacement : .centered }
         set {
             if isEditingFolders { folderPlacement = newValue }
         }
@@ -146,7 +144,7 @@ final class EditorModel {
     var canEdit: Bool { isEditingFolders ? hasPicture : true }
     var placesPicture: Bool { isEditingFolders && hasPicture }
     var canReset: Bool {
-        isEditingFolders ? hasPicture && !(followsDefault && isPictureNatural) : defaultDraft != IconStyle.standard
+        isEditingFolders ? hasPicture && !(followsDefault && isPictureCentered) : defaultDraft != IconStyle.standard
     }
 
     private var layout: Layout { (style, placement) }
@@ -165,9 +163,9 @@ final class EditorModel {
             folderPictureURL = nil
             hasCustomIcon = false
             followsDefault = true
-            isPictureNatural = true
+            isPictureCentered = true
             folderStyle = settings.defaultStyle
-            folderPlacement = .natural
+            folderPlacement = .centered
         }
         scope = folders.isEmpty ? .defaultLook : .folders
         reload()
@@ -252,9 +250,9 @@ final class EditorModel {
                     uniquingKeysWith: { first, _ in first }
                 )
                 folderStyle = found.first?.look.style ?? settings.defaultStyle
-                folderPlacement = found.first?.look.placement ?? .natural
+                folderPlacement = found.first?.look.placement ?? .centered
                 followsDefault = found.allSatisfy(\.look.followsDefault)
-                isPictureNatural = found.allSatisfy { $0.look.placement == .natural }
+                isPictureCentered = found.allSatisfy { $0.look.placement == .centered }
             } else {
                 reloadIsDue = true
             }
@@ -310,7 +308,7 @@ final class EditorModel {
     }
 
     /// Keeps a finished change: writes it to the folders, or keeps it in the draft, and
-    /// lets it be undone. A moved or zoomed picture doesn't give the folders a look of their own.
+    /// lets it be undone. A moved picture doesn't give the folders a look of their own.
     private func record(from previous: Layout, in scope: Scope) {
         switch scope {
         case .folders:
@@ -327,19 +325,18 @@ final class EditorModel {
         }
     }
 
-    /// Fill or Fit. A zoomed picture goes back to the size the new mode gives it: zoomed for
-    /// one, it would hardly change with the other.
+    /// Fill or Fit. The picture stays put as far as the new mode lets it: against the same
+    /// edges, or in the middle.
     func setMode(_ mode: FitMode) {
         finishPendingChange()
         guard style.mode != mode else { return }
         let previous = layout
         style.mode = mode
-        placement = PicturePlacement(x: placement.x, y: placement.y)
         record(from: previous, in: scope)
     }
 
-    /// Back to the default look for the folders, picture in the middle at its natural size;
-    /// back to the standard look for the default.
+    /// Back to the default look for the folders, picture in the middle; back to the standard
+    /// look for the default.
     func reset() {
         finishPendingChange()
         if isEditingFolders {
@@ -373,9 +370,9 @@ final class EditorModel {
         looks = newLooks
         let first = managedFolders.first.flatMap { newLooks[$0] }
         folderStyle = first?.style ?? settings.defaultStyle
-        folderPlacement = first?.placement ?? .natural
+        folderPlacement = first?.placement ?? .centered
         followsDefault = newLooks.values.allSatisfy { $0.style == nil }
-        isPictureNatural = newLooks.values.allSatisfy { $0.placement == .natural }
+        isPictureCentered = newLooks.values.allSatisfy { $0.placement == .centered }
         writeGeneration += 1
         let manager = actions.manager
         let previous = writing

@@ -87,7 +87,7 @@ public struct IconSnapping: Sendable {
     public func pan(
         _ placement: PicturePlacement, imageSize: CGSize, in rect: CGRect, mode: FitMode
     ) -> (placement: PicturePlacement, guides: [SnapGuide]) {
-        let room = IconGeometry.room(imageSize: imageSize, in: rect, mode: mode, zoom: placement.zoom)
+        let room = IconGeometry.room(imageSize: imageSize, in: rect, mode: mode)
         let movesX = room.width > 1e-9, movesY = room.height > 1e-9
         // The picture's middle is `room × (position − ½)` away from the rectangle's.
         let x = movesX && abs(room.width * (placement.x - 0.5)) <= threshold ? 0.5 : placement.x
@@ -95,24 +95,43 @@ public struct IconSnapping: Sendable {
         var guides: [SnapGuide] = []
         if movesX, x == 0.5 { guides.append(SnapGuide(.vertical, at: rect.midX, along: rect.minY...rect.maxY)) }
         if movesY, y == 0.5 { guides.append(SnapGuide(.horizontal, at: rect.midY, along: rect.minX...rect.maxX)) }
-        return (PicturePlacement(x: x, y: y, zoom: placement.zoom), guides)
+        return (PicturePlacement(x: x, y: y), guides)
     }
 
-    /// How close a zoom has to come to a size where the picture fits its rectangle exactly,
-    /// relatively, to stick to it.
-    public static let zoomThreshold = 0.04
-
-    /// A zoom of a picture in its rectangle `rect`, snapped: close to a size where the picture
-    /// exactly fills the rectangle one way or the other (see `IconGeometry.fittingZooms`), it
-    /// sticks to it. Returns whether it did.
-    public func zoom(_ zoom: Double, imageSize: CGSize, in rect: CGRect, mode: FitMode) -> (zoom: Double, snapped: Bool) {
-        let zoom = PicturePlacement.clampedZoom(zoom)
-        let fitting = IconGeometry.fittingZooms(imageSize: imageSize, in: rect, mode: mode)
-            .filter { PicturePlacement.zoomRange.contains($0) }
-        guard let nearest = fitting.min(by: { abs(log($0 / zoom)) < abs(log($1 / zoom)) }),
-              abs(log(nearest / zoom)) <= Self.zoomThreshold
-        else { return (zoom, false) }
-        return (nearest, true)
+    /// A rectangle made bigger or smaller around its middle, snapped: once one of its edges
+    /// comes close to a column or a row, it takes the size that puts that edge right on it.
+    /// It keeps its middle and its shape; the guides are the lines its edges lie on.
+    public func scale(_ rect: CGRect) -> (rect: CGRect, guides: [SnapGuide]) {
+        guard rect.width > 0, rect.height > 0 else { return (rect, edgeGuides(for: rect)) }
+        let middle = CGPoint(x: rect.midX, y: rect.midY)
+        var best: (distance: Double, factor: Double)?
+        // An edge `half` away from `center`, put on `line` on the same side of it.
+        func consider(_ edge: Double, _ line: Double, center: Double, half: Double) {
+            let distance = abs(line - edge)
+            guard distance <= threshold, distance < best?.distance ?? .infinity,
+                  (edge < center) == (line < center), line != center
+            else { return }
+            let factor = abs(line - center) / half
+            let width = rect.width * factor, height = rect.height * factor
+            // Not below the smallest size, and inside the canvas where it is.
+            guard min(width, height) >= IconStyle.minimumSide - 1e-9,
+                  middle.x - width / 2 >= -1e-9, middle.x + width / 2 <= 1 + 1e-9,
+                  middle.y - height / 2 >= -1e-9, middle.y + height / 2 <= 1 + 1e-9
+            else { return }
+            best = (distance, factor)
+        }
+        for line in columns {
+            consider(rect.minX, line, center: middle.x, half: rect.width / 2)
+            consider(rect.maxX, line, center: middle.x, half: rect.width / 2)
+        }
+        for line in rows {
+            consider(rect.minY, line, center: middle.y, half: rect.height / 2)
+            consider(rect.maxY, line, center: middle.y, half: rect.height / 2)
+        }
+        guard let best else { return (rect, edgeGuides(for: rect)) }
+        let width = rect.width * best.factor, height = rect.height * best.factor
+        let result = CGRect(x: middle.x - width / 2, y: middle.y - height / 2, width: width, height: height)
+        return (result, edgeGuides(for: result))
     }
 
     /// Every column and row that one of the rectangle's edges or centers lies on.
@@ -120,6 +139,14 @@ public struct IconSnapping: Sendable {
         let onLine = { (line: Double, values: [Double]) in values.contains { abs($0 - line) < 1e-7 } }
         return columns.filter { onLine($0, [rect.minX, rect.midX, rect.maxX]) }.map { SnapGuide(.vertical, at: $0) }
             + rows.filter { onLine($0, [rect.minY, rect.midY, rect.maxY]) }.map { SnapGuide(.horizontal, at: $0) }
+    }
+
+    /// The columns and rows that one of the rectangle's edges lies on: the lines that count
+    /// while it grows or shrinks around its middle, which stays where it is.
+    private func edgeGuides(for rect: CGRect) -> [SnapGuide] {
+        let onLine = { (line: Double, values: [Double]) in values.contains { abs($0 - line) < 1e-7 } }
+        return columns.filter { onLine($0, [rect.minX, rect.maxX]) }.map { SnapGuide(.vertical, at: $0) }
+            + rows.filter { onLine($0, [rect.minY, rect.maxY]) }.map { SnapGuide(.horizontal, at: $0) }
     }
 
     // MARK: - Internals

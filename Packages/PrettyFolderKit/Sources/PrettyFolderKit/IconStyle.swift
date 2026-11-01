@@ -75,51 +75,31 @@ public struct IconStyle: Codable, Sendable, Hashable {
     }
 }
 
-/// Where a picture sits in its rectangle, and how big it is there. It belongs to one folder's
-/// picture: a new picture starts in the middle, at the size Fill or Fit gives it.
-///
-/// Zoomed in, more of the picture sticks out of the rectangle and is cut off; zoomed out, it
-/// leaves room around it. On each axis it goes as far as that allows, from 0 (against the left
-/// or top edge) to 1 (against the right or bottom edge), with 0.5 in the middle. So a picture
-/// bigger than its rectangle always covers it, and a smaller one always stays inside.
+/// Where a picture sits in its rectangle when the two aren't the same shape: on each axis
+/// from 0 (against the left or top edge) to 1 (against the right or bottom edge), with 0.5
+/// in the middle. With Fill it picks the part of the picture that shows; with Fit, where the
+/// picture sits. Its size is always the one Fill or Fit gives it: to make the picture bigger,
+/// the rectangle grows. It belongs to one folder's picture: a new picture starts in the middle.
 public struct PicturePlacement: Codable, Sendable, Hashable {
     public let x: Double
     public let y: Double
-    /// How big the picture is next to the size Fill or Fit gives it.
-    public let zoom: Double
 
-    /// From a quarter of that size to eight times as big.
-    public static let zoomRange: ClosedRange<Double> = 0.25...8
+    /// In the middle: where every picture starts.
+    public static let centered = PicturePlacement(x: 0.5, y: 0.5)
 
-    /// In the middle, at the size Fill or Fit gives it: where every picture starts.
-    public static let natural = PicturePlacement(x: 0.5, y: 0.5)
-
-    public init(x: Double, y: Double, zoom: Double = 1) {
+    public init(x: Double, y: Double) {
         self.x = Self.clamped(x)
         self.y = Self.clamped(y)
-        self.zoom = Self.clampedZoom(zoom)
     }
 
+    /// Anything else that was kept with it (a zoom, from a build that had one) is let go.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(
-            x: try container.decode(Double.self, forKey: .x),
-            y: try container.decode(Double.self, forKey: .y),
-            // Pictures placed before they could be zoomed have none.
-            zoom: try container.decodeIfPresent(Double.self, forKey: .zoom) ?? 1
-        )
+        self.init(x: try container.decode(Double.self, forKey: .x), y: try container.decode(Double.self, forKey: .y))
     }
-
-    /// The same size, in the middle.
-    public var centered: PicturePlacement { PicturePlacement(x: 0.5, y: 0.5, zoom: zoom) }
 
     /// Between the edges; anything that isn't a finite number is the middle.
     private static func clamped(_ value: Double) -> Double {
         value.isFinite ? min(max(value, 0), 1) : 0.5
-    }
-
-    /// Within `zoomRange`; anything that isn't a finite number is the natural size.
-    public static func clampedZoom(_ zoom: Double) -> Double {
-        zoom.isFinite ? min(max(zoom, zoomRange.lowerBound), zoomRange.upperBound) : 1
     }
 }

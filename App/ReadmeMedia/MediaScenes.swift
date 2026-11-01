@@ -252,8 +252,8 @@ extension Studio {
 
     // MARK: - The window
 
-    /// Moving and resizing the frame in the window, and moving and zooming the picture inside
-    /// it, with the folder on the Desktop following every change.
+    /// Moving and resizing the frame in the window, and moving the picture inside it, with the
+    /// folder on the Desktop following every change.
     func renderWindow() async throws {
         let size = CGSize(width: 780, height: 540)
         let wallpaper = Scenery.wallpaper(size: size)
@@ -300,7 +300,7 @@ extension Studio {
         // Where the pointer goes: take hold of the frame and move it until it snaps to the
         // folder's front; pull its top-left corner over the folder's tab, where it takes the
         // folder's shape; double-click the picture and slide it inside the frame; pinch to
-        // zoom in on it; switch to Fit; and back to the default look.
+        // make the frame smaller; switch to Fit; and back to the default look.
         let snapping = StyleEditor.snapping(side: side)
         let start = model.style
         let grab = onStage(CGPoint(x: pictureRect(start).minX + pictureRect(start).width * 0.62, y: pictureRect(start).minY + pictureRect(start).height * 0.45))
@@ -333,12 +333,12 @@ extension Studio {
         path.move(to: resetPoint, from: 12.2, to: 12.8)
         path.move(to: CGPoint(x: 300, y: 470), from: 13.6, to: 14.4)
 
-        // The two clicks that take hold of the picture, and the pinch that zooms it.
+        // The two clicks that take hold of the picture, and the pinch that makes the frame smaller.
         let clicks = [7.0, 7.16]
         let pinchTime = (start: 9.0, end: 10.4)
 
         // The editor's drags and pinch, the way it handles them: the same moving, resizing,
-        // zooming and snapping code, the same model. (A window off screen gets no events.)
+        // scaling and snapping code, the same model. (A window off screen gets no events.)
         enum Grip { case none, frame, corner, picture, pinch }
         var grip = Grip.none
         var gripStart = (style: start, placement: model.placement, pointer: CGPoint.zero)
@@ -389,8 +389,9 @@ extension Studio {
                 model.guides = snapped.guides
             case .pinch:
                 let spread = ease(progress(t, pinchTime.start, pinchTime.end - 0.2))
-                let zoom = snapping.zoom(gripStart.placement.zoom * (1 + 0.75 * spread), imageSize: rocket.size, in: model.style.rect, mode: model.style.mode).zoom
-                model.placement = IconGeometry.placement(gripStart.placement, zoomedTo: zoom, around: editorPoint(local), imageSize: rocket.size, in: target, mode: model.style.mode)
+                let snapped = snapping.scale(IconGeometry.scaled(gripStart.style.rect, by: 1 - 0.2 * spread))
+                model.style = IconStyle(rect: snapped.rect, mode: model.style.mode)
+                model.guides = snapped.guides
             case .none:
                 // Pointing, not holding: the editor shows what is under the pointer.
                 editorView.mouseMoved(with: NSEvent.mouseEvent(
