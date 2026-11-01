@@ -3,10 +3,10 @@ import PrettyFolderKit
 import SwiftUI
 
 /// The folder icon, big, with the picture on it to place by hand: drag the rectangle to move
-/// it, its handles to resize it, and pinch or scroll to make it bigger or smaller; double-click
-/// and drag to move the picture inside it. The arrow keys nudge the rectangle (the picture with
-/// ⌥), and ⌘+ and ⌘− make it bigger or smaller. The picture is always as big as Fill or Fit
-/// makes it in the rectangle.
+/// it, its handles to resize it, and pinch or scroll to make it bigger or smaller; drag with
+/// the right button (or Control, or after a double-click) to move the picture inside it. The
+/// arrow keys nudge the rectangle (the picture with ⌥), and ⌘+ and ⌘− make it bigger or
+/// smaller. The picture is always as big as Fill or Fit makes it in the rectangle.
 ///
 /// While something moves it snaps to the folder's edges and center, and the picture to the
 /// middle of its rectangle (hold Command to place things freely). It is drawn with the
@@ -85,8 +85,8 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     enum Part: Equatable {
         /// Resizes the rectangle.
         case handle(ResizeHandle)
-        /// Moves the rectangle: its inside, and a band around its edge. The second click of a
-        /// double-click takes hold of the picture instead.
+        /// Moves the rectangle: its inside, and a band around its edge. The right button, or
+        /// the second click of a double-click, takes hold of the picture instead.
         case frame
         /// Nothing.
         case none
@@ -96,7 +96,8 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     enum Drag: Equatable {
         case handle(ResizeHandle)
         case frame
-        /// The picture inside the rectangle, after a double-click.
+        /// The picture inside the rectangle: with the right button, Control, or after a
+        /// double-click.
         case picture
     }
 
@@ -382,7 +383,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         case .handle:
             String(localized: "Drag to resize. ⌥ resizes around the middle.")
         case .frame where canPlacePicture:
-            String(localized: "Drag to move the frame; pinch or scroll to make it bigger or smaller. Double-click and drag to move the picture inside it.")
+            String(localized: "Drag to move the frame; pinch or scroll to make it bigger or smaller. Drag with the right button, or double-click and drag, to move the picture inside it.")
         case .frame:
             String(localized: "Drag to move the frame; pinch or scroll to make it bigger or smaller.")
         case .none:
@@ -400,20 +401,49 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         window?.makeFirstResponder(self)
         finishBurst()
         let start = convert(event.locationInWindow, from: nil)
+        // Control-click is the Mac's right click: Control and drag moves the picture too.
+        if event.modifierFlags.contains(.control) {
+            if canPlacePicture, grabArea(for: target).contains(start) {
+                track(.picture, from: start, button: .left)
+            }
+            return
+        }
         switch part(at: start) {
         case .handle(let handle):
-            track(.handle(handle), from: start)
+            track(.handle(handle), from: start, button: .left)
         case .frame:
             // A press moves the rectangle; the second click of a double-click, the picture in it.
-            track(event.clickCount >= 2 && canPlacePicture ? .picture : .frame, from: start)
+            track(event.clickCount >= 2 && canPlacePicture ? .picture : .frame, from: start, button: .left)
         case .none:
             break
         }
     }
 
+    /// The right button takes hold of the picture, anywhere on the rectangle, handles too.
+    override func rightMouseDown(with event: NSEvent) {
+        let start = convert(event.locationInWindow, from: nil)
+        guard isEnabled, canPlacePicture, grabArea(for: target).contains(start) else {
+            return super.rightMouseDown(with: event)
+        }
+        window?.makeFirstResponder(self)
+        finishBurst()
+        track(.picture, from: start, button: .right)
+    }
+
+    /// The events of the button a drag is made with.
+    private struct Button {
+        let dragged: NSEvent.EventType
+        let draggedMask: NSEvent.EventTypeMask
+        let up: NSEvent.EventType
+        let upMask: NSEvent.EventTypeMask
+
+        static let left = Button(dragged: .leftMouseDragged, draggedMask: .leftMouseDragged, up: .leftMouseUp, upMask: .leftMouseUp)
+        static let right = Button(dragged: .rightMouseDragged, draggedMask: .rightMouseDragged, up: .rightMouseUp, upMask: .rightMouseUp)
+    }
+
     /// Follows the pointer until the button is let go. Modifier keys count as soon as they
     /// change; Escape puts everything back where it was.
-    private func track(_ drag: Drag, from start: CGPoint) {
+    private func track(_ drag: Drag, from start: CGPoint, button: Button) {
         dragged = drag
         cursor(for: drag).set()
         needsDisplay = true
@@ -433,12 +463,12 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         }
 
         window?.trackEvents(
-            matching: [.leftMouseDragged, .leftMouseUp, .flagsChanged, .keyDown],
+            matching: [button.draggedMask, button.upMask, .flagsChanged, .keyDown],
             timeout: NSEvent.foreverDuration, mode: .eventTracking
         ) { event, stop in
             guard let event else { return }
             switch event.type {
-            case .leftMouseDragged:
+            case button.dragged:
                 point = convert(event.locationInWindow, from: nil)
                 follow(event.modifierFlags)
             case .flagsChanged:
@@ -446,7 +476,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
             case .keyDown where event.charactersIgnoringModifiers == "\u{1b}":
                 if let origin { set(origin.style, origin.placement) }
                 stop.pointee = true
-            case .leftMouseUp:
+            case button.up:
                 stop.pointee = true
             default:
                 break
