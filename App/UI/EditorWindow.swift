@@ -185,12 +185,12 @@ private struct EditorView: View {
                 .fill(Color.primary.opacity(0.045))
             StyleEditor(
                 style: $model.style,
-                alignment: $model.alignment,
+                placement: $model.placement,
                 guides: $model.guides,
                 isAdjusting: $model.isAdjusting,
                 picture: model.picture,
                 isEnabled: model.canEdit,
-                movesPicture: model.movesPicture,
+                placesPicture: model.placesPicture,
                 side: editorSide,
                 onBegin: { model.beginChange() },
                 onCommit: { model.commit() }

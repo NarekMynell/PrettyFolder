@@ -239,6 +239,36 @@ enum Scenery {
         }
     }
 
+    /// A click: a ring around the pointer that grows and fades as `age` goes from 0 to 1.
+    static func drawClick(at point: CGPoint, age: Double, on bitmap: Bitmap) {
+        let radius = 5 + 13 * CGFloat(ease(age))
+        bitmap.appKit {
+            let ring = NSBezierPath(ovalIn: NSRect(x: point.x - radius, y: point.y - radius, width: 2 * radius, height: 2 * radius))
+            ring.lineWidth = 2.5
+            NSColor.white.withAlphaComponent(0.85 * (1 - age)).setStroke()
+            ring.stroke()
+        }
+    }
+
+    /// Two fingertips around the pointer, moving apart as `spread` goes from 0 to 1: a pinch.
+    static func drawPinch(around point: CGPoint, spread: Double, alpha: Double, on bitmap: Bitmap) {
+        guard alpha > 0 else { return }
+        let distance = 12 + 16 * CGFloat(spread)
+        bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.35 * alpha), blur: 3, offset: CGSize(width: 0, height: 1)) {
+            bitmap.appKit {
+                for direction: CGFloat in [-1, 1] {
+                    let center = CGPoint(x: point.x + direction * distance * 0.7, y: point.y - 8 + direction * distance * 0.7)
+                    let tip = NSBezierPath(ovalIn: NSRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16))
+                    NSColor.white.withAlphaComponent(0.55 * alpha).setFill()
+                    tip.fill()
+                    NSColor.white.withAlphaComponent(0.9 * alpha).setStroke()
+                    tip.lineWidth = 1.5
+                    tip.stroke()
+                }
+            }
+        }
+    }
+
     /// A window with the soft shadow macOS gives it.
     static func drawWindow(_ image: CGImage, at origin: CGPoint, size: CGSize, on bitmap: Bitmap, alpha: CGFloat = 1, scale: CGFloat = 1) {
         let scaled = CGSize(width: size.width * scale, height: size.height * scale)

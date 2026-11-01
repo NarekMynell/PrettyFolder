@@ -85,17 +85,34 @@ public struct IconSnapping: Sendable {
     /// A picture moved inside its rectangle `rect`, snapped: on each axis it can move along,
     /// it sticks to the middle once its own middle comes close. The guides run across `rect`.
     public func pan(
-        _ alignment: PictureAlignment, imageSize: CGSize, in rect: CGRect, mode: FitMode
-    ) -> (alignment: PictureAlignment, guides: [SnapGuide]) {
-        let room = IconGeometry.room(imageSize: imageSize, in: rect, mode: mode)
+        _ placement: PicturePlacement, imageSize: CGSize, in rect: CGRect, mode: FitMode
+    ) -> (placement: PicturePlacement, guides: [SnapGuide]) {
+        let room = IconGeometry.room(imageSize: imageSize, in: rect, mode: mode, zoom: placement.zoom)
         let movesX = room.width > 1e-9, movesY = room.height > 1e-9
-        // The picture's middle is `room × (alignment − ½)` away from the rectangle's.
-        let x = movesX && abs(room.width * (alignment.x - 0.5)) <= threshold ? 0.5 : alignment.x
-        let y = movesY && abs(room.height * (alignment.y - 0.5)) <= threshold ? 0.5 : alignment.y
+        // The picture's middle is `room × (position − ½)` away from the rectangle's.
+        let x = movesX && abs(room.width * (placement.x - 0.5)) <= threshold ? 0.5 : placement.x
+        let y = movesY && abs(room.height * (placement.y - 0.5)) <= threshold ? 0.5 : placement.y
         var guides: [SnapGuide] = []
         if movesX, x == 0.5 { guides.append(SnapGuide(.vertical, at: rect.midX, along: rect.minY...rect.maxY)) }
         if movesY, y == 0.5 { guides.append(SnapGuide(.horizontal, at: rect.midY, along: rect.minX...rect.maxX)) }
-        return (PictureAlignment(x: x, y: y), guides)
+        return (PicturePlacement(x: x, y: y, zoom: placement.zoom), guides)
+    }
+
+    /// How close a zoom has to come to a size where the picture fits its rectangle exactly,
+    /// relatively, to stick to it.
+    public static let zoomThreshold = 0.04
+
+    /// A zoom of a picture in its rectangle `rect`, snapped: close to a size where the picture
+    /// exactly fills the rectangle one way or the other (see `IconGeometry.fittingZooms`), it
+    /// sticks to it. Returns whether it did.
+    public func zoom(_ zoom: Double, imageSize: CGSize, in rect: CGRect, mode: FitMode) -> (zoom: Double, snapped: Bool) {
+        let zoom = PicturePlacement.clampedZoom(zoom)
+        let fitting = IconGeometry.fittingZooms(imageSize: imageSize, in: rect, mode: mode)
+            .filter { PicturePlacement.zoomRange.contains($0) }
+        guard let nearest = fitting.min(by: { abs(log($0 / zoom)) < abs(log($1 / zoom)) }),
+              abs(log(nearest / zoom)) <= Self.zoomThreshold
+        else { return (zoom, false) }
+        return (nearest, true)
     }
 
     /// Every column and row that one of the rectangle's edges or centers lies on.

@@ -27,8 +27,8 @@ public struct FolderLook: Sendable, Equatable {
     public let pictureURL: URL
     /// The style currently in effect.
     public let style: IconStyle
-    /// Where the picture sits in the style's rectangle.
-    public let alignment: PictureAlignment
+    /// Where the picture sits in the style's rectangle, and how big.
+    public let placement: PicturePlacement
     /// `true` when the folder follows the default look.
     public let followsDefault: Bool
 }
@@ -133,7 +133,7 @@ public actor FolderImageManager {
     // MARK: - Putting pictures on folders
 
     /// Puts the picture in `imageURL` on every folder. Folders keep their own look if they
-    /// have one; the picture starts in the middle of it.
+    /// have one; the picture starts in the middle of it, at the size the look gives it.
     public func apply(imageAt imageURL: URL, to folders: [URL]) async -> [FolderOutcome] {
         let type = (try? imageURL.resourceValues(forKeys: [.contentTypeKey]))?.contentType
             ?? UTType(filenameExtension: imageURL.pathExtension)
@@ -184,12 +184,12 @@ public actor FolderImageManager {
             do {
                 try FolderInspector.validate(folder)
                 // Keep the folder's own look when it already had a picture from us. Where the
-                // old picture sat in it says nothing about the new one.
+                // old picture sat in it, and how big, says nothing about the new one.
                 let existing = ownedRecord(for: folder)
                 let stale = existing == nil ? staleRecord(of: folder) : nil
                 let bookmark = try folder.bookmarkData()
                 let style = existing?.style ?? defaultStyle
-                let image = try drawn[style] ?? draw(picture, style: style, alignment: .centered)
+                let image = try drawn[style] ?? draw(picture, style: style, placement: .natural)
                 drawn[style] = image
                 let icon = try writeIcon(image, to: folder)
                 let now = Date()
@@ -281,17 +281,17 @@ public actor FolderImageManager {
             folder: folder,
             pictureURL: library.pictureURL(named: record.pictureName),
             style: record.style ?? defaultStyle,
-            alignment: record.alignment ?? .centered,
+            placement: record.placement ?? .natural,
             followsDefault: record.style == nil
         )
     }
 
     /// Changes one folder's look and where its picture sits in it. Pass `nil` for the look to
     /// make the folder follow the default look again.
-    public func setStyle(_ style: IconStyle?, alignment: PictureAlignment, for folder: URL) async throws {
+    public func setStyle(_ style: IconStyle?, placement: PicturePlacement, for folder: URL) async throws {
         try await change(folder) { record in
             record.style = style
-            record.alignment = alignment == .centered ? nil : alignment
+            record.placement = placement == .natural ? nil : placement
         }
     }
 
@@ -301,9 +301,9 @@ public actor FolderImageManager {
         try await change(folder) { $0.style = style }
     }
 
-    /// Moves one folder's picture inside its look, which stays as it is.
-    public func setAlignment(_ alignment: PictureAlignment, for folder: URL) async throws {
-        try await change(folder) { $0.alignment = alignment == .centered ? nil : alignment }
+    /// Moves or zooms one folder's picture inside its look, which stays as it is.
+    public func setPlacement(_ placement: PicturePlacement, for folder: URL) async throws {
+        try await change(folder) { $0.placement = placement == .natural ? nil : placement }
     }
 
     /// Changes a folder's record with `edit`, as it is when the change comes in, and redraws it.
@@ -313,7 +313,7 @@ public actor FolderImageManager {
         }
         let picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
         edit(&record)
-        let icon = try writeIcon(draw(picture, style: record.style ?? defaultStyle, alignment: record.alignment ?? .centered), to: folder)
+        let icon = try writeIcon(draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .natural), to: folder)
         record.iconDigest = icon.digest
         record.updated = Date()
         library.upsert(record)
@@ -469,7 +469,7 @@ public actor FolderImageManager {
                         picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
                         open = (record.pictureName, picture)
                     }
-                    let image = try draw(picture, style: record.style ?? defaultStyle, alignment: record.alignment ?? .centered)
+                    let image = try draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .natural)
                     let icon = try writeIcon(image, to: folder)
                     record.iconDigest = icon.digest
                     record.updated = Date()
@@ -504,8 +504,8 @@ public actor FolderImageManager {
     }
 
     /// The icon for `picture` in `style`.
-    private func draw(_ picture: SourceImage, style: IconStyle, alignment: PictureAlignment) throws -> NSImage {
-        let icon: NSImage? = autoreleasepool { renderer.makeIcon(with: picture, style: style, alignment: alignment) }
+    private func draw(_ picture: SourceImage, style: IconStyle, placement: PicturePlacement) throws -> NSImage {
+        let icon: NSImage? = autoreleasepool { renderer.makeIcon(with: picture, style: style, placement: placement) }
         guard let icon else { throw FolderImageError.renderFailed }
         return icon
     }
@@ -578,7 +578,7 @@ public actor FolderImageManager {
             record = FolderRecord(
                 id: UUID(), bookmark: bookmark, lastKnownPath: FolderInspector.canonicalPath(folder.path),
                 pictureName: record.pictureName,
-                style: record.style, alignment: record.alignment, iconDigest: record.iconDigest, created: now, updated: now
+                style: record.style, placement: record.placement, iconDigest: record.iconDigest, created: now, updated: now
             )
             ExtendedAttributes.set(Data(record.id.uuidString.utf8), named: Self.markerAttribute, at: folder)
         } else {

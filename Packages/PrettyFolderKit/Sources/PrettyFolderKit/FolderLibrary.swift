@@ -13,8 +13,9 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
     var pictureName: String
     /// The folder's own look; `nil` means it follows the default look.
     public var style: IconStyle?
-    /// Where the picture sits in the look's rectangle; `nil` in the middle.
-    public var alignment: PictureAlignment?
+    /// Where the picture sits in the look's rectangle and how big; `nil` in the middle, at the
+    /// size the look gives it.
+    public var placement: PicturePlacement?
     /// SHA-256 of the icon resource PrettyFolder wrote. If the folder's icon no longer
     /// matches, somebody else changed it and PrettyFolder keeps its hands off.
     var iconDigest: String
@@ -22,6 +23,42 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
     var updated: Date
     /// Set while the folder can't be found; the record is dropped after a grace period.
     var missingSince: Date?
+
+    init(
+        id: UUID, bookmark: Data, lastKnownPath: String, pictureName: String, style: IconStyle?,
+        placement: PicturePlacement? = nil, iconDigest: String, created: Date, updated: Date, missingSince: Date? = nil
+    ) {
+        self.id = id
+        self.bookmark = bookmark
+        self.lastKnownPath = lastKnownPath
+        self.pictureName = pictureName
+        self.style = style
+        self.placement = placement
+        self.iconDigest = iconDigest
+        self.created = created
+        self.updated = updated
+        self.missingSince = missingSince
+    }
+
+    /// Before pictures could be zoomed, where one sat was kept as its alignment.
+    private enum EarlierKeys: String, CodingKey {
+        case alignment
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        bookmark = try container.decode(Data.self, forKey: .bookmark)
+        lastKnownPath = try container.decode(String.self, forKey: .lastKnownPath)
+        pictureName = try container.decode(String.self, forKey: .pictureName)
+        style = try container.decodeIfPresent(IconStyle.self, forKey: .style)
+        placement = try container.decodeIfPresent(PicturePlacement.self, forKey: .placement)
+            ?? decoder.container(keyedBy: EarlierKeys.self).decodeIfPresent(PicturePlacement.self, forKey: .alignment)
+        iconDigest = try container.decode(String.self, forKey: .iconDigest)
+        created = try container.decode(Date.self, forKey: .created)
+        updated = try container.decode(Date.self, forKey: .updated)
+        missingSince = try container.decodeIfPresent(Date.self, forKey: .missingSince)
+    }
 }
 
 /// Keeps the list of managed folders and the pictures they use, under

@@ -138,8 +138,42 @@ import Testing
         }
     }
 
-    @Test func alignmentPicksThePartThatShows() throws {
+    @Test func placementPicksThePartThatShows() throws {
         // Red on the left half, blue on the right, filling a square: only one half fits.
+        let picture = try halves()
+        let style = IconStyle(x: 0.3, y: 0.4, width: 0.4, height: 0.4, mode: .fill)
+
+        let left = try #require(renderer.render(picture, style: style, placement: PicturePlacement(x: 0, y: 0.5), pixelSize: 256))
+        let right = try #require(renderer.render(picture, style: style, placement: PicturePlacement(x: 1, y: 0.5), pixelSize: 256))
+        #expect(isRed(TestImages.pixel(left, x: 128, y: 150)))
+        #expect(isBlue(TestImages.pixel(right, x: 128, y: 150)))
+    }
+
+    @Test func zoomingShowsMoreOrLessOfThePicture() throws {
+        // Fitted in a square, the red and blue halves sit side by side in a band.
+        let picture = try halves()
+        let style = IconStyle(x: 0.25, y: 0.35, width: 0.5, height: 0.5, mode: .fit)
+        // 256 px: the rectangle runs from 64 to 192 across and 90 to 218 down.
+        let natural = try #require(renderer.render(picture, style: style, pixelSize: 256))
+        #expect(isRed(TestImages.pixel(natural, x: 80, y: 154)) && isBlue(TestImages.pixel(natural, x: 176, y: 154)))
+        #expect(!isRed(TestImages.pixel(natural, x: 80, y: 100)), "above the band, the folder shows")
+
+        // Zoomed in on the left half, red covers the whole rectangle.
+        let zoomedIn = try #require(renderer.render(picture, style: style, placement: PicturePlacement(x: 0, y: 0.5, zoom: 2), pixelSize: 256))
+        for (x, y) in [(70, 96), (186, 96), (128, 154), (70, 212), (186, 212)] {
+            #expect(isRed(TestImages.pixel(zoomedIn, x: x, y: y)), "pixel \(x),\(y)")
+        }
+        // Zoomed out, the picture leaves the ends of its band to the folder.
+        let zoomedOut = try #require(renderer.render(picture, style: style, placement: PicturePlacement(x: 0.5, y: 0.5, zoom: 0.5), pixelSize: 256))
+        let plain = try #require(renderer.render(nil, style: style, pixelSize: 256))
+        for x in [80, 176] {
+            #expect(TestImages.pixel(zoomedOut, x: x, y: 154) == TestImages.pixel(plain, x: x, y: 154), "pixel \(x),154")
+        }
+        #expect(isRed(TestImages.pixel(zoomedOut, x: 112, y: 154)) && isBlue(TestImages.pixel(zoomedOut, x: 144, y: 154)))
+    }
+
+    /// 200 × 100: red on the left half, blue on the right.
+    private func halves() throws -> SourceImage {
         let context = try #require(CGContext(
             data: nil, width: 200, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
@@ -148,16 +182,14 @@ import Testing
         context.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
         context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1))
         context.fill(CGRect(x: 100, y: 0, width: 100, height: 100))
-        let picture = SourceImage(bitmap: try #require(context.makeImage()))
-        let style = IconStyle(x: 0.3, y: 0.4, width: 0.4, height: 0.4, mode: .fill)
-
-        let left = try #require(renderer.render(picture, style: style, alignment: PictureAlignment(x: 0, y: 0.5), pixelSize: 256))
-        let right = try #require(renderer.render(picture, style: style, alignment: PictureAlignment(x: 1, y: 0.5), pixelSize: 256))
-        #expect(isRed(TestImages.pixel(left, x: 128, y: 150)))
-        #expect(TestImages.pixel(right, x: 128, y: 150).b > 200 && TestImages.pixel(right, x: 128, y: 150).r < 60)
+        return SourceImage(bitmap: try #require(context.makeImage()))
     }
 
     private func isRed(_ pixel: (r: Int, g: Int, b: Int, a: Int)) -> Bool {
         pixel.r > 200 && pixel.g < 60 && pixel.b < 60
+    }
+
+    private func isBlue(_ pixel: (r: Int, g: Int, b: Int, a: Int)) -> Bool {
+        pixel.b > 200 && pixel.r < 60
     }
 }

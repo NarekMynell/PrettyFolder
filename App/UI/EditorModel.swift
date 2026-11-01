@@ -38,12 +38,13 @@ final class EditorModel {
     private(set) var folderPicture: SourceImage?
     /// The look the editor shows for them: the first one's.
     private(set) var folderStyle: IconStyle
-    /// Where their picture sits in that look: the first one's.
-    private(set) var folderAlignment = PictureAlignment.centered
+    /// Where their picture sits in that look, and how big: the first one's.
+    private(set) var folderPlacement = PicturePlacement.natural
     /// Whether all of them follow the default look.
     private(set) var followsDefault = true
-    /// Whether all of their pictures sit in the middle of their rectangle.
-    private(set) var isPictureCentered = true
+    /// Whether all of their pictures sit in the middle of their rectangle, at the size the
+    /// look gives them.
+    private(set) var isPictureNatural = true
     /// Whether any of them has a custom icon at all, from PrettyFolder or not.
     private(set) var hasCustomIcon = false
 
@@ -61,19 +62,21 @@ final class EditorModel {
     /// Work on many folders at once, shown at the bottom of the window.
     let progress = BatchProgress()
 
-    /// A folder's own look (`nil` when it follows the default look) and where its picture sits in it.
+    /// A folder's own look (`nil` when it follows the default look) and where its picture sits
+    /// in it, and how big.
     private struct Look: Equatable {
         var style: IconStyle?
-        var alignment: PictureAlignment
+        var placement: PicturePlacement
 
-        /// The default look, picture in the middle: what a folder has to begin with.
-        static let followingDefault = Look(style: nil, alignment: .centered)
+        /// The default look, picture in the middle at its natural size: what a folder has to
+        /// begin with.
+        static let followingDefault = Look(style: nil, placement: .natural)
     }
 
     /// Which parts of the looks a change writes, so that it never writes over the other part
     /// with what the window last read: a new picture comes in the middle, say.
     private enum Parts {
-        case style, alignment, both
+        case style, placement, both
     }
 
     /// Each folder's look.
@@ -87,12 +90,12 @@ final class EditorModel {
     /// A reload found a change in the editor going on, or newer writes, and left the looks
     /// alone; it is run again once they are done.
     @ObservationIgnored private var reloadIsDue = false
-    /// The editor's change in progress (a drag, a pinch, a burst of arrow keys): what it
-    /// was made in, and where it started from.
-    @ObservationIgnored private var pendingChange: (scope: Scope, folders: [URL], start: Placement)?
+    /// The editor's change in progress (a drag, a pinch, a burst of arrow keys or of scrolling):
+    /// what it was made in, and where it started from.
+    @ObservationIgnored private var pendingChange: (scope: Scope, folders: [URL], start: Layout)?
 
     /// The look and where the picture sits in it, as the editor shows them.
-    private typealias Placement = (style: IconStyle, alignment: PictureAlignment)
+    private typealias Layout = (style: IconStyle, placement: PicturePlacement)
     /// Learns how saving the default look ended: saved, or not.
     @ObservationIgnored private var afterSavingDefault: ((Bool) -> Void)?
 
@@ -131,22 +134,22 @@ final class EditorModel {
         }
     }
 
-    /// Where the picture sits in the look. Only the folders' own picture moves: the default
-    /// look always has it in the middle.
-    var alignment: PictureAlignment {
-        get { isEditingFolders ? folderAlignment : .centered }
+    /// Where the picture sits in the look, and how big. Only the folders' own picture moves
+    /// and zooms: the default look always has it in the middle, at its natural size.
+    var placement: PicturePlacement {
+        get { isEditingFolders ? folderPlacement : .natural }
         set {
-            if isEditingFolders { folderAlignment = newValue }
+            if isEditingFolders { folderPlacement = newValue }
         }
     }
 
     var canEdit: Bool { isEditingFolders ? hasPicture : true }
-    var movesPicture: Bool { isEditingFolders && hasPicture }
+    var placesPicture: Bool { isEditingFolders && hasPicture }
     var canReset: Bool {
-        isEditingFolders ? hasPicture && !(followsDefault && isPictureCentered) : defaultDraft != IconStyle.standard
+        isEditingFolders ? hasPicture && !(followsDefault && isPictureNatural) : defaultDraft != IconStyle.standard
     }
 
-    private var placement: Placement { (style, alignment) }
+    private var layout: Layout { (style, placement) }
 
     // MARK: - Showing folders
 
@@ -162,9 +165,9 @@ final class EditorModel {
             folderPictureURL = nil
             hasCustomIcon = false
             followsDefault = true
-            isPictureCentered = true
+            isPictureNatural = true
             folderStyle = settings.defaultStyle
-            folderAlignment = .centered
+            folderPlacement = .natural
         }
         scope = folders.isEmpty ? .defaultLook : .folders
         reload()
@@ -245,13 +248,13 @@ final class EditorModel {
             // A change in the editor, or one made since this started, is newer than what was read.
             if pendingChange == nil, writesSoFar == writeGeneration {
                 looks = Dictionary(
-                    found.map { ($0.folder, Look(style: $0.look.followsDefault ? nil : $0.look.style, alignment: $0.look.alignment)) },
+                    found.map { ($0.folder, Look(style: $0.look.followsDefault ? nil : $0.look.style, placement: $0.look.placement)) },
                     uniquingKeysWith: { first, _ in first }
                 )
                 folderStyle = found.first?.look.style ?? settings.defaultStyle
-                folderAlignment = found.first?.look.alignment ?? .centered
+                folderPlacement = found.first?.look.placement ?? .natural
                 followsDefault = found.allSatisfy(\.look.followsDefault)
-                isPictureCentered = found.allSatisfy { $0.look.alignment == .centered }
+                isPictureNatural = found.allSatisfy { $0.look.placement == .natural }
             } else {
                 reloadIsDue = true
             }
@@ -274,10 +277,10 @@ final class EditorModel {
 
     // MARK: - Editing
 
-    /// The editor started a change: a drag, a pinch, a burst of arrow keys.
+    /// The editor started a change: a drag, a pinch, a burst of arrow keys or of scrolling.
     func beginChange() {
         guard pendingChange == nil else { return }
-        pendingChange = (scope, folders, placement)
+        pendingChange = (scope, folders, layout)
     }
 
     /// The editor finished its change.
@@ -307,16 +310,16 @@ final class EditorModel {
     }
 
     /// Keeps a finished change: writes it to the folders, or keeps it in the draft, and
-    /// lets it be undone. A moved picture doesn't give the folders a look of their own.
-    private func record(from previous: Placement, in scope: Scope) {
+    /// lets it be undone. A moved or zoomed picture doesn't give the folders a look of their own.
+    private func record(from previous: Layout, in scope: Scope) {
         switch scope {
         case .folders:
-            let style = folderStyle, alignment = folderAlignment
-            let restyled = style != previous.style, moved = alignment != previous.alignment
-            guard hasFolders, hasPicture, restyled || moved else { return }
-            change(writing: restyled && moved ? .both : restyled ? .style : .alignment) { look in
+            let style = folderStyle, placement = folderPlacement
+            let restyled = style != previous.style, placed = placement != previous.placement
+            guard hasFolders, hasPicture, restyled || placed else { return }
+            change(writing: restyled && placed ? .both : restyled ? .style : .placement) { look in
                 if restyled { look.style = style }
-                if moved { look.alignment = alignment }
+                if placed { look.placement = placement }
             }
         case .defaultLook:
             guard defaultDraft != previous.style else { return }
@@ -324,15 +327,19 @@ final class EditorModel {
         }
     }
 
+    /// Fill or Fit. A zoomed picture goes back to the size the new mode gives it: zoomed for
+    /// one, it would hardly change with the other.
     func setMode(_ mode: FitMode) {
         finishPendingChange()
-        let previous = placement
+        guard style.mode != mode else { return }
+        let previous = layout
         style.mode = mode
+        placement = PicturePlacement(x: placement.x, y: placement.y)
         record(from: previous, in: scope)
     }
 
-    /// Back to the default look for the folders, picture in the middle; back to the standard
-    /// look for the default.
+    /// Back to the default look for the folders, picture in the middle at its natural size;
+    /// back to the standard look for the default.
     func reset() {
         finishPendingChange()
         if isEditingFolders {
@@ -366,9 +373,9 @@ final class EditorModel {
         looks = newLooks
         let first = managedFolders.first.flatMap { newLooks[$0] }
         folderStyle = first?.style ?? settings.defaultStyle
-        folderAlignment = first?.alignment ?? .centered
+        folderPlacement = first?.placement ?? .natural
         followsDefault = newLooks.values.allSatisfy { $0.style == nil }
-        isPictureCentered = newLooks.values.allSatisfy { $0.alignment == .centered }
+        isPictureNatural = newLooks.values.allSatisfy { $0.placement == .natural }
         writeGeneration += 1
         let manager = actions.manager
         let previous = writing
@@ -379,8 +386,8 @@ final class EditorModel {
                 do {
                     switch parts {
                     case .style: try await manager.setStyle(look.style, for: folder)
-                    case .alignment: try await manager.setAlignment(look.alignment, for: folder)
-                    case .both: try await manager.setStyle(look.style, alignment: look.alignment, for: folder)
+                    case .placement: try await manager.setPlacement(look.placement, for: folder)
+                    case .both: try await manager.setStyle(look.style, placement: look.placement, for: folder)
                     }
                 } catch {
                     failures.append(FolderOutcome(folder: folder, failure: error.localizedDescription))

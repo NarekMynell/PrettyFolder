@@ -2,31 +2,32 @@ import AppKit
 import PrettyFolderKit
 import SwiftUI
 
-/// The folder icon, big, with the picture on it to place by hand: drag the rectangle's edge
-/// to move it and its handles to resize it, drag the picture to move it inside, nudge the
-/// rectangle with the arrow keys (the picture with ⌥), pinch to scale the rectangle.
+/// The folder icon, big, with the picture on it to place by hand: drag the rectangle to move
+/// it and its handles to resize it; double-click and drag to move the picture inside it, and
+/// pinch or scroll to zoom it. The arrow keys nudge the rectangle (the picture with ⌥), and
+/// ⌘+ and ⌘− zoom.
 ///
 /// While something moves it snaps to the folder's edges and center, the picture to the
-/// middle of its rectangle (hold Command to place it freely). It is drawn with the
-/// renderer's own drawing, outline, light and all, so what it shows is exactly what the
-/// icon gets.
+/// middle of its rectangle and to the sizes where it just fills or fits it (hold Command to
+/// place it freely). It is drawn with the renderer's own drawing, outline, light and all, so
+/// what it shows is exactly what the icon gets.
 struct StyleEditor: NSViewRepresentable {
     @Binding var style: IconStyle
-    @Binding var alignment: PictureAlignment
+    @Binding var placement: PicturePlacement
     /// The lines the picture is lined up with while it is being dragged.
     @Binding var guides: [SnapGuide]
-    /// `true` while the picture is being moved or resized; the parts that get cut off
+    /// `true` while the picture is being moved, resized or zoomed; the parts that get cut off
     /// show faintly meanwhile.
     @Binding var isAdjusting: Bool
     let picture: SourceImage?
     var isEnabled = true
-    /// Whether the picture can move inside its rectangle. A folder's own can; the default
-    /// look always has it in the middle.
-    var movesPicture = false
+    /// Whether the picture can be moved and zoomed inside its rectangle. A folder's own can;
+    /// the default look always has it in the middle, at its natural size.
+    var placesPicture = false
     var side: CGFloat = 320
-    /// A change begins: a drag, a pinch, the first of a burst of arrow keys.
+    /// A change begins: a drag, a pinch, the first of a burst of keys or of scrolling.
     var onBegin: () -> Void = {}
-    /// The change is finished: a drag ended, a nudge settled.
+    /// The change is finished: a drag or a pinch ended, a burst settled.
     var onCommit: () -> Void = {}
 
     /// Snapping kicks in within 6 points, whatever the editor's size.
@@ -38,16 +39,16 @@ struct StyleEditor: NSViewRepresentable {
 
     func updateNSView(_ view: StyleEditorView, context: Context) {
         view.actions = StyleEditorView.Actions(
-            current: { (style, alignment) },
-            change: { style = $0; alignment = $1 },
+            current: { (style, placement) },
+            change: { style = $0; placement = $1 },
             showGuides: { guides = $0 },
             adjust: { isAdjusting = $0 },
             begin: onBegin,
             commit: onCommit
         )
         view.update(
-            style: style, alignment: alignment, guides: guides, isAdjusting: isAdjusting,
-            picture: picture, isEnabled: isEnabled, movesPicture: movesPicture, side: side
+            style: style, placement: placement, guides: guides, isAdjusting: isAdjusting,
+            picture: picture, isEnabled: isEnabled, placesPicture: placesPicture, side: side
         )
     }
 
@@ -57,17 +58,22 @@ struct StyleEditor: NSViewRepresentable {
 }
 
 /// What the editor draws and how it takes the mouse, the trackpad and the keyboard. The
-/// pointer always shows what pressing there would do: a resize arrow on a handle, a hand
-/// over a picture that can move, the arrow on the rectangle's edge, which moves it.
+/// pointer always shows what pressing there would do: a resize arrow on a handle, a hand over
+/// the rectangle, which a drag moves, the arrow everywhere else.
 final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     /// Room around the folder, so the handles of a rectangle at its edges show and can be
     /// grabbed whole. The folder's top-left corner is the origin all the same.
     static let margin: CGFloat = 12
+    /// How far the pointer goes with the button down before a click becomes a drag: a click,
+    /// the first of a double-click say, never moves anything.
+    static let dragThreshold: CGFloat = 3
+    /// How much one press of ⌘+ or ⌘− zooms.
+    static let zoomStep: CGFloat = 1.25
 
     struct Actions {
         /// The look as the model has it now.
-        var current: () -> (IconStyle, PictureAlignment) = { (.standard, .centered) }
-        var change: (IconStyle, PictureAlignment) -> Void = { _, _ in }
+        var current: () -> (IconStyle, PicturePlacement) = { (.standard, .natural) }
+        var change: (IconStyle, PicturePlacement) -> Void = { _, _ in }
         var showGuides: ([SnapGuide]) -> Void = { _ in }
         var adjust: (Bool) -> Void = { _ in }
         var begin: () -> Void = {}
@@ -78,33 +84,47 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     enum Part: Equatable {
         /// Resizes the rectangle.
         case handle(ResizeHandle)
-        /// Moves the rectangle: its edge, and its inside when the picture can't move.
+        /// Moves the rectangle: its inside, and a band around its edge. The second click of a
+        /// double-click takes hold of the picture instead.
         case frame
-        /// Moves the picture inside the rectangle.
-        case picture
         /// Nothing.
         case none
+    }
+
+    /// What a drag moves.
+    enum Drag: Equatable {
+        case handle(ResizeHandle)
+        case frame
+        /// The picture inside the rectangle, after a double-click.
+        case picture
     }
 
     var actions = Actions()
 
     private var style = IconStyle.standard
-    private var alignment = PictureAlignment.centered
+    private var placement = PicturePlacement.natural
     private var guides: [SnapGuide] = []
     private var isAdjusting = false
     private var picture: SourceImage?
     private var isEnabled = true
-    private var movesPicture = false
+    private var placesPicture = false
     private var side: CGFloat = 320
 
-    /// The part under the pointer; its edge lights up when it's the rectangle's.
+    /// The part under the pointer; the rectangle's edge lights up while it's the rectangle.
     private var hovered = Part.none
-    /// The part being dragged.
-    private var dragged: Part?
-    /// A pinch going on, and how far it has gone.
-    private var pinch: (start: IconStyle, magnification: CGFloat)?
-    /// Arrow keys pressed in a row make one change, finished once they stop for a moment.
-    private var nudgeEnd: Task<Void, Never>?
+    /// What is being dragged.
+    private var dragged: Drag?
+    /// A pinch going on: where it started, how far it has gone, the point it zooms around,
+    /// and whether it zooms the picture (or else the rectangle).
+    private var pinch: (start: (style: IconStyle, placement: PicturePlacement), magnification: CGFloat, anchor: CGPoint, zoomsPicture: Bool)?
+    /// Arrow keys, zoom keys and scrolling in a row make one change, finished once they stop
+    /// for a moment.
+    private var burstEnd: Task<Void, Never>?
+    /// Whether the zoom is resting on a size where the picture fits its rectangle.
+    private var zoomIsSnapped = false
+    /// The zoom the scrolling or keys going on ask for, before it sticks to a fitting size:
+    /// snapped each time, small steps would never get away from one.
+    private var requestedZoom: Double?
     private var tracking: NSTrackingArea?
     private var windowObservers: [NSObjectProtocol] = []
     private var cursorUpdateIsQueued = false
@@ -137,21 +157,21 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     /// Takes what SwiftUI has. While a drag or a pinch goes on, the editor's own look is the
     /// one that counts; once it's over, the model's is taken again (`catchUp`).
     func update(
-        style: IconStyle, alignment: PictureAlignment, guides: [SnapGuide], isAdjusting: Bool,
-        picture: SourceImage?, isEnabled: Bool, movesPicture: Bool, side: CGFloat
+        style: IconStyle, placement: PicturePlacement, guides: [SnapGuide], isAdjusting: Bool,
+        picture: SourceImage?, isEnabled: Bool, placesPicture: Bool, side: CGFloat
     ) {
         var moved = false
-        if dragged == nil, pinch == nil, style != self.style || alignment != self.alignment {
+        if dragged == nil, pinch == nil, style != self.style || placement != self.placement {
             // Changed from elsewhere (undo, the reset button, another folder's look): the model
-            // finished any nudges in a row before making the change.
-            nudgeEnd?.cancel()
-            nudgeEnd = nil
+            // finished any burst of keys or scrolling before making the change.
+            burstEnd?.cancel()
+            burstEnd = nil
             self.style = style
-            self.alignment = alignment
+            self.placement = placement
             moved = true
         }
         let changed = moved || picture !== self.picture || isEnabled != self.isEnabled
-            || movesPicture != self.movesPicture || side != self.side
+            || placesPicture != self.placesPicture || side != self.side
         if changed || guides != self.guides || isAdjusting != self.isAdjusting {
             needsDisplay = true
         }
@@ -159,7 +179,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         self.isAdjusting = isAdjusting
         self.picture = picture
         self.isEnabled = isEnabled
-        self.movesPicture = movesPicture
+        self.placesPicture = placesPicture
         self.side = side
         // Turned off in the middle of a pinch (the picture was taken off in Finder, say).
         if !isEnabled { endPinch(restoring: true) }
@@ -173,10 +193,10 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     /// After a drag or a pinch, shows the look the model has: the gesture's own, once the
     /// model took it, or another one if the model moved on meanwhile (to other folders, say).
     private func catchUp() {
-        let (style, alignment) = actions.current()
-        guard style != self.style || alignment != self.alignment else { return }
+        let (style, placement) = actions.current()
+        guard style != self.style || placement != self.placement else { return }
         self.style = style
-        self.alignment = alignment
+        self.placement = placement
         needsDisplay = true
         setAccessibilityValue(accessibilityDescription)
     }
@@ -185,12 +205,8 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
 
     private var target: CGRect { IconGeometry.targetRect(for: style, canvas: side, flipped: true) }
 
-    /// Whether the picture has anywhere to go inside its rectangle.
-    private var pictureCanMove: Bool {
-        guard movesPicture, let picture else { return false }
-        let room = IconGeometry.room(imageSize: picture.size, in: target, mode: style.mode)
-        return max(room.width, room.height) >= 0.5
-    }
+    /// Whether there is a picture to move and zoom inside its rectangle.
+    private var canPlacePicture: Bool { placesPicture && picture != nil }
 
     /// What pressing at `point` would do.
     func part(at point: CGPoint) -> Part {
@@ -204,11 +220,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         if let nearest, nearest.distance <= reach {
             return .handle(nearest.handle)
         }
-        let inside = edgeInside(for: target)
-        let onEdge = target.insetBy(dx: -6, dy: -6).contains(point) && !target.insetBy(dx: inside, dy: inside).contains(point)
-        if onEdge { return .frame }
-        if target.contains(point) { return pictureCanMove ? .picture : .frame }
-        return .none
+        return grabArea(for: target).contains(point) ? .frame : .none
     }
 
     /// How far a handle can be grabbed from: less on a small rectangle, so there is still an
@@ -217,17 +229,26 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         min(11, max(5, min(target.width, target.height) / 4))
     }
 
-    /// How far into the rectangle its edge can be grabbed.
-    private func edgeInside(for target: CGRect) -> CGFloat {
-        min(4, min(target.width, target.height) / 6)
+    /// Where the rectangle can be taken hold of: all of it, and a little around it, so that a
+    /// thin one can still be grabbed.
+    private func grabArea(for target: CGRect) -> CGRect {
+        target.insetBy(dx: -6, dy: -6)
     }
 
     /// The pointer over `part`.
     func cursor(for part: Part) -> NSCursor {
         switch part {
         case .handle(let handle): handle.cursor
-        case .picture: dragged == .picture ? .closedHand : .openHand
-        case .frame, .none: .arrow
+        case .frame: .openHand
+        case .none: .arrow
+        }
+    }
+
+    /// The pointer while `drag` goes on.
+    func cursor(for drag: Drag) -> NSCursor {
+        switch drag {
+        case .handle(let handle): handle.cursor
+        case .frame, .picture: .closedHand
         }
     }
 
@@ -309,7 +330,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         super.viewWillMove(toWindow: newWindow)
-        finishNudge()
+        finishBurst()
         windowObservers.forEach(NotificationCenter.default.removeObserver)
         windowObservers = []
         endPinch(restoring: true)
@@ -344,15 +365,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
             let center = handle.position(in: target)
             addToolTip(NSRect(x: center.x - reach, y: center.y - reach, width: 2 * reach, height: 2 * reach), owner: self, userData: nil)
         }
-        let band = target.insetBy(dx: -6, dy: -6)
-        let inside = edgeInside(for: target)
-        for edge in [NSRect(x: band.minX, y: band.minY, width: band.width, height: 6 + inside),
-                     NSRect(x: band.minX, y: target.maxY - inside, width: band.width, height: 6 + inside),
-                     NSRect(x: band.minX, y: band.minY, width: 6 + inside, height: band.height),
-                     NSRect(x: target.maxX - inside, y: band.minY, width: 6 + inside, height: band.height)] {
-            addToolTip(edge, owner: self, userData: nil)
-        }
-        addToolTip(target.insetBy(dx: inside, dy: inside), owner: self, userData: nil)
+        addToolTip(grabArea(for: target), owner: self, userData: nil)
     }
 
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
@@ -361,10 +374,10 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
             String(localized: "Drag to resize. ⇧ keeps the proportions, ⌥ resizes around the middle.")
         case .handle:
             String(localized: "Drag to resize. ⌥ resizes around the middle.")
+        case .frame where canPlacePicture:
+            String(localized: "Drag to move the frame. Double-click and drag to move the picture inside it; pinch or scroll to zoom it.")
         case .frame:
-            String(localized: "Drag to move the frame.")
-        case .picture:
-            String(localized: "Drag to move the picture in its frame. Double-click puts it back in the middle.")
+            String(localized: "Drag to move the frame. Pinch or scroll to resize it.")
         case .none:
             ""
         }
@@ -378,36 +391,38 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     override func mouseDown(with event: NSEvent) {
         guard isEnabled else { return }
         window?.makeFirstResponder(self)
-        finishNudge()
+        finishBurst()
         let start = convert(event.locationInWindow, from: nil)
-        let part = part(at: start)
-        if event.clickCount == 2 {
-            if part == .picture { centerPicture() }
-            return
+        switch part(at: start) {
+        case .handle(let handle):
+            track(.handle(handle), from: start)
+        case .frame:
+            // A press moves the rectangle; the second click of a double-click, the picture in it.
+            track(event.clickCount >= 2 && canPlacePicture ? .picture : .frame, from: start)
+        case .none:
+            break
         }
-        guard part != .none else { return }
-        track(part, from: start)
     }
 
     /// Follows the pointer until the button is let go. Modifier keys count as soon as they
     /// change; Escape puts everything back where it was.
-    private func track(_ part: Part, from start: CGPoint) {
-        dragged = part
-        cursor(for: part).set()
+    private func track(_ drag: Drag, from start: CGPoint) {
+        dragged = drag
+        cursor(for: drag).set()
         needsDisplay = true
-        var origin: (style: IconStyle, alignment: PictureAlignment)?
+        var origin: (style: IconStyle, placement: PicturePlacement)?
         var point = start
 
         func follow(_ modifiers: NSEvent.ModifierFlags) {
             let offset = CGSize(width: point.x - start.x, height: point.y - start.y)
             if origin == nil {
-                // A click that doesn't move isn't a change.
-                guard hypot(offset.width, offset.height) >= 1 else { return }
-                origin = (style, alignment)
+                // A click that doesn't go anywhere isn't a change.
+                guard hypot(offset.width, offset.height) >= Self.dragThreshold else { return }
+                origin = (style, placement)
                 actions.begin()
                 setAdjusting(true)
             }
-            if let origin { drag(part, from: origin, by: offset, modifiers: modifiers) }
+            if let origin { self.drag(drag, from: origin, by: offset, modifiers: modifiers) }
         }
 
         window?.trackEvents(
@@ -422,7 +437,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
             case .flagsChanged:
                 follow(event.modifierFlags)
             case .keyDown where event.charactersIgnoringModifiers == "\u{1b}":
-                if let origin { set(origin.style, origin.alignment) }
+                if let origin { set(origin.style, origin.placement) }
                 stop.pointee = true
             case .leftMouseUp:
                 stop.pointee = true
@@ -443,12 +458,12 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         updateCursor(afterDrag: true)
     }
 
-    private func drag(_ part: Part, from origin: (style: IconStyle, alignment: PictureAlignment), by offset: CGSize, modifiers: NSEvent.ModifierFlags) {
+    private func drag(_ drag: Drag, from origin: (style: IconStyle, placement: PicturePlacement), by offset: CGSize, modifiers: NSEvent.ModifierFlags) {
         // Holding Command places things freely, as in most design apps.
         let snaps = !modifiers.contains(.command)
         let snapping = StyleEditor.snapping(side: side)
         let dx = offset.width / side, dy = offset.height / side
-        switch part {
+        switch drag {
         case .frame:
             let moved = origin.style.rect.offsetBy(dx: dx, dy: dy)
             let snapped = snaps ? snapping.move(moved) : (rect: moved, guides: [])
@@ -464,33 +479,39 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
             showGuides(snapped.guides)
         case .picture:
             guard let picture else { return }
-            let moved = IconGeometry.alignment(origin.alignment, movedBy: offset, imageSize: picture.size, in: target, mode: style.mode)
+            let moved = IconGeometry.placement(origin.placement, movedBy: offset, imageSize: picture.size, in: target, mode: style.mode)
             let snapped = snaps
-                ? snapping.pan(moved, imageSize: picture.size, in: style.rect, mode: style.mode) : (alignment: moved, guides: [])
-            set(style, snapped.alignment)
+                ? snapping.pan(moved, imageSize: picture.size, in: style.rect, mode: style.mode) : (placement: moved, guides: [])
+            set(style, snapped.placement)
             showGuides(snapped.guides)
-        case .none:
-            break
         }
     }
 
+    // MARK: - Zooming
+
+    /// Pinching zooms the picture around the pointer; in the default look, where the picture
+    /// can't be zoomed, it scales the rectangle.
     override func magnify(with event: NSEvent) {
         switch event.phase {
         case .began:
             guard isEnabled, dragged == nil, pinch == nil else { return }
-            finishNudge()
-            pinch = (style, 0)
+            finishBurst()
+            pinch = ((style, placement), 0, convert(event.locationInWindow, from: nil), canPlacePicture)
+            zoomIsSnapped = false
             actions.begin()
             setAdjusting(true)
         case .changed:
             guard isEnabled, var current = pinch else { return }
             current.magnification += event.magnification
             pinch = current
-            let start = current.start
-            let scale = max(1 + current.magnification, 0.05)
-            let width = min(max(start.width * scale, IconStyle.minimumSide), 1)
-            let height = min(max(start.height * scale, IconStyle.minimumSide), 1)
-            set(rect: CGRect(x: start.rect.midX - width / 2, y: start.rect.midY - height / 2, width: width, height: height))
+            // Multiplied in, so pinching out and back in comes back to the same size.
+            let scale = exp(current.magnification)
+            if current.zoomsPicture {
+                zoomPicture(from: current.start.placement, to: current.start.placement.zoom * scale, around: current.anchor,
+                            snaps: !event.modifierFlags.contains(.command))
+            } else {
+                set(rect: scaled(current.start.style.rect, by: scale))
+            }
             queueCursorUpdate()
         case .ended:
             endPinch(restoring: false)
@@ -505,7 +526,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     /// the editor turned off, or an alert or another window took over.
     private func endPinch(restoring: Bool) {
         guard let current = pinch else { return }
-        if restoring { set(current.start, alignment) }
+        if restoring { set(current.start.style, current.start.placement) }
         pinch = nil
         setAdjusting(false)
         actions.commit()
@@ -514,10 +535,76 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         queueCursorUpdate()
     }
 
-    /// One change, made at once and undone as one: a double-click, an action from VoiceOver.
+    /// Scrolling zooms too, like pinching, for a mouse's wheel above all: up zooms in.
+    override func scrollWheel(with event: NSEvent) {
+        guard isEnabled, dragged == nil, pinch == nil else { return super.scrollWheel(with: event) }
+        // What a trackpad goes on sending once the fingers are off it would zoom on and on.
+        guard event.momentumPhase.isEmpty else { return }
+        // Up is up whichever way scrolling is set to go.
+        var delta = event.isDirectionInvertedFromDevice ? -event.scrollingDeltaY : event.scrollingDeltaY
+        // A wheel counts in lines, a trackpad in points.
+        delta *= event.hasPreciseScrollingDeltas ? 0.004 : 0.1
+        guard delta != 0 else { return }
+        zoom(by: exp(delta), around: convert(event.locationInWindow, from: nil), snaps: !event.modifierFlags.contains(.command))
+    }
+
+    @objc func zoomIn(_ sender: Any?) {
+        zoom(by: Self.zoomStep, around: nil, snaps: true)
+    }
+
+    @objc func zoomOut(_ sender: Any?) {
+        zoom(by: 1 / Self.zoomStep, around: nil, snaps: true)
+    }
+
+    /// Zooms the picture `factor` times, as one burst with the zooms right before and after
+    /// it, around `anchor` or the middle of what shows of it. In the default look, scales
+    /// the rectangle instead.
+    private func zoom(by factor: CGFloat, around anchor: CGPoint?, snaps: Bool) {
+        guard isEnabled, dragged == nil, pinch == nil else { return }
+        guard canPlacePicture, let picture else {
+            burst(adjusting: true) { set(rect: scaled(style.rect, by: factor)) }
+            return
+        }
+        let visible = IconGeometry.visibleRect(imageSize: picture.size, in: target, mode: style.mode, placement: placement, flipped: true)
+        let center = anchor ?? CGPoint(x: visible.midX, y: visible.midY)
+        burst(adjusting: true) {
+            // Past the smallest or biggest size, turning back takes effect right away.
+            let requested = PicturePlacement.clampedZoom((requestedZoom ?? placement.zoom) * factor)
+            requestedZoom = requested
+            zoomPicture(from: placement, to: requested, around: center, snaps: snaps)
+        }
+    }
+
+    /// The picture at `zoom`, the point under `anchor` staying put. Close to a size where it
+    /// fits its rectangle exactly, it sticks there, with a tap on a Force Touch trackpad.
+    private func zoomPicture(from start: PicturePlacement, to zoom: CGFloat, around anchor: CGPoint, snaps: Bool) {
+        guard let picture else { return }
+        let target = target
+        let snapped = snaps
+            ? StyleEditor.snapping(side: side).zoom(zoom, imageSize: picture.size, in: style.rect, mode: style.mode)
+            : (zoom: zoom, snapped: false)
+        if snapped.snapped, !zoomIsSnapped {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+        zoomIsSnapped = snapped.snapped
+        // Around a point of what shows of the picture.
+        let pin = CGPoint(x: min(max(anchor.x, target.minX), target.maxX), y: min(max(anchor.y, target.minY), target.maxY))
+        set(style, IconGeometry.placement(start, zoomedTo: snapped.zoom, around: pin, imageSize: picture.size, in: target, mode: style.mode))
+    }
+
+    /// `rect` `factor` times as big around its middle, within the folder and the smallest size.
+    private func scaled(_ rect: CGRect, by factor: CGFloat) -> CGRect {
+        let width = min(max(rect.width * factor, IconStyle.minimumSide), 1)
+        let height = min(max(rect.height * factor, IconStyle.minimumSide), 1)
+        return CGRect(x: rect.midX - width / 2, y: rect.midY - height / 2, width: width, height: height)
+    }
+
+    // MARK: - Changes made at once
+
+    /// One change, made at once and undone as one: an action from VoiceOver.
     private func change(_ make: () -> Void) {
         guard isEnabled, dragged == nil, pinch == nil else { return }
-        finishNudge()
+        finishBurst()
         actions.begin()
         make()
         actions.commit()
@@ -525,10 +612,10 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         queueCursorUpdate()
     }
 
-    /// A double-click on a picture that was moved puts it back in the middle.
+    /// The picture back in the middle, at the size it has.
     private func centerPicture() {
-        guard alignment != .centered else { return }
-        change { set(style, .centered) }
+        guard placement != placement.centered else { return }
+        change { set(style, placement.centered) }
     }
 
     /// The rectangle `offset` points away.
@@ -539,9 +626,8 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
 
     /// The rectangle `factor` times as big, around its middle.
     private func scaleFrame(by factor: CGFloat) {
-        let width = min(max(style.width * factor, IconStyle.minimumSide), 1)
-        let height = min(max(style.height * factor, IconStyle.minimumSide), 1)
-        change { set(rect: CGRect(x: style.rect.midX - width / 2, y: style.rect.midY - height / 2, width: width, height: height)) }
+        let rect = scaled(style.rect, by: factor)
+        change { set(rect: rect) }
     }
 
     // MARK: - Keyboard
@@ -563,66 +649,81 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         }
         if modifiers.contains(.option) {
             guard let moved = picture(movedBy: offset) else { return }
-            nudge { set(style, moved) }
+            burst { set(style, moved) }
         } else {
             let rect = style.rect.offsetBy(dx: offset.width / side, dy: offset.height / side)
-            nudge { set(rect: rect) }
+            burst { set(rect: rect) }
         }
     }
 
     /// Where the picture goes when moved by `offset` points; `nil` when it can't move that way.
-    private func picture(movedBy offset: CGSize) -> PictureAlignment? {
-        guard pictureCanMove, let picture else { return nil }
-        let moved = IconGeometry.alignment(alignment, movedBy: offset, imageSize: picture.size, in: target, mode: style.mode)
-        return moved == alignment ? nil : moved
+    private func picture(movedBy offset: CGSize) -> PicturePlacement? {
+        guard canPlacePicture, let picture else { return nil }
+        let moved = IconGeometry.placement(placement, movedBy: offset, imageSize: picture.size, in: target, mode: style.mode)
+        return moved == placement ? nil : moved
     }
 
-    private func nudge(_ change: () -> Void) {
-        if nudgeEnd == nil { actions.begin() }
-        nudgeEnd?.cancel()
+    /// Makes `change` part of the burst going on, or starts one. With `adjusting`, the parts
+    /// cut off show faintly until it settles.
+    private func burst(adjusting: Bool = false, _ change: () -> Void) {
+        if burstEnd == nil {
+            actions.begin()
+            zoomIsSnapped = false
+            requestedZoom = nil
+        }
+        if adjusting { setAdjusting(true) }
+        burstEnd?.cancel()
         change()
         queueCursorUpdate()
-        nudgeEnd = Task { [weak self] in
+        burstEnd = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(450))
             guard !Task.isCancelled else { return }
-            self?.finishNudge()
+            self?.finishBurst()
         }
     }
 
-    private func finishNudge() {
-        guard let nudgeEnd else { return }
-        nudgeEnd.cancel()
-        self.nudgeEnd = nil
+    private func finishBurst() {
+        guard let burstEnd else { return }
+        burstEnd.cancel()
+        self.burstEnd = nil
+        requestedZoom = nil
+        setAdjusting(false)
         actions.commit()
         updateToolTips()
     }
 
     override func resignFirstResponder() -> Bool {
-        finishNudge()
+        finishBurst()
         return super.resignFirstResponder()
     }
 
     // MARK: - Undo
 
-    /// ⌘Z right after arrow keys undoes them, as a change of their own; during a pinch there
-    /// is nothing finished to undo yet.
+    /// ⌘Z right after a burst of keys or scrolling undoes it, as a change of its own; during a
+    /// pinch there is nothing finished to undo yet.
     @objc func undo(_ sender: Any?) {
         guard dragged == nil, pinch == nil else { return }
-        finishNudge()
+        finishBurst()
         undoManager?.undo()
     }
 
     @objc func redo(_ sender: Any?) {
-        guard dragged == nil, pinch == nil, nudgeEnd == nil else { return }
+        guard dragged == nil, pinch == nil, burstEnd == nil else { return }
         undoManager?.redo()
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(zoomIn(_:)), #selector(zoomOut(_:)):
+            return isEnabled && dragged == nil && pinch == nil
+        default:
+            break
+        }
         guard let undoManager, dragged == nil, pinch == nil else { return false }
         switch menuItem.action {
         case #selector(undo(_:)):
-            // Arrow keys still being pressed are about to become a change.
-            guard nudgeEnd == nil else {
+            // Keys or scrolling still going on are about to become a change.
+            guard burstEnd == nil else {
                 menuItem.title = undoManager.undoMenuTitle(forUndoActionName: "")
                 return true
             }
@@ -630,7 +731,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
             return undoManager.canUndo
         case #selector(redo(_:)):
             menuItem.title = undoManager.redoMenuItemTitle
-            return nudgeEnd == nil && undoManager.canRedo
+            return burstEnd == nil && undoManager.canRedo
         default:
             return true
         }
@@ -656,7 +757,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
             action(String(localized: "Make Frame Bigger")) { $0.scaleFrame(by: 1.1) },
             action(String(localized: "Make Frame Smaller")) { $0.scaleFrame(by: 1 / 1.1) },
         ]
-        if pictureCanMove {
+        if canPlacePicture {
             for (name, offset) in [(String(localized: "Move Picture Left"), CGSize(width: -step, height: 0)),
                                    (String(localized: "Move Picture Right"), CGSize(width: step, height: 0)),
                                    (String(localized: "Move Picture Up"), CGSize(width: 0, height: -step)),
@@ -667,8 +768,18 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
                 })
             }
             list.append(action(String(localized: "Center Picture")) { $0.centerPicture() })
+            list.append(action(String(localized: "Zoom In on Picture")) { $0.zoomPictureAtOnce(by: Self.zoomStep) })
+            list.append(action(String(localized: "Zoom Out of Picture")) { $0.zoomPictureAtOnce(by: 1 / Self.zoomStep) })
         }
         return list
+    }
+
+    /// The picture zoomed around the middle of what shows of it, as a change of its own.
+    private func zoomPictureAtOnce(by factor: CGFloat) {
+        guard let picture else { return }
+        let visible = IconGeometry.visibleRect(imageSize: picture.size, in: target, mode: style.mode, placement: placement, flipped: true)
+        let start = placement
+        change { zoomPicture(from: start, to: start.zoom * factor, around: CGPoint(x: visible.midX, y: visible.midY), snaps: true) }
     }
 
     // A focus ring for those who move around with the keyboard; a click shows the frame
@@ -691,16 +802,16 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     private func set(rect: CGRect) {
         var style = style
         style.rect = rect
-        set(style, alignment)
+        set(style, placement)
     }
 
-    private func set(_ style: IconStyle, _ alignment: PictureAlignment) {
-        guard style != self.style || alignment != self.alignment else { return }
+    private func set(_ style: IconStyle, _ placement: PicturePlacement) {
+        guard style != self.style || placement != self.placement else { return }
         self.style = style
-        self.alignment = alignment
+        self.placement = placement
         needsDisplay = true
         setAccessibilityValue(accessibilityDescription)
-        actions.change(style, alignment)
+        actions.change(style, placement)
     }
 
     /// Shows the guides, with a tap on a Force Touch trackpad as the picture lands on one.
@@ -724,9 +835,12 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     private var accessibilityDescription: String {
         let width = style.width.formatted(.percent.precision(.fractionLength(0)))
         let height = style.height.formatted(.percent.precision(.fractionLength(0)))
-        return style.mode == .fill
+        let size = style.mode == .fill
             ? String(localized: "\(width) wide, \(height) tall, fills its frame")
             : String(localized: "\(width) wide, \(height) tall, fits in its frame")
+        guard canPlacePicture, placement.zoom != 1 else { return size }
+        let zoom = placement.zoom.formatted(.percent.precision(.fractionLength(0)))
+        return size + ", " + String(localized: "zoomed to \(zoom)")
     }
 
     // MARK: - Drawing
@@ -769,14 +883,14 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         if isAdjusting {
             // While it moves: faintly, the parts the rectangle or the folder's outline cut off,
             // as far as the editor goes.
-            let drawn = IconGeometry.imageRect(imageSize: picture.size, in: target, mode: style.mode, alignment: alignment, flipped: false)
+            let drawn = IconGeometry.imageRect(imageSize: picture.size, in: target, mode: style.mode, placement: placement, flipped: false)
             context.saveGState()
             context.clip(to: CGRect(x: 0, y: 0, width: canvas, height: canvas))
             context.setAlpha(0.22)
             picture.draw(in: drawn, context: context)
             context.restoreGState()
         }
-        IconRenderer.drawPicture(picture, style: style, alignment: alignment, canvas: canvas, on: Self.surface, in: context)
+        IconRenderer.drawPicture(picture, style: style, placement: placement, canvas: canvas, on: Self.surface, in: context)
     }
 
     private func drawGuides() {
