@@ -8,8 +8,10 @@ import os
 /// `FolderMetadata` in the kit), and Finder then drops the old icon, shows its plain folder
 /// for up to a second and draws the new one. Just before Finder is told, a window with the new
 /// icon goes exactly over each place Finder shows the folder, so all that is seen is the old
-/// icon turning into the new one. The window goes once Finder has caught up, or as soon as
-/// anything could move the icon under it: a click, a scroll, a key, another Space.
+/// icon turning into the new one. The window goes once Finder has caught up, as soon as
+/// anything could move the icon under it (a scroll, a key, a drag, a double-click, another
+/// Space), or once a look at Finder finds the icon gone or moved: Finder is looked at now and
+/// then, and right away after a click.
 final class IconCover {
     /// Finder takes up to a second or two to notice the change and up to a second more to
     /// draw it; a cover that stays a little longer than needed shows the same icon as Finder.
@@ -20,6 +22,11 @@ final class IconCover {
     /// One look at Finder serves every folder written in a burst, like Redraw All.
     private static let reuseLimit: TimeInterval = 0.3
     private static let desktopLevel = Int(CGWindowLevelForKey(.desktopIconWindow))
+    /// How far the pointer goes with a button down before Finder takes it for a drag.
+    private static let dragDistance: CGFloat = 3
+    /// When, after a click or an app coming forward, the covers are put right above their
+    /// windows again: Finder may bring a window forward a moment after either, over the cover.
+    private static let reorderDelays: [Duration] = [.milliseconds(15), .milliseconds(45), .milliseconds(100), .milliseconds(200)]
 
     private let finder: FinderProcess
     private let accessibility: FinderAccessibility
@@ -42,6 +49,12 @@ final class IconCover {
     nonisolated(unsafe) private var monitors: [Any] = []
     nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
     private var isChecking = false
+    /// Asked for while a check was going on: what it found may be from before.
+    private var checkIsDue = false
+    /// Where a mouse button went down, to tell a click from a drag.
+    private var pressedAt: NSPoint?
+    /// Puts the covers back above their windows a few times after a click (`keepOnTop`).
+    private var reordering: Task<Void, Never>?
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Cover")
 
     init(finder: FinderProcess, accessibility: FinderAccessibility) {
@@ -205,10 +218,12 @@ final class IconCover {
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
-        // Anything that can move icons around.
-        let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .keyDown]
-        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: events, handler: { [weak self] _ in
-            MainActor.assumeIsolated { self?.removeAll() }
+        let events: NSEvent.EventTypeMask = [
+            .leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp, .rightMouseUp, .otherMouseUp,
+            .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .scrollWheel, .keyDown,
+        ]
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: events, handler: { [weak self] event in
+            MainActor.assumeIsolated { self?.handle(event) }
         }) {
             monitors.append(monitor)
         }
@@ -218,13 +233,16 @@ final class IconCover {
         })
         // Finder coming forward reorders its windows; keep each cover right above its window.
         observers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.covers.forEach { $0.reorder() } }
+            MainActor.assumeIsolated { self?.keepOnTop() }
         })
     }
 
     private func stopWatching() {
         timer?.invalidate()
         timer = nil
+        pressedAt = nil
+        reordering?.cancel()
+        reordering = nil
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
         observers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
@@ -232,6 +250,47 @@ final class IconCover {
         // What Finder showed is no use once nothing is covered, and it holds on to its icons.
         lastLook = nil
         newest.removeAll()
+    }
+
+    /// What another app's input means for the covers. Scrolling, a key, a drag or a
+    /// double-click (which may open the folder) can move icons at once: every cover goes. A
+    /// click doesn't move them: Finder is likely still loading the new icon, and taking the
+    /// covers away would show its plain folder, so they stay while Finder is looked at again.
+    private func handle(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            // Events seen by a global monitor carry screen coordinates.
+            pressedAt = event.locationInWindow
+            guard event.clickCount < 2 else { return removeAll() }
+            keepOnTop()
+            check()
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp:
+            pressedAt = nil
+            keepOnTop()
+            check()
+        case .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
+            // A hand that shakes a little while clicking doesn't drag yet.
+            guard let pressedAt else { return removeAll() }
+            let point = event.locationInWindow
+            if hypot(point.x - pressedAt.x, point.y - pressedAt.y) > Self.dragDistance { removeAll() }
+        default:
+            removeAll()
+        }
+    }
+
+    /// Puts every cover right above its window now, and again a few times over the next moment.
+    private func keepOnTop() {
+        covers.forEach { $0.reorder() }
+        reordering?.cancel()
+        reordering = Task { [weak self] in
+            var waited = Duration.zero
+            for delay in Self.reorderDelays {
+                try? await Task.sleep(for: delay - waited)
+                waited = delay
+                guard !Task.isCancelled, let self else { return }
+                self.covers.forEach { $0.reorder() }
+            }
+        }
     }
 
     /// Stops watching once no cover is up and none is being placed.
@@ -259,15 +318,24 @@ final class IconCover {
         guard !covers.isEmpty else { return }
         covers.forEach { $0.reorder() }
 
-        // Still where Finder shows the folder, and still with a picture? Keyboard navigation,
-        // a window moved by a shortcut, a folder sorted elsewhere, a picture removed in Get
-        // Info: none of them come with a click.
-        guard !isChecking else { return }
+        // Still where Finder shows the folder, and still with a picture? A click that opened
+        // another folder, keyboard navigation, a window moved by a shortcut, a folder sorted
+        // elsewhere, a picture removed in Get Info.
+        guard !isChecking else {
+            checkIsDue = true
+            return
+        }
         isChecking = true
         let panels = covers
         let generation = self.generation
         Task {
-            defer { isChecking = false }
+            defer {
+                isChecking = false
+                if checkIsDue {
+                    checkIsDue = false
+                    check()
+                }
+            }
             let pictures = await Self.havePictures(panels.map(\.folder))
             for (panel, hasPicture) in zip(panels, pictures) where !hasPicture { remove(panel) }
             // No answer in time: Finder is busy, likely with this very icon. Look again later.

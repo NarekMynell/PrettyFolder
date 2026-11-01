@@ -11,6 +11,7 @@
 - Finder's right-click menu has a single item, **Folder Picture…**, which opens the window.
 - Finder shows a folder's new picture or look right away, without flashing the plain folder in between. Before, it often kept showing the old picture.
 - A new icon takes the old one's place in a single step. Before, the folder had no picture for a moment each time, and if Finder looked just then, after quick changes say, it could show a plain folder.
+- Clicking in Finder right after a change, after **Done** say, no longer shows a plain folder while Finder is still loading the new picture.
 - Changing a folder's picture no longer changes its modification date, so it doesn't jump around in windows sorted by date.
 - VoiceOver can move and resize the picture's frame, and move and zoom the picture inside it.
 - **Remove All Pictures** keeps the folders it can't reach right now, on a disk that isn't connected for example, and tells you which, so they can be done later. Before, it forgot them with their pictures still on.
