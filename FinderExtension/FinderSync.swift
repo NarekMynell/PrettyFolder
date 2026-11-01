@@ -1,7 +1,6 @@
 import Cocoa
 import FinderSync
 import PrettyFolderIPC
-import UniformTypeIdentifiers
 import os
 
 /// Adds Folder Picture… to Finder's right-click menu and to its optional toolbar button.
@@ -107,18 +106,8 @@ nonisolated final class FinderSync: FIFinderSync, @unchecked Sendable {
         @unknown default:
             candidates = []
         }
-        return candidates.filter(Self.isPlainFolder)
-    }
-
-    /// Decided from the URL alone: the extension can't (and shouldn't) look at the disk.
-    private static func isPlainFolder(_ url: URL) -> Bool {
-        guard url.isFileURL, url.hasDirectoryPath, url.path != "/" else { return false }
-        let ext = url.pathExtension
-        if !ext.isEmpty, let type = UTType(filenameExtension: ext, conformingTo: .directory), type.conforms(to: .package) {
-            return false
-        }
-        // Volume roots ("/Volumes/Disk") are disks, not folders.
-        return !(url.path.hasPrefix("/Volumes/") && url.pathComponents.count <= 3)
+        // Decided from the URL alone: the extension can't (and shouldn't) look at the disk.
+        return candidates.filter(FolderCommand.isPlainFolder)
     }
 
     @MainActor

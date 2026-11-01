@@ -1,16 +1,15 @@
 import Foundation
+import UniformTypeIdentifiers
 
-/// A request from the Finder extension (or any other caller) to the app.
+/// A request from the Finder extension to the app.
 ///
 /// Commands travel as `prettyfolder://<action>?path=<folder>&path=<folder>…` URLs.
 /// The extension is sandboxed and cannot touch other folders itself, so it only
-/// describes what the user picked in Finder and lets the app do the work.
+/// describes what the user picked in Finder and lets the app do the work. Any app can
+/// open such a URL, so a command only ever opens the app's window: nothing changes
+/// without the user doing it there.
 public struct FolderCommand: Equatable, Sendable {
     public enum Action: String, Sendable, CaseIterable {
-        /// Show a file picker and put the chosen image on the folders.
-        case chooseImage = "choose"
-        /// Put the folders back to the standard icon.
-        case removeImage = "remove"
         /// Open the app's window for the folders: their picture, its place and its scaling.
         case adjust = "adjust"
         /// Open the app's window without a folder: the default look and the settings.
@@ -21,6 +20,21 @@ public struct FolderCommand: Equatable, Sendable {
     }
 
     public static let scheme = "prettyfolder"
+    /// More folders than anyone selects in Finder; a longer list is cut off.
+    public static let maximumFolders = 5000
+
+    /// Whether `url` looks like a plain folder, decided from the URL alone: a folder that
+    /// isn't the root of a disk, an app or another package. What the extension offers its
+    /// menu for, and what the app shows its buttons on.
+    public static func isPlainFolder(_ url: URL) -> Bool {
+        guard url.isFileURL, url.hasDirectoryPath, url.path != "/" else { return false }
+        let ext = url.pathExtension
+        if !ext.isEmpty, let type = UTType(filenameExtension: ext, conformingTo: .directory), type.conforms(to: .package) {
+            return false
+        }
+        // Volume roots ("/Volumes/Disk") are disks, not folders.
+        return !(url.path.hasPrefix("/Volumes/") && url.pathComponents.count <= 3)
+    }
 
     public var action: Action
     public var folders: [URL]
@@ -61,6 +75,7 @@ public struct FolderCommand: Equatable, Sendable {
 
         let paths = (components.percentEncodedQueryItems ?? [])
             .filter { $0.name == "path" }
+            .prefix(Self.maximumFolders)
             .compactMap { $0.value?.removingPercentEncoding }
             .filter { $0.hasPrefix("/") }
 

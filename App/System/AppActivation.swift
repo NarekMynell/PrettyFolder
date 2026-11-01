@@ -20,9 +20,11 @@ enum AppActivation {
         }
         window?.makeKeyAndOrderFront(nil)
 
-        // Activation is asynchronous; see how it went a moment later.
+        // Activation is asynchronous; see how it went a moment later. A window that has been
+        // closed meanwhile needs nothing more.
+        let forWindow = window != nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak window] in
-            guard !NSApp.isActive, window?.isVisible ?? true else { return }
+            guard !NSApp.isActive, !forWindow || window?.isVisible == true else { return }
             log.info("Not in front after asking; trying harder")
             if AXIsProcessTrusted() {
                 let app = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)

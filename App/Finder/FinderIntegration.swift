@@ -7,18 +7,20 @@ import os
 /// as settings and the Accessibility permission change.
 final class FinderIntegration {
     private let settings: AppSettings
+    private let manager: FolderImageManager
     private let permission = AccessibilityPermission.shared
     private let finder = FinderProcess()
     private let accessibility = FinderAccessibility()
     private let dropBadge = DropBadgeController()
     private let hoverButtons = HoverButtonsController()
     private lazy var dragWatcher = DragWatcher(finder: finder, accessibility: accessibility, badge: dropBadge)
-    private lazy var hoverWatcher = HoverWatcher(finder: finder, accessibility: accessibility, buttons: hoverButtons)
+    private lazy var hoverWatcher = HoverWatcher(finder: finder, accessibility: accessibility, buttons: hoverButtons, manager: manager)
     private lazy var iconCover = IconCover(finder: finder, accessibility: accessibility)
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Finder")
 
     init(actions: FolderActions, settings: AppSettings) {
         self.settings = settings
+        manager = actions.manager
         dropBadge.onDrop = { [weak actions] picture, folder in
             await actions?.apply(picture, to: folder) ?? false
         }
@@ -45,8 +47,8 @@ final class FinderIntegration {
         await iconCover.cover(folder, with: icon)
     }
 
-    func uncover(_ folder: URL) {
-        iconCover.uncover(folder)
+    func uncover(_ folder: URL) async {
+        await iconCover.uncover(folder)
     }
 
     private func apply() {

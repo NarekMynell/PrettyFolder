@@ -24,6 +24,11 @@ final class LoginItem {
             log.error("Changing the login item failed: \(error.localizedDescription, privacy: .public)")
         }
         refresh()
+        // Turned off under Login Items in System Settings before: only the user can allow it
+        // again, there.
+        if enabled, SMAppService.mainApp.status == .requiresApproval {
+            SMAppService.openSystemSettingsLoginItems()
+        }
     }
 
     func refresh() {

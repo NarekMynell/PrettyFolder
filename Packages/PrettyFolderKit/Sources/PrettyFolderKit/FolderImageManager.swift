@@ -55,6 +55,7 @@ public enum FolderImageError: LocalizedError {
     case notManaged(String)
     case cannotStorePicture
     case unreachable(String)
+    case stopped
 
     public var errorDescription: String? {
         switch self {
@@ -63,6 +64,7 @@ public enum FolderImageError: LocalizedError {
         case .notManaged(let name): return "“\(name)” doesn't have a picture from PrettyFolder."
         case .cannotStorePicture: return "The picture could not be saved."
         case .unreachable(let name): return "PrettyFolder couldn't reach “\(name)”. If it's on a disk that isn't connected, connect the disk and try again."
+        case .stopped: return "PrettyFolder is quitting."
         }
     }
 }
@@ -81,6 +83,8 @@ public actor FolderImageManager {
     /// See `onIconChange`.
     private var iconChanged: (@Sendable (URL, IconChange) async -> Void)?
     private var iconsWritten = 0
+    /// Set when the app quits: nothing more is written, and long runs end at the next folder.
+    private var isStopped = false
     /// Set when a record was refreshed in memory (a folder moved) but not written yet.
     private var hasUnsavedChanges = false
     private lazy var renderer = IconRenderer()
@@ -100,9 +104,22 @@ public actor FolderImageManager {
 
     /// A quick guess at whether `folder` shows a picture from PrettyFolder: it carries the
     /// marker and a custom icon. Cheap enough to ask while the pointer moves; the icon
-    /// itself isn't compared, so ask the manager before relying on it.
+    /// itself isn't compared, so ask `showsOwnPicture` before relying on it.
     public static func appearsToHavePicture(_ folder: URL) -> Bool {
         ExtendedAttributes.value(named: markerAttribute, at: folder) != nil && FolderInspector.hasCustomIcon(folder)
+    }
+
+    /// Whether `folder` shows exactly the icon PrettyFolder made for it, and not one somebody
+    /// else put there since.
+    public func showsOwnPicture(_ folder: URL) -> Bool {
+        guard let id = markerID(of: folder), let record = library.record(id) else { return false }
+        return isStillOurs(record, folder)
+    }
+
+    /// For quitting: lets the folder being written finish, then writes nothing more. Long runs
+    /// (Redraw All, Remove All, a picture for many folders) end at the next folder.
+    public func stop() {
+        isStopped = true
     }
 
     /// `~/Library/Application Support/PrettyFolder`
@@ -162,6 +179,7 @@ public actor FolderImageManager {
         // Folders with the same look get the very same icon, drawn once.
         var drawn: [IconStyle: NSImage] = [:]
         for folder in unique(folders) {
+            if isStopped { break }
             do {
                 try FolderInspector.validate(folder)
                 // Keep the folder's own look when it already had a picture from us. Where the
@@ -212,6 +230,7 @@ public actor FolderImageManager {
         var outcomes: [FolderOutcome] = []
         var removed: [URL] = []
         for folder in unique(folders) {
+            if isStopped { break }
             // Never reach into apps or other packages: removing an icon file from a bundle
             // breaks its signature just like adding one.
             do {
@@ -267,15 +286,33 @@ public actor FolderImageManager {
     }
 
     /// Changes one folder's look and where its picture sits in it. Pass `nil` for the look to
-    /// make the folder follow the default look again; the picture stays where `alignment` says.
+    /// make the folder follow the default look again.
     public func setStyle(_ style: IconStyle?, alignment: PictureAlignment, for folder: URL) async throws {
+        try await change(folder) { record in
+            record.style = style
+            record.alignment = alignment == .centered ? nil : alignment
+        }
+    }
+
+    /// Changes one folder's look; its picture stays where it is in it. Pass `nil` to make the
+    /// folder follow the default look again.
+    public func setStyle(_ style: IconStyle?, for folder: URL) async throws {
+        try await change(folder) { $0.style = style }
+    }
+
+    /// Moves one folder's picture inside its look, which stays as it is.
+    public func setAlignment(_ alignment: PictureAlignment, for folder: URL) async throws {
+        try await change(folder) { $0.alignment = alignment == .centered ? nil : alignment }
+    }
+
+    /// Changes a folder's record with `edit`, as it is when the change comes in, and redraws it.
+    private func change(_ folder: URL, _ edit: (inout FolderRecord) -> Void) async throws {
         guard var record = ownedRecord(for: folder) else {
             throw FolderImageError.notManaged(displayName(folder))
         }
         let picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
-        record.style = style
-        record.alignment = alignment == .centered ? nil : alignment
-        let icon = try writeIcon(draw(picture, style: style ?? defaultStyle, alignment: alignment), to: folder)
+        edit(&record)
+        let icon = try writeIcon(draw(picture, style: record.style ?? defaultStyle, alignment: record.alignment ?? .centered), to: folder)
         record.iconDigest = icon.digest
         record.updated = Date()
         library.upsert(record)
@@ -341,7 +378,7 @@ public actor FolderImageManager {
         var handled = Set<UUID>()
         // Drops and menu actions keep working meanwhile, so always take the library as it
         // is now rather than a list made at the start.
-        while let id = library.records.keys.first(where: { !handled.contains($0) }) {
+        while !isStopped, let id = library.records.keys.first(where: { !handled.contains($0) }) {
             handled.insert(id)
             guard var record = library.record(id) else { continue }
             if let folder = resolve(&record) {
@@ -418,7 +455,7 @@ public actor FolderImageManager {
         let records = records.sorted { $0.pictureName < $1.pictureName }
         var open: (name: String, picture: SourceImage)?
         for (index, original) in records.enumerated() {
-            if Task.isCancelled { break }
+            if Task.isCancelled || isStopped { break }
             // The record may have changed while this loop was suspended.
             guard var record = library.record(original.id) else { continue }
             if let folder = resolve(&record), isStillOurs(record, folder) {
@@ -472,6 +509,7 @@ public actor FolderImageManager {
 
     /// Writes the icon. Finder isn't told yet: see `show`.
     private func writeIcon(_ image: NSImage, to folder: URL) throws -> WrittenIcon {
+        guard !isStopped else { throw FolderImageError.stopped }
         let replacing = FolderInspector.hasCustomIcon(folder)
         let written = FolderMetadata.keepingModificationDate(of: folder) {
             autoreleasepool {

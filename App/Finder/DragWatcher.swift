@@ -24,6 +24,7 @@ final class DragWatcher {
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Drag")
 
     private var monitor: Any?
+    private var spaceObserver: NSObjectProtocol?
     private var phase = Phase.idle
     private var hovered: FinderItem?
     private var queryInFlight = false
@@ -46,12 +47,31 @@ final class DragWatcher {
         monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) }
         }
+        // The badge shows on every Space; the folder it belongs to doesn't.
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.forgetFolder() }
+        }
     }
 
     func stop() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        if let spaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver) }
+        spaceObserver = nil
         endDrag(releasedAt: nil)
+    }
+
+    /// What is under the pointer changed without it moving: the drag goes on, the folder
+    /// found before is no longer the one.
+    private func forgetFolder() {
+        hovered = nil
+        pendingPoint = nil
+        showTask?.cancel()
+        retryTask?.cancel()
+        retryTask = nil
+        if badge.isVisible, !badge.isBusy { badge.hide(animated: false) }
     }
 
     private func handle(_ event: NSEvent) {
@@ -87,9 +107,13 @@ final class DragWatcher {
 
     private func track(_ point: NSPoint) {
         if badge.contains(point) {
-            // On the badge: it is the drop target now, keep it.
+            // On the badge: it is the drop target now, keep it as it is. Questions asked on the
+            // way here are about where the pointer was.
             badge.cancelHide()
             showTask?.cancel()
+            pendingPoint = nil
+            retryTask?.cancel()
+            retryTask = nil
             return
         }
         pendingPoint = point
@@ -125,6 +149,8 @@ final class DragWatcher {
         queryInFlight = false
         log.debug("Under the pointer: \(item?.url.lastPathComponent ?? "nothing", privacy: .private)")
         guard phase == .dragging(hasPicture: true) else { return }
+        // The pointer went on to the badge while Finder answered.
+        guard !badge.contains(NSEvent.mouseLocation) else { return }
         update(item?.isPlainFolder == true ? item : nil, pointer: pointer)
         queryIfPossible()
     }
@@ -141,7 +167,7 @@ final class DragWatcher {
         badge.cancelHide()
         if badge.isVisible, badge.folder == folder.url {
             // Same folder; Finder may have scrolled it, so follow along.
-            badge.show(for: folder, pointer: pointer)
+            badge.follow(folder, pointer: pointer)
             return
         }
         guard hovered?.url != folder.url else { return }

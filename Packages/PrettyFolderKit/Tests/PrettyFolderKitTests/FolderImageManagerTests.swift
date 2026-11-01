@@ -215,6 +215,43 @@ import UniformTypeIdentifiers
         #expect(images.all.allSatisfy { $0 === images.all[0] }, "drawn once")
     }
 
+    @Test func theLookAndThePicturesPlaceChangeOnTheirOwn() async throws {
+        let folder = try temp.folder("Parts")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let low = PictureAlignment(x: 0.5, y: 1)
+        try await manager.setAlignment(low, for: folder)
+        let own = IconStyle(x: 0.1, y: 0.3, width: 0.8, height: 0.5, mode: .fill)
+        try await manager.setStyle(own, for: folder)
+        var look = try #require(await manager.look(for: folder))
+        #expect(look.style == own && look.alignment == low, "a new look keeps the picture where it was")
+        try await manager.setAlignment(.centered, for: folder)
+        look = try #require(await manager.look(for: folder))
+        #expect(look.style == own && look.alignment == .centered, "moving the picture keeps the look")
+    }
+
+    @Test func onlyItsOwnIconCountsAsAPicture() async throws {
+        let folder = try temp.folder("Owned")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        #expect(await manager.showsOwnPicture(folder))
+        let foreign = NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
+            NSColor.systemBrown.setFill()
+            rect.fill()
+            return true
+        }
+        #expect(NSWorkspace.shared.setIcon(foreign, forFile: folder.path, options: []))
+        #expect(FolderImageManager.appearsToHavePicture(folder), "the quick guess is fooled")
+        #expect(await !manager.showsOwnPicture(folder))
+    }
+
+    @Test func afterStoppingNothingIsWritten() async throws {
+        let folder = try temp.folder("Late")
+        await manager.stop()
+        let outcomes = await manager.apply(imageAt: picture, to: [folder])
+        #expect(outcomes.isEmpty || outcomes.allSatisfy { !$0.succeeded })
+        #expect(!FolderInspector.hasCustomIcon(folder))
+        #expect(storedPictures().isEmpty)
+    }
+
     @Test func sharesOnePictureBetweenFolders() async throws {
         let folders = try ["A", "B", "C"].map { try temp.folder($0) }
         let outcomes = await manager.apply(imageAt: picture, to: folders)

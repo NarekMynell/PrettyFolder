@@ -35,11 +35,13 @@ final class IconCover {
     private var generation = 0
     /// The newest icon asked for, by file: an older one that comes in later mustn't cover it.
     private var newest: [String: Int] = [:]
-    private var timer: Timer?
-    private var isChecking = false
-    private var monitors: [Any] = []
-    // Only touched on the main thread; removing observers is thread-safe.
+    /// Covers being placed right now, still looking at Finder.
+    private var placing = 0
+    // Only touched on the main thread; also undone in deinit, which nothing runs alongside.
+    nonisolated(unsafe) private var timer: Timer?
+    nonisolated(unsafe) private var monitors: [Any] = []
     nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
+    private var isChecking = false
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Cover")
 
     init(finder: FinderProcess, accessibility: FinderAccessibility) {
@@ -48,14 +50,23 @@ final class IconCover {
     }
 
     deinit {
+        timer?.invalidate()
+        monitors.forEach(NSEvent.removeMonitor)
         observers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
     }
 
     /// Puts `icon` over every place Finder shows `folder`, and returns once it's there.
     func cover(_ folder: URL, with icon: RenderedIcon) async {
-        guard AXIsProcessTrusted(), let pid = finder.pid, let key = ShownIcon.key(for: folder) else { return }
-        guard icon.sequence >= newest[key] ?? icon.sequence else { return }
-        if newest.count > 1000 { newest.removeAll() }
+        guard AXIsProcessTrusted(), let pid = finder.pid else { return }
+        // From here on a click or a scroll makes what Finder says out of date, and which icon
+        // is newest must be remembered.
+        placing += 1
+        startWatching()
+        defer {
+            placing -= 1
+            stopWatchingIfIdle()
+        }
+        guard let key = await Self.key(for: folder), icon.sequence >= newest[key] ?? icon.sequence else { return }
         newest[key] = icon.sequence
         // Covers still up from the last change get the new icon now, whatever the look below
         // finds: Finder is about to load this one.
@@ -78,19 +89,26 @@ final class IconCover {
             let panel: CoverPanel
             if let existing = covers.first(where: { $0.key == key && $0.place.frame.isClose(to: place.frame) }) {
                 panel = existing
+                // The same spot, possibly a new Accessibility element for it.
+                panel.place = place
             } else {
                 panel = CoverPanel(key: key, folder: folder, place: place)
                 covers.append(panel)
             }
             panel.show(icon.image, above: window, until: ProcessInfo.processInfo.systemUptime + Self.lifetime)
         }
-        if !covers.isEmpty { startWatching() }
     }
 
     /// The folder's picture is gone, and so are its covers.
-    func uncover(_ folder: URL) {
-        guard let key = ShownIcon.key(for: folder) else { return }
+    func uncover(_ folder: URL) async {
+        guard let key = await Self.key(for: folder) else { return }
         for panel in covers where panel.key == key { remove(panel) }
+    }
+
+    /// The key Finder's icons are found by. It asks the disk, which may be a slow network
+    /// disk, so not on the main thread.
+    private static func key(for folder: URL) async -> String? {
+        await Task.detached(priority: .userInitiated) { ShownIcon.key(for: folder) }.value
     }
 
     // MARK: - Finder's windows and icons
@@ -102,7 +120,7 @@ final class IconCover {
             guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
                   let number = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
                   let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue,
-                  let bounds = info[kCGWindowBounds as String] as! CFDictionary?,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
                   let frame = CGRect(dictionaryRepresentation: bounds)
             else { return nil }
             return FinderWindow(number: number, layer: layer, frame: frame)
@@ -211,6 +229,14 @@ final class IconCover {
         monitors.removeAll()
         observers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         observers.removeAll()
+        // What Finder showed is no use once nothing is covered, and it holds on to its icons.
+        lastLook = nil
+        newest.removeAll()
+    }
+
+    /// Stops watching once no cover is up and none is being placed.
+    private func stopWatchingIfIdle() {
+        if covers.isEmpty, placing == 0 { stopWatching() }
     }
 
     /// Takes every cover away at once: something may be moving the icons under them.
@@ -218,14 +244,13 @@ final class IconCover {
         generation += 1
         covers.forEach { $0.orderOut(nil) }
         covers.removeAll()
-        lastLook = nil
         stopWatching()
     }
 
     private func remove(_ panel: CoverPanel) {
         panel.orderOut(nil)
         covers.removeAll { $0 === panel }
-        if covers.isEmpty { stopWatching() }
+        stopWatchingIfIdle()
     }
 
     private func check() {
@@ -304,7 +329,15 @@ private final class CoverPanel: OverlayPanel {
     }
 
     func update(_ image: NSImage, until expiry: TimeInterval) {
-        imageView.image = image
+        // Only the size it is shown at: the icon has seven, up to 1024 pixels across.
+        let size = frame.size
+        let small = NSImage(size: size)
+        let best = image.bestRepresentation(
+            for: NSRect(origin: .zero, size: size), context: nil,
+            hints: [.ctm: AffineTransform(scale: screen?.backingScaleFactor ?? 2)]
+        )
+        if let best { small.addRepresentation(best) }
+        imageView.image = best == nil ? image : small
         self.expiry = expiry
     }
 

@@ -1,6 +1,6 @@
 import AppKit
+import PrettyFolderIPC
 import ApplicationServices
-import UniformTypeIdentifiers
 import os
 
 /// A file or folder Finder shows somewhere on screen.
@@ -22,12 +22,7 @@ nonisolated struct FinderItem: Equatable, Sendable {
 
     /// A folder whose icon may be changed: not a file, not an app or other package, not a disk.
     var isPlainFolder: Bool {
-        guard url.hasDirectoryPath, url.path != "/" else { return false }
-        let ext = url.pathExtension
-        if !ext.isEmpty, let type = UTType(filenameExtension: ext, conformingTo: .directory), type.conforms(to: .package) {
-            return false
-        }
-        return !url.path.hasPrefix("/Volumes/") || url.pathComponents.count > 3
+        FolderCommand.isPlainFolder(url)
     }
 }
 
@@ -341,7 +336,8 @@ final class FinderProcess {
         guard number > 0 else { return false }
         if let owner = windowOwners[number] { return owner == pid }
         let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(number)) as? [[String: Any]]
-        let owner = (info?.first?[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? -1
+        // Not found this time (the window is just appearing, say): ask again next time.
+        guard let owner = (info?.first?[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value else { return false }
         // Window numbers are not reused quickly, but keep the cache small anyway.
         if windowOwners.count > 256 { windowOwners.removeAll() }
         windowOwners[number] = owner

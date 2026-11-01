@@ -33,6 +33,16 @@ final class FinderExtensionStatus {
     /// the same thing the checkbox in System Settings does. Falls back to opening
     /// System Settings if that does not work.
     func enable() {
+        guard !Self.isTemporaryCopy else {
+            // Its extension would be gone, and Finder's menu with it, once the app quits.
+            let alert = NSAlert()
+            alert.messageText = String(localized: "Move PrettyFolder to Applications first")
+            alert.informativeText = String(localized: "macOS is running it from a temporary place, so the Finder menu would stop working once you quit. Move PrettyFolder to the Applications folder, open it from there, and turn the menu on again.")
+            alert.layout()
+            AppActivation.bringToFront(alert.window)
+            alert.runModal()
+            return
+        }
         let appex = Bundle.main.builtInPlugInsURL?.appendingPathComponent("PrettyFolderFinder.appex")
         Task.detached(priority: .userInitiated) { [log] in
             var ok = true
@@ -52,6 +62,15 @@ final class FinderExtensionStatus {
 
     func openSystemSettings() {
         FIFinderSyncController.showExtensionManagementInterface()
+    }
+
+    /// Whether this copy runs from somewhere it won't stay: the temporary place macOS uses for
+    /// an app opened straight from Downloads, or a disk image.
+    private static var isTemporaryCopy: Bool {
+        let bundle = Bundle.main.bundleURL
+        // App Translocation mounts the app read-only under an "AppTranslocation" folder.
+        return bundle.path.contains("/AppTranslocation/")
+            || (try? bundle.resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly == true
     }
 
     private nonisolated static func runPluginKit(_ arguments: [String], log: Logger) -> Bool {

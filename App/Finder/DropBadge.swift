@@ -61,6 +61,16 @@ final class DropBadgeController {
         return true
     }
 
+    /// Keeps the badge with its folder when Finder scrolls the folder, and leaves it alone
+    /// otherwise: whatever it shows (the highlight of a drag over it) stays, and it never
+    /// moves away from under the pointer.
+    func follow(_ item: FinderItem, pointer: NSPoint) {
+        guard isVisible, folder == item.url, !isBusy, !contains(NSEvent.mouseLocation),
+              let frame = Self.frame(for: item, avoiding: pointer), frame != panel.frame
+        else { return }
+        panel.setFrame(frame, display: true)
+    }
+
     func hide(animated: Bool = true) {
         guard panel.isVisible, folder != nil, !isBusy else { return }
         cancelHide()

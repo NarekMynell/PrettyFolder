@@ -13,15 +13,15 @@ import Testing
     ])
     func roundTripsAnyFolderName(_ path: String) throws {
         let folder = URL(fileURLWithPath: path, isDirectory: true)
-        let command = FolderCommand(.chooseImage, folders: [folder])
+        let command = FolderCommand(.adjust, folders: [folder])
         let decoded = try #require(FolderCommand(url: command.url))
-        #expect(decoded.action == .chooseImage)
+        #expect(decoded.action == .adjust)
         #expect(decoded.folders.map(\.path) == [folder.standardizedFileURL.path])
     }
 
     @Test func keepsOrderOfSeveralFolders() throws {
         let folders = ["/a", "/b b", "/c&c"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-        let decoded = try #require(FolderCommand(url: FolderCommand(.removeImage, folders: folders).url))
+        let decoded = try #require(FolderCommand(url: FolderCommand(.adjust, folders: folders).url))
         #expect(decoded.folders.map(\.path) == ["/a", "/b b", "/c&c"])
     }
 
@@ -32,12 +32,33 @@ import Testing
     }
 
     @Test(arguments: [
-        "prettyfolder://choose",                 // folder missing
+        "prettyfolder://adjust",                 // folder missing
         "prettyfolder://explode?path=/tmp",       // unknown action
-        "https://choose?path=/tmp",               // wrong scheme
-        "prettyfolder://choose?path=relative",    // not an absolute path
+        "prettyfolder://remove?path=/tmp",        // nothing changes folders from outside the app
+        "prettyfolder://choose?path=/tmp",
+        "https://adjust?path=/tmp",               // wrong scheme
+        "prettyfolder://adjust?path=relative",    // not an absolute path
     ])
     func rejectsBadURLs(_ string: String) {
         #expect(FolderCommand(url: URL(string: string)!) == nil)
+    }
+
+    @Test func cutsOffEndlessLists() throws {
+        let query = (0..<(FolderCommand.maximumFolders + 50)).map { "path=/f\($0)" }.joined(separator: "&")
+        let decoded = try #require(FolderCommand(url: URL(string: "prettyfolder://adjust?" + query)!))
+        #expect(decoded.folders.count == FolderCommand.maximumFolders)
+    }
+
+    @Test(arguments: [
+        ("/Users/me/Pictures/", true),
+        ("/Users/me/Tool.app/", false),
+        ("/Users/me/Library.photoslibrary/", false),
+        ("/Volumes/Disk/", false),
+        ("/Volumes/Disk/Work/", true),
+        ("/", false),
+        ("/Users/me/file.txt", false),
+    ])
+    func tellsPlainFolders(_ path: String, _ plain: Bool) {
+        #expect(FolderCommand.isPlainFolder(URL(fileURLWithPath: path, isDirectory: path.hasSuffix("/"))) == plain)
     }
 }

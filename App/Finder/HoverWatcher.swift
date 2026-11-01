@@ -21,6 +21,7 @@ final class HoverWatcher {
     private let finder: FinderProcess
     private let accessibility: FinderAccessibility
     private let buttons: HoverButtonsController
+    private let manager: FolderImageManager
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Hover")
 
     private var monitors: [Any] = []
@@ -35,25 +36,25 @@ final class HoverWatcher {
     private var queryInFlight = false
     private var pendingPoint: NSPoint?
     private var lastQueryTime: TimeInterval = 0
+    /// Waits for the pointer to stop after travelling fast.
     private var settleTask: Task<Void, Never>?
+    /// Waits out the gap between two questions to Finder.
+    private var throttleTask: Task<Void, Never>?
     private var showTask: Task<Void, Never>?
     private var recheckTimer: Timer?
     private var recheckInFlight = false
-    // Only touched in init and deinit; removing observers is thread-safe.
+    /// Goes up whenever what is known about the pointer is thrown away, so an answer to a
+    /// question asked before is recognized as out of date.
+    private var generation = 0
+    // Only touched on the main thread; removing observers is thread-safe.
     nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
-    init(finder: FinderProcess, accessibility: FinderAccessibility, buttons: HoverButtonsController) {
+    init(finder: FinderProcess, accessibility: FinderAccessibility, buttons: HoverButtonsController, manager: FolderImageManager) {
         self.finder = finder
         self.accessibility = accessibility
         self.buttons = buttons
+        self.manager = manager
         buttons.onExit = { [weak self] in self?.pointerMoved() }
-        // Another app or another Space changes what is under the pointer without moving it.
-        let center = NSWorkspace.shared.notificationCenter
-        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
-            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.reset() }
-            })
-        }
     }
 
     deinit {
@@ -64,6 +65,13 @@ final class HoverWatcher {
 
     func start() {
         guard monitors.isEmpty else { return }
+        // Another app or another Space changes what is under the pointer without moving it.
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reset() }
+            })
+        }
         if let moved = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved, handler: { [weak self] _ in
             MainActor.assumeIsolated { self?.pointerMoved() }
         }) {
@@ -81,13 +89,18 @@ final class HoverWatcher {
     func stop() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
+        observers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
+        observers.removeAll()
         reset()
     }
 
     private func reset() {
+        generation += 1
         hovered = nil
         pendingPoint = nil
         settleTask?.cancel()
+        throttleTask?.cancel()
+        throttleTask = nil
         showTask?.cancel()
         stopRechecking()
         buttons.hide()
@@ -111,7 +124,9 @@ final class HoverWatcher {
         if let last = lastMove, now > last.time {
             let speed = hypot(point.x - last.point.x, point.y - last.point.y) / CGFloat(now - last.time)
             if speed > Self.aimingSpeed {
-                // Wait until it stops; no mouse-moved events arrive while it rests.
+                // Wait until it stops; no mouse-moved events arrive while it rests. Where it
+                // was before it sped off doesn't matter any more.
+                pendingPoint = nil
                 settleTask = Task { [weak self] in
                     try? await Task.sleep(for: .milliseconds(70))
                     guard !Task.isCancelled else { return }
@@ -126,13 +141,15 @@ final class HoverWatcher {
     }
 
     private func queryIfPossible() {
-        guard !queryInFlight, let point = pendingPoint else { return }
+        guard isRunning, !queryInFlight, let point = pendingPoint else { return }
         let wait = Self.queryInterval - (ProcessInfo.processInfo.systemUptime - lastQueryTime)
         if wait > 0 {
-            settleTask?.cancel()
-            settleTask = Task { [weak self] in
+            // Asks about whatever point is newest when the time comes.
+            guard throttleTask == nil else { return }
+            throttleTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(wait))
                 guard !Task.isCancelled else { return }
+                self?.throttleTask = nil
                 self?.queryIfPossible()
             }
             return
@@ -141,15 +158,18 @@ final class HoverWatcher {
         guard NSEvent.pressedMouseButtons == 0, let pid = finder.pid, finder.ownsWindow(at: point) else { return }
         queryInFlight = true
         lastQueryTime = ProcessInfo.processInfo.systemUptime
+        let generation = self.generation
         accessibility.item(at: ScreenSpace.accessibilityPoint(point), finderPID: pid) { [weak self] item in
-            Task { @MainActor in self?.finishQuery(item) }
+            Task { @MainActor in self?.finishQuery(item, generation: generation) }
         }
     }
 
-    private func finishQuery(_ item: FinderItem?) {
+    private func finishQuery(_ item: FinderItem?, generation: Int) {
         queryInFlight = false
         log.debug("Under the pointer: \(item?.url.lastPathComponent ?? "nothing", privacy: .private), \(item.map { "\($0.layout)" } ?? "-", privacy: .public) layout, plain folder \(item?.isPlainFolder ?? false), \(item?.iconFrame.width ?? 0) pt")
         defer { queryIfPossible() }
+        // Asked before a click, a scroll or another Space moved things, or before turning off.
+        guard isRunning, generation == self.generation else { return }
         // List and column views are left alone: their icons are too small for buttons.
         guard let item, item.layout == .icon, item.isPlainFolder, item.iconFrame.width >= Self.smallestIcon else { return }
         let zone = ScreenSpace.appKitRect(item.iconFrame)
@@ -158,14 +178,13 @@ final class HoverWatcher {
         hovered = (item, zone)
 
         let url = item.url
+        let manager = self.manager
         showTask?.cancel()
         showTask = Task { [weak self] in
-            // Only a picture from PrettyFolder gets a remove button. A quick look, but still
-            // a look at the disk, so not on the main thread.
-            let canRemove = await Task.detached(priority: .userInitiated) {
-                FolderImageManager.appearsToHavePicture(url)
-            }.value
-            guard !Task.isCancelled, let self, let hovered = self.hovered, hovered.item.url == url,
+            // Only a picture from PrettyFolder gets a remove button, not an icon somebody else
+            // put on the folder since. The icon is compared on the manager's thread.
+            let canRemove = await manager.showsOwnPicture(url)
+            guard !Task.isCancelled, let self, generation == self.generation, let hovered = self.hovered, hovered.item.url == url,
                   NSEvent.pressedMouseButtons == 0, hovered.zone.contains(NSEvent.mouseLocation)
             else { return }
             self.buttons.show(for: hovered.item, canRemove: canRemove)
