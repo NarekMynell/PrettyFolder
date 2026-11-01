@@ -11,6 +11,13 @@
 - Finder's right-click menu has a single item, **Folder Picture…**, which opens the window.
 - Finder shows a folder's new picture or look right away, without flashing the plain folder in between. Before, it often kept showing the old picture.
 - Changing a folder's picture no longer changes its modification date, so it doesn't jump around in windows sorted by date.
+- VoiceOver can move and resize the picture's frame and move the picture inside it.
+- **Remove All Pictures** keeps the folders it can't reach right now, on a disk that isn't connected for example, and tells you which, so they can be done later. Before, it forgot them with their pictures still on.
+- Folders inside apps and other packages are left alone, like the packages themselves.
+- A folder list that couldn't be read keeps only the stored pictures it mentions, so the others are cleaned up as usual.
+- Other apps can only open PrettyFolder's window for folders. They can no longer ask it to choose or remove pictures.
+- Quitting waits for the last change to be written.
+- Turning on the Finder menu from a copy that macOS runs from Downloads or a disk image asks you to move PrettyFolder to Applications first.
 
 ## 1.0.1
 
