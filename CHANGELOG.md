@@ -3,8 +3,9 @@
 ## 1.1.0
 
 - One window for everything: the folder's picture, where it sits on the folder, the default look, and the few settings behind the gear. It replaces the Settings, folder look and welcome windows.
-- Move and resize the picture right on the folder. It snaps to the folder's edges and middle; arrow keys nudge it, ⇧ keeps its proportions, ⌥ resizes around the middle and ⌘ turns snapping off. The folder changes right away, and ⌘Z undoes.
+- Move and resize the picture's frame right on the folder, by its edge and its handles, and move the picture inside the frame to pick the part that shows. Both snap to the folder's edges and middle; arrow keys nudge the frame and, with ⌥, the picture; ⇧ keeps the proportions, ⌥ resizes around the middle and ⌘ turns snapping off. The folder changes right away, and ⌘Z undoes.
 - A picture made bigger than the folder is clipped to the folder's outline instead of covering the space around it.
+- A picture across the back and the front of the folder takes on the folder's light and shade, so it shows the same depth as the folder.
 - Pointing at a folder brings up buttons to choose a picture, remove it or open the window. They replace the button on the folder's tab.
 - Drop a picture on the window to put it on the folder.
 - Finder's right-click menu has a single item, **Folder Picture…**, which opens the window.

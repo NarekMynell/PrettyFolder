@@ -41,11 +41,11 @@ You can also right-click a folder and choose **Folder Picture…**, for one fold
 
 ### Fine-tune it
 
-<img src="docs/window.gif" width="780" alt="In PrettyFolder's window, the rocket picture is dragged until it snaps to the middle of the folder, stretched over the folder's tab where it takes the folder's shape, switched to Fit, then reset. The folder on the Desktop changes along with it.">
+<img src="docs/window.gif" width="780" alt="In PrettyFolder's window, the frame around the rocket picture is dragged by its edge until it snaps to the folder's front, stretched over the folder's tab where it takes the folder's shape, the rocket is slid sideways inside the frame, then it is switched to Fit and reset. The folder on the Desktop changes along with it.">
 
-Drag the picture to move it and its corners to resize it. It snaps to the folder's edges and middle, and it never spills outside the folder. **Fill** covers the whole frame, **Fit** shows the whole picture. The folder changes right away, ⌘Z undoes, and **Done** closes the window.
+Drag the frame's edge to move it and its handles to resize it. Drag the picture to move it inside the frame: with **Fill**, which covers the whole frame, to pick the part that shows; with **Fit**, which shows the whole picture, to pick where it sits. Everything snaps to the folder's edges and middle, and the picture never spills outside the folder. Where it covers both the back and the front of the folder, it takes on the folder's light and shade. The folder changes right away, ⌘Z undoes, and **Done** closes the window.
 
-Hold ⇧ to keep the proportions, ⌥ to resize around the middle, ⌘ to turn snapping off. Arrow keys nudge the picture.
+Hold ⇧ to keep the proportions, ⌥ to resize around the middle, ⌘ to turn snapping off. Arrow keys nudge the frame, ⌥ and arrow keys the picture, and a double-click puts the picture back in the middle.
 
 **Default** is the look new pictures get. When you save it, PrettyFolder asks whether the folders already using it should change too.
 
