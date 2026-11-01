@@ -32,6 +32,22 @@ public struct FolderLook: Sendable, Equatable {
     public let followsDefault: Bool
 }
 
+/// An icon PrettyFolder drew for a folder. It isn't changed after it's made, so it can be
+/// handed to the main thread.
+public struct RenderedIcon: @unchecked Sendable {
+    public let image: NSImage
+    /// Counts up with every icon written, so the newest of several can be told apart.
+    public let sequence: Int
+}
+
+/// What happened to a folder's icon (see `FolderImageManager.onIconChange`).
+public enum IconChange: Sendable {
+    /// A new icon is on disk. Finder is told about it once the handler returns.
+    case written(RenderedIcon)
+    /// The folder has its standard icon again.
+    case removed
+}
+
 public enum FolderImageError: LocalizedError {
     case renderFailed
     case setIconFailed(String)
@@ -58,6 +74,9 @@ public actor FolderImageManager {
     static let markerAttribute = "com.narekmynell.prettyfolder"
 
     private var library: FolderLibrary
+    /// See `onIconChange`.
+    private var iconChanged: (@Sendable (URL, IconChange) async -> Void)?
+    private var iconsWritten = 0
     /// Set when a record was refreshed in memory (a folder moved) but not written yet.
     private var hasUnsavedChanges = false
     private lazy var renderer = IconRenderer()
@@ -66,6 +85,13 @@ public actor FolderImageManager {
     public init(directory: URL, defaultStyle: IconStyle) {
         self.library = FolderLibrary(directory: directory)
         self.defaultStyle = defaultStyle
+    }
+
+    /// Called whenever a folder's icon changes. A new icon comes before Finder is told about
+    /// it: Finder shows its plain folder for a moment while it loads a changed icon, and the app
+    /// covers that moment with the icon Finder is about to load.
+    public func onIconChange(_ handler: (@Sendable (URL, IconChange) async -> Void)?) {
+        iconChanged = handler
     }
 
     /// A quick guess at whether `folder` shows a picture from PrettyFolder: it carries the
@@ -97,11 +123,11 @@ public actor FolderImageManager {
         guard let stored = PictureEncoder.storableData(for: picture, original: imageURL, originalType: type) else {
             return folders.map { .failed($0, FolderImageError.cannotStorePicture) }
         }
-        return apply(picture, storedAs: stored, to: folders)
+        return await apply(picture, storedAs: stored, to: folders)
     }
 
     /// Puts a picture given as raw data (from a drag or the clipboard) on every folder.
-    public func apply(imageData: Data, type: UTType?, to folders: [URL]) -> [FolderOutcome] {
+    public func apply(imageData: Data, type: UTType?, to folders: [URL]) async -> [FolderOutcome] {
         let picture: SourceImage
         do {
             picture = try ImageLoader.load(data: imageData, typeHint: type)
@@ -116,10 +142,10 @@ public actor FolderImageManager {
             stored = PictureEncoder.storableData(for: picture, original: nil, originalType: nil)
         }
         guard let stored else { return folders.map { .failed($0, FolderImageError.cannotStorePicture) } }
-        return apply(picture, storedAs: stored, to: folders)
+        return await apply(picture, storedAs: stored, to: folders)
     }
 
-    private func apply(_ picture: SourceImage, storedAs stored: (data: Data, fileExtension: String), to folders: [URL]) -> [FolderOutcome] {
+    private func apply(_ picture: SourceImage, storedAs stored: (data: Data, fileExtension: String), to folders: [URL]) async -> [FolderOutcome] {
         let pictureName: String
         do {
             pictureName = try library.storePicture(stored.data, fileExtension: stored.fileExtension)
@@ -128,13 +154,15 @@ public actor FolderImageManager {
         }
 
         var outcomes: [FolderOutcome] = []
+        var written: [WrittenIcon] = []
         for folder in unique(folders) {
             do {
                 try FolderInspector.validate(folder)
                 // Keep the folder's own look when it already had a picture from us.
                 let existing = ownedRecord(for: folder)
                 let style = existing?.style
-                let digest = try writeIcon(picture, style: style ?? defaultStyle, to: folder)
+                let icon = try writeIcon(picture, style: style ?? defaultStyle, to: folder)
+                written.append(icon)
                 let now = Date()
                 let record = FolderRecord(
                     id: existing?.id ?? UUID(),
@@ -142,7 +170,7 @@ public actor FolderImageManager {
                     lastKnownPath: FolderInspector.canonicalPath(folder.path),
                     pictureName: pictureName,
                     style: style,
-                    iconDigest: digest,
+                    iconDigest: icon.digest,
                     created: existing?.created ?? now,
                     updated: now
                 )
@@ -159,6 +187,7 @@ public actor FolderImageManager {
         // Nothing may have worked; don't keep a picture no folder uses.
         library.deletePictureIfUnused(pictureName)
         persist()
+        await show(written)
         return outcomes
     }
 
@@ -166,8 +195,9 @@ public actor FolderImageManager {
 
     /// Puts every folder back to the standard icon. Works for any custom icon, not only
     /// the ones PrettyFolder made, because that is what "remove" means in Finder too.
-    public func removeImage(from folders: [URL]) -> [FolderOutcome] {
+    public func removeImage(from folders: [URL]) async -> [FolderOutcome] {
         var outcomes: [FolderOutcome] = []
+        var removed: [URL] = []
         for folder in unique(folders) {
             // Never reach into apps or other packages: removing an icon file from a bundle
             // breaks its signature just like adding one.
@@ -180,18 +210,30 @@ public actor FolderImageManager {
             let id = markerID(of: folder)
             let hadIcon = FolderInspector.hasCustomIcon(folder)
                 || FileManager.default.fileExists(atPath: FolderInspector.iconFileURL(for: folder).path)
-            if hadIcon && !NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: []) {
-                outcomes.append(.failed(folder, FolderImageError.setIconFailed(displayName(folder))))
-                continue
+            if hadIcon {
+                let modified = FolderMetadata.modificationDate(of: folder)
+                let removed = NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: [])
+                if let modified { FolderMetadata.restoreModificationDate(modified, of: folder) }
+                guard removed else {
+                    outcomes.append(.failed(folder, FolderImageError.setIconFailed(displayName(folder))))
+                    continue
+                }
             }
+            FolderMetadata.forgetIconChanges(folder)
             ExtendedAttributes.remove(named: Self.markerAttribute, at: folder)
             // A copied folder carries the original's marker; only drop the record if it is really this folder's.
             if let id, var record = library.record(id), describes(&record, folder) {
                 library.remove(id)
             }
             outcomes.append(.ok(folder))
+            removed.append(folder)
         }
         persist()
+        // A folder may have a new picture already, put on while the app was being told about
+        // another one.
+        for folder in removed where !Self.appearsToHavePicture(folder) {
+            await iconChanged?(folder, .removed)
+        }
         return outcomes
     }
 
@@ -210,16 +252,18 @@ public actor FolderImageManager {
     }
 
     /// Changes one folder's look. Pass `nil` to make it follow the default look again.
-    public func setStyle(_ style: IconStyle?, for folder: URL) throws {
+    public func setStyle(_ style: IconStyle?, for folder: URL) async throws {
         guard var record = ownedRecord(for: folder) else {
             throw FolderImageError.notManaged(displayName(folder))
         }
         let picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
         record.style = style
-        record.iconDigest = try writeIcon(picture, style: style ?? defaultStyle, to: folder)
+        let icon = try writeIcon(picture, style: style ?? defaultStyle, to: folder)
+        record.iconDigest = icon.digest
         record.updated = Date()
         library.upsert(record)
         persist()
+        await show([icon])
     }
 
     // MARK: - Default look
@@ -278,8 +322,12 @@ public actor FolderImageManager {
         // Drops and menu actions keep working meanwhile, so always take the library as it
         // is now rather than a list made at the start.
         while let id = library.records.keys.first {
-            if var record = library.record(id), let folder = resolve(&record), isStillOurs(record, folder) {
-                outcomes += removeImage(from: [folder])
+            if var record = library.record(id), let folder = resolve(&record) {
+                if isStillOurs(record, folder) {
+                    outcomes += await removeImage(from: [folder])
+                } else {
+                    forget(folder, record: id)
+                }
             }
             library.remove(id)
             done += 1
@@ -316,10 +364,8 @@ public actor FolderImageManager {
                 continue
             }
             if ownership(of: folder, by: record) == .theirs {
-                // Someone replaced or removed the icon; our marker is stale too.
-                if markerID(of: folder) == record.id {
-                    ExtendedAttributes.remove(named: Self.markerAttribute, at: folder)
-                }
+                // Someone replaced or removed the icon; what we left on the folder is stale too.
+                forget(folder, record: record.id)
                 library.remove(id)
                 changed = true
             }
@@ -346,10 +392,12 @@ public actor FolderImageManager {
                         picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
                         pictures[record.pictureName] = picture
                     }
-                    record.iconDigest = try writeIcon(picture, style: record.style ?? defaultStyle, to: folder)
+                    let icon = try writeIcon(picture, style: record.style ?? defaultStyle, to: folder)
+                    record.iconDigest = icon.digest
                     record.updated = Date()
                     library.upsert(record)
                     outcomes.append(.ok(folder))
+                    await show([icon])
                 } catch {
                     outcomes.append(.failed(folder, error))
                 }
@@ -361,17 +409,60 @@ public actor FolderImageManager {
         return outcomes
     }
 
-    /// Renders the icon, writes it and returns the digest of what was written.
-    private func writeIcon(_ picture: SourceImage, style: IconStyle, to folder: URL) throws -> String {
+    /// An icon that was just written, still to be shown in Finder.
+    private struct WrittenIcon {
+        let folder: URL
+        let image: NSImage
+        /// The digest of what was written.
+        let digest: String
+        /// Whether it took the place of another custom icon.
+        let replaced: Bool
+        let sequence: Int
+    }
+
+    /// Renders the icon and writes it. Finder isn't told yet: see `show`.
+    private func writeIcon(_ picture: SourceImage, style: IconStyle, to folder: URL) throws -> WrittenIcon {
         let icon: NSImage? = autoreleasepool { renderer.makeIcon(with: picture, style: style) }
         guard let icon else { throw FolderImageError.renderFailed }
+        let replacing = FolderInspector.hasCustomIcon(folder)
+        let modified = FolderMetadata.modificationDate(of: folder)
         let written = autoreleasepool {
             NSWorkspace.shared.setIcon(icon, forFile: folder.path, options: [.excludeQuickDrawElementsIconCreationOption])
         }
+        if let modified { FolderMetadata.restoreModificationDate(modified, of: folder) }
         guard written, let resource = FolderInspector.iconResource(of: folder) else {
             throw FolderImageError.setIconFailed(displayName(folder))
         }
-        return Self.digest(resource)
+        iconsWritten += 1
+        return WrittenIcon(folder: folder, image: icon, digest: Self.digest(resource), replaced: replacing, sequence: iconsWritten)
+    }
+
+    /// Gets Finder to show icons that were just written. A first icon shows by itself, because
+    /// Finder sees the custom icon flag go on; a replaced one needs telling. The app gets each
+    /// icon first, to cover the moment Finder shows a plain folder while it loads it.
+    ///
+    /// Called once the records are up to date: other work may run on the actor while the app
+    /// is asked, so each folder is checked again afterwards.
+    private func show(_ written: [WrittenIcon]) async {
+        for icon in written {
+            // Removed while the app was looking at an earlier one.
+            guard Self.appearsToHavePicture(icon.folder) else { continue }
+            await iconChanged?(icon.folder, .written(RenderedIcon(image: icon.image, sequence: icon.sequence)))
+            guard icon.replaced, Self.appearsToHavePicture(icon.folder) else { continue }
+            FolderMetadata.noteIconChanged(icon.folder)
+        }
+    }
+
+    /// The folder's icon isn't PrettyFolder's any more: leave nothing of ours on it. With
+    /// someone else's icon on it the counter stays, since clearing it makes Finder reload
+    /// their icon.
+    private func forget(_ folder: URL, record id: UUID) {
+        if markerID(of: folder) == id {
+            ExtendedAttributes.remove(named: Self.markerAttribute, at: folder)
+        }
+        if !FolderInspector.hasCustomIcon(folder) {
+            FolderMetadata.forgetIconChanges(folder)
+        }
     }
 
     /// The record for `folder` if PrettyFolder made its current icon.

@@ -98,6 +98,144 @@ import UniformTypeIdentifiers
         #expect(await manager.look(for: folder)?.followsDefault == true)
     }
 
+    /// The counter `FolderMetadata` keeps in the folder's Finder info.
+    private static func changeCount(_ folder: URL) -> Int {
+        guard let info = ExtendedAttributes.value(named: "com.apple.FinderInfo", at: folder), info.count == 32 else { return 0 }
+        return Int(info[info.startIndex + 26]) << 8 | Int(info[info.startIndex + 27])
+    }
+
+    private func modificationDate(_ url: URL) -> Date? {
+        try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+    }
+
+    @Test func finderIsToldAboutReplacedIcons() async throws {
+        let folder = try temp.folder("Replaced")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        #expect(Self.changeCount(folder) == 0, "a first icon shows by itself")
+
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.2, width: 0.6, height: 0.5, mode: .fit), for: folder)
+        #expect(Self.changeCount(folder) == 1)
+        let other = temp.file("other.png")
+        TestImages.write(TestImages.solid(width: 300, height: 200, red: 0, green: 0.5, blue: 1), to: other, type: .png)
+        _ = await manager.apply(imageAt: other, to: [folder])
+        #expect(Self.changeCount(folder) == 2)
+        #expect(FolderInspector.hasCustomIcon(folder))
+
+        _ = await manager.removeImage(from: [folder])
+        #expect(Self.changeCount(folder) == 0, "nothing is left behind")
+        #expect(!FolderInspector.hasCustomIcon(folder))
+    }
+
+    @Test func theAppGetsEachIconBeforeFinderIsTold() async throws {
+        final class Seen: @unchecked Sendable {
+            private let lock = NSLock()
+            private var items: [(name: String, count: Int, sequence: Int?)] = []
+            func add(_ name: String, _ count: Int, _ sequence: Int?) { lock.withLock { items.append((name, count, sequence)) } }
+            var all: [(name: String, count: Int, sequence: Int?)] { lock.withLock { items } }
+        }
+        let seen = Seen()
+        let folder = try temp.folder("Watched")
+        await manager.onIconChange { url, change in
+            switch change {
+            case .written(let icon):
+                #expect(icon.image.size.width > 0)
+                seen.add(url.lastPathComponent, Self.changeCount(url), icon.sequence)
+            case .removed:
+                seen.add(url.lastPathComponent, Self.changeCount(url), nil)
+            }
+        }
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        try await manager.setStyle(IconStyle(x: 0, y: 0, width: 1, height: 1, mode: .fill), for: folder)
+        #expect(Self.changeCount(folder) == 1)
+        _ = await manager.removeImage(from: [folder])
+
+        #expect(seen.all.map(\.name) == ["Watched", "Watched", "Watched"])
+        #expect(seen.all.map(\.count) == [0, 0, 0], "Finder is told only after the app has the icon")
+        let sequences = seen.all.map(\.sequence)
+        #expect(sequences[2] == nil, "then the picture is gone")
+        #expect((sequences[0] ?? 0) < (sequences[1] ?? 0), "newer icons count higher")
+    }
+
+    @Test func aPictureRemovedWhileTheAppLooksIsNotAnnounced() async throws {
+        let folder = try temp.folder("Gone")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let manager = self.manager
+        // Other work runs on the manager while the app has the icon.
+        await manager.onIconChange { url, change in
+            if case .written = change { _ = await manager.removeImage(from: [url]) }
+        }
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.5, height: 0.5, mode: .fill), for: folder)
+        #expect(!FolderInspector.hasCustomIcon(folder))
+        #expect(Self.changeCount(folder) == 0)
+        #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
+        #expect(await manager.look(for: folder) == nil)
+    }
+
+    @Test func redrawingTellsFinderToo() async throws {
+        let folder = try temp.folder("Redrawn")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        _ = await manager.setDefaultStyle(IconStyle(x: 0.2, y: 0.2, width: 0.6, height: 0.6, mode: .fit), updateExisting: true)
+        #expect(Self.changeCount(folder) == 1)
+        _ = await manager.redrawAll()
+        #expect(Self.changeCount(folder) == 2)
+    }
+
+    @Test func aPictureRemovedElsewhereLeavesNothingBehind() async throws {
+        let folder = try temp.folder("Elsewhere")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), for: folder)
+        #expect(Self.changeCount(folder) == 1)
+        // As Get Info does it.
+        NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: [])
+        await manager.prune()
+        #expect(Self.changeCount(folder) == 0)
+        #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
+        #expect(await manager.managedFolderCount() == 0)
+    }
+
+    @Test func pictureChangesKeepTheFolderDate() async throws {
+        let folder = try temp.folder("Dated")
+        let past = Date(timeIntervalSince1970: 1_000_000_000)
+        try FileManager.default.setAttributes([.modificationDate: past], ofItemAtPath: folder.path)
+
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        #expect(modificationDate(folder) == past)
+        try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), for: folder)
+        #expect(modificationDate(folder) == past)
+        _ = await manager.removeImage(from: [folder])
+        #expect(modificationDate(folder) == past)
+    }
+
+    @Test func theChangeCounterLeavesTheRestOfTheFinderInfoAlone() throws {
+        let folder = try temp.folder("Counted")
+        var info = Data(count: 32)
+        info[8] = 0x04
+        info[0] = 0x12
+        info[26] = 0xFF
+        info[27] = 0xFF
+        ExtendedAttributes.set(info, named: "com.apple.FinderInfo", at: folder)
+
+        FolderMetadata.noteIconChanged(folder)
+        var expected = info
+        expected[26] = 0
+        expected[27] = 0
+        #expect(ExtendedAttributes.value(named: "com.apple.FinderInfo", at: folder) == expected, "it wraps around")
+        FolderMetadata.noteIconChanged(folder)
+        expected[27] = 1
+        #expect(ExtendedAttributes.value(named: "com.apple.FinderInfo", at: folder) == expected)
+
+        FolderMetadata.forgetIconChanges(folder)
+        expected[27] = 0
+        #expect(ExtendedAttributes.value(named: "com.apple.FinderInfo", at: folder) == expected)
+
+        // Nothing else set: the Finder info goes away entirely, as on a folder never touched.
+        var only = Data(count: 32)
+        only[27] = 3
+        ExtendedAttributes.set(only, named: "com.apple.FinderInfo", at: folder)
+        FolderMetadata.forgetIconChanges(folder)
+        #expect(ExtendedAttributes.value(named: "com.apple.FinderInfo", at: folder) == nil)
+    }
+
     @Test func defaultStyleCanUpdateExistingFolders() async throws {
         let follower = try temp.folder("Follower")
         let pinned = try temp.folder("Pinned")
