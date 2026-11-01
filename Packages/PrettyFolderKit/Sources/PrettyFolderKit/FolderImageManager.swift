@@ -73,8 +73,9 @@ public enum FolderImageError: LocalizedError {
 ///
 /// Work runs on this actor one piece at a time between its `await`s, where the app is told
 /// about a change. Everything is saved before each of them, and whatever might have changed
-/// meanwhile is read again after it. The actual icon is written with
-/// `NSWorkspace.setIcon(_:forFile:options:)`, the same call Finder's own Get Info uses.
+/// meanwhile is read again after it. The icon itself is made by
+/// `NSWorkspace.setIcon(_:forFile:options:)`, the same call Finder's own Get Info uses, and
+/// one that takes another's place is put there whole (see `IconFile`).
 public actor FolderImageManager {
     /// Extended attribute that ties a folder to its record.
     static let markerAttribute = "com.narekmynell.prettyfolder"
@@ -498,6 +499,8 @@ public actor FolderImageManager {
         /// Whether it took the place of another custom icon.
         let replaced: Bool
         let sequence: Int
+        /// The icon file it took the place of, until Finder has been told.
+        let oldFile: IconFile.Replaced?
     }
 
     /// The icon for `picture` in `style`.
@@ -507,20 +510,19 @@ public actor FolderImageManager {
         return icon
     }
 
-    /// Writes the icon. Finder isn't told yet: see `show`.
+    /// Writes the icon. Finder isn't told yet: see `show`, which every icon written goes to.
     private func writeIcon(_ image: NSImage, to folder: URL) throws -> WrittenIcon {
         guard !isStopped else { throw FolderImageError.stopped }
         let replacing = FolderInspector.hasCustomIcon(folder)
-        let written = FolderMetadata.keepingModificationDate(of: folder) {
-            autoreleasepool {
-                NSWorkspace.shared.setIcon(image, forFile: folder.path, options: [.excludeQuickDrawElementsIconCreationOption])
-            }
+        let (written, oldFile) = FolderMetadata.keepingModificationDate(of: folder) {
+            autoreleasepool { IconFile.write(image, to: folder) }
         }
         guard written, let resource = FolderInspector.iconResource(of: folder) else {
+            oldFile?.discard()
             throw FolderImageError.setIconFailed(displayName(folder))
         }
         iconsWritten += 1
-        return WrittenIcon(folder: folder, image: image, digest: resource.sha256, replaced: replacing, sequence: iconsWritten)
+        return WrittenIcon(folder: folder, image: image, digest: resource.sha256, replaced: replacing, sequence: iconsWritten, oldFile: oldFile)
     }
 
     /// Gets Finder to show an icon that was just written. A first icon shows by itself,
@@ -530,6 +532,7 @@ public actor FolderImageManager {
     /// Called once the library is saved: other work may run on the actor while the app is
     /// asked, so the folder is checked again afterwards.
     private func show(_ icon: WrittenIcon) async {
+        defer { icon.oldFile?.discard() }
         // Removed in the meantime.
         guard Self.appearsToHavePicture(icon.folder) else { return }
         await iconChanged?(icon.folder, .written(RenderedIcon(image: icon.image, sequence: icon.sequence)))

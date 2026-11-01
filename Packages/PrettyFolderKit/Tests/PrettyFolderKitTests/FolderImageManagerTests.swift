@@ -698,6 +698,32 @@ import UniformTypeIdentifiers
         #expect(look.alignment == .centered && look.style == own)
     }
 
+    @Test func aReplacedIconIsNeverHalfWritten() async throws {
+        let folder = try temp.folder("Watched")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let iconFile = FolderInspector.iconFileURL(for: folder).path
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("TemporaryItems")
+        let scratchBefore = Set((try? FileManager.default.contentsOfDirectory(atPath: scratch.path)) ?? [])
+
+        // Someone looking at the folder all the time, as Finder may at any moment: whenever
+        // it says it has a custom icon, the icon file must be there with a whole icon in it.
+        let watcher = IconWatcher(folder: folder, iconFile: iconFile)
+        let thread = Thread { watcher.watch() }
+        thread.start()
+        for step in 0..<6 {
+            let style = IconStyle(x: 0.05 * Double(step), y: 0.3, width: 0.6, height: 0.5, mode: step.isMultiple(of: 2) ? .fill : .fit)
+            try await manager.setStyle(style, alignment: PictureAlignment(x: 0.1 * Double(step), y: 0.5), for: folder)
+        }
+        let seen = watcher.stop()
+        #expect(seen.looks > 100, "the watcher looked often enough to have caught a gap")
+        #expect(seen.gaps.isEmpty, "seen without a whole icon: \(seen.gaps)")
+
+        // Done right, it is the folder's own icon, and nothing is left where it was made.
+        #expect(await manager.showsOwnPicture(folder))
+        let scratchAfter = Set((try? FileManager.default.contentsOfDirectory(atPath: scratch.path)) ?? [])
+        #expect(scratchAfter.subtracting(scratchBefore).isEmpty)
+    }
+
     @Test func removeAllCleansUp() async throws {
         let folders = try ["One", "Two"].map { try temp.folder($0) }
         _ = await manager.apply(imageAt: picture, to: folders)
@@ -746,4 +772,47 @@ private final class Images: @unchecked Sendable {
     private var collected: [NSImage] = []
     func add(_ image: NSImage) { lock.withLock { collected.append(image) } }
     var all: [NSImage] { lock.withLock { collected } }
+}
+
+/// Looks at a folder's icon over and over on a thread of its own, noting every moment the
+/// folder claims a custom icon without a whole one in its icon file.
+private final class IconWatcher: @unchecked Sendable {
+    private let folder: URL
+    private let iconFile: String
+    private let lock = NSLock()
+    private var running = true
+    private var looks = 0
+    private var gaps: [String: Int] = [:]
+
+    init(folder: URL, iconFile: String) {
+        self.folder = folder
+        self.iconFile = iconFile
+    }
+
+    func watch() {
+        while lock.withLock({ running }) {
+            var gap: String?
+            if FolderInspector.hasCustomIcon(folder) {
+                let size = getxattr(iconFile, "com.apple.ResourceFork", nil, 0, 0, XATTR_NOFOLLOW)
+                if access(iconFile, F_OK) != 0 {
+                    gap = "no icon file"
+                } else if size < 0 {
+                    gap = "an icon file without an icon"
+                } else if size < 4096 {
+                    gap = "an icon file with an empty icon (\(size) bytes)"
+                }
+            }
+            lock.withLock {
+                looks += 1
+                if let gap { gaps[gap, default: 0] += 1 }
+            }
+        }
+    }
+
+    func stop() -> (looks: Int, gaps: [String: Int]) {
+        lock.withLock {
+            running = false
+            return (looks, gaps)
+        }
+    }
 }
