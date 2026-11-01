@@ -99,39 +99,42 @@ extension Studio {
         let badgeShownAt = 2.55 + 0.18, doneAt = 3.75, badgeHiddenAt = doneAt + 0.7
         let sequence = try frameSequence("drop")
         for index in 0..<frameCount(6.6) {
-            let t = Double(index) / Stage.framesPerSecond
-            let pointer = path.position(at: t)
-            let dragging = t >= pressAt && t < releaseAt
-            let overBadge = dragging && t >= badgeShownAt && badgeFrame.insetBy(dx: badgeInset, dy: badgeInset).contains(pointer)
-            if t >= doneAt { icons[target] = duckIcon }
+            // A frame's images go once it's written, not when the whole scene is done.
+            try autoreleasepool {
+                let t = Double(index) / Stage.framesPerSecond
+                let pointer = path.position(at: t)
+                let dragging = t >= pressAt && t < releaseAt
+                let overBadge = dragging && t >= badgeShownAt && badgeFrame.insetBy(dx: badgeInset, dy: badgeInset).contains(pointer)
+                if t >= doneAt { icons[target] = duckIcon }
 
-            let bitmap = Bitmap(size: size)
-            bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
-            for (position, frame) in frames.enumerated() {
-                let targeted = dragging && position == target && frame.contains(pointer) && !overBadge
-                Scenery.drawItem(on: bitmap, icon: icons[position], frame: frame, name: names[position], targeted: targeted)
-            }
-            Scenery.drawItem(on: bitmap, icon: thumbnail, frame: fileFrame, name: "rubber-duck.jpg", selected: t >= pressAt)
+                let bitmap = Bitmap(size: size)
+                bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
+                for (position, frame) in frames.enumerated() {
+                    let targeted = dragging && position == target && frame.contains(pointer) && !overBadge
+                    Scenery.drawItem(on: bitmap, icon: icons[position], frame: frame, name: names[position], targeted: targeted)
+                }
+                Scenery.drawItem(on: bitmap, icon: thumbnail, frame: fileFrame, name: "rubber-duck.jpg", selected: t >= pressAt)
 
-            // The badge comes up a moment after the picture reaches the folder.
-            if t >= badgeShownAt && t < badgeHiddenAt + 0.1 {
-                let state: DropBadgeModel.State = t >= doneAt ? .done : t >= releaseAt ? .working : overBadge ? .targeted : .ready
-                let fadeIn = progress(t, badgeShownAt, badgeShownAt + 0.12)
-                let fadeOut = 1 - progress(t, badgeHiddenAt, badgeHiddenAt + 0.1)
-                bitmap.draw(badges[state]!, in: badgeFrame, alpha: CGFloat(fadeIn * fadeOut))
-            }
+                // The badge comes up a moment after the picture reaches the folder.
+                if t >= badgeShownAt && t < badgeHiddenAt + 0.1 {
+                    let state: DropBadgeModel.State = t >= doneAt ? .done : t >= releaseAt ? .working : overBadge ? .targeted : .ready
+                    let fadeIn = progress(t, badgeShownAt, badgeShownAt + 0.12)
+                    let fadeOut = 1 - progress(t, badgeHiddenAt, badgeHiddenAt + 0.1)
+                    bitmap.draw(badges[state]!, in: badgeFrame, alpha: CGFloat(fadeIn * fadeOut))
+                }
 
-            if dragging {
-                // What is being dragged follows the pointer, a little see-through.
-                let offset = CGPoint(x: fileFrame.minX - pressPoint.x, y: fileFrame.minY - pressPoint.y)
-                let dragFrame = CGRect(x: pointer.x + offset.x, y: pointer.y + offset.y, width: fileFrame.width, height: fileFrame.height)
-                bitmap.context.saveGState()
-                bitmap.context.setAlpha(0.75)
-                Scenery.drawItem(on: bitmap, icon: thumbnail, frame: dragFrame, name: "rubber-duck.jpg", selected: true)
-                bitmap.context.restoreGState()
+                if dragging {
+                    // What is being dragged follows the pointer, a little see-through.
+                    let offset = CGPoint(x: fileFrame.minX - pressPoint.x, y: fileFrame.minY - pressPoint.y)
+                    let dragFrame = CGRect(x: pointer.x + offset.x, y: pointer.y + offset.y, width: fileFrame.width, height: fileFrame.height)
+                    bitmap.context.saveGState()
+                    bitmap.context.setAlpha(0.75)
+                    Scenery.drawItem(on: bitmap, icon: thumbnail, frame: dragFrame, name: "rubber-duck.jpg", selected: true)
+                    bitmap.context.restoreGState()
+                }
+                Scenery.drawCursor(overBadge ? .dragCopy : .arrow, at: pointer, on: bitmap)
+                try sequence.add(bitmap.image)
             }
-            Scenery.drawCursor(overBadge ? .dragCopy : .arrow, at: pointer, on: bitmap)
-            try sequence.add(bitmap.image)
         }
     }
 
@@ -200,37 +203,40 @@ extension Studio {
         let windowOrigin = CGPoint(x: (size.width - windowSize.width) / 2, y: (size.height - windowSize.height) / 2)
         let sequence = try frameSequence("hover")
         for index in 0..<frameCount(7.8) {
-            let t = Double(index) / Stage.framesPerSecond
-            let pointer = path.position(at: t)
-            if t >= trashRelease + 0.12 { icons[ghost] = plainIcon }
+            // A frame's images go once it's written, not when the whole scene is done.
+            try autoreleasepool {
+                let t = Double(index) / Stage.framesPerSecond
+                let pointer = path.position(at: t)
+                if t >= trashRelease + 0.12 { icons[ghost] = plainIcon }
 
-            let bitmap = Bitmap(size: size)
-            bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
-            for (position, frame) in frames.enumerated() {
-                Scenery.drawItem(on: bitmap, icon: icons[position], frame: frame, name: folders[position].name)
+                let bitmap = Bitmap(size: size)
+                bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
+                for (position, frame) in frames.enumerated() {
+                    Scenery.drawItem(on: bitmap, icon: icons[position], frame: frame, name: folders[position].name)
+                }
+                var cursor = NSCursor.arrow
+                if t >= ghostShown && t < trashRelease {
+                    let onTrash = t >= 2.15
+                    let image = t >= trashPress ? ghostTrashPressed : onTrash ? ghostTrash : ghostBar
+                    drawBar(image, in: ghostBarFrame, alpha: CGFloat(progress(t, ghostShown, ghostShown + 0.12)), on: bitmap)
+                    if onTrash { cursor = .pointingHand }
+                }
+                if t >= monkeyShown && t < settingsRelease {
+                    let onSettings = t >= 4.6
+                    let image = t >= settingsPress ? monkeySettingsPressed : onSettings ? monkeySettings : monkeyBar
+                    drawBar(image, in: monkeyBarFrame, alpha: CGFloat(progress(t, monkeyShown, monkeyShown + 0.12)), on: bitmap)
+                    if onSettings { cursor = .pointingHand }
+                }
+                if t >= windowShown {
+                    let appear = ease(progress(t, windowShown, windowShown + 0.25))
+                    Scenery.drawWindow(
+                        windowImage, at: windowOrigin, size: windowSize, on: bitmap,
+                        alpha: CGFloat(appear), scale: windowScale * (0.94 + 0.06 * CGFloat(appear))
+                    )
+                }
+                Scenery.drawCursor(cursor, at: pointer, on: bitmap)
+                try sequence.add(bitmap.image)
             }
-            var cursor = NSCursor.arrow
-            if t >= ghostShown && t < trashRelease {
-                let onTrash = t >= 2.15
-                let image = t >= trashPress ? ghostTrashPressed : onTrash ? ghostTrash : ghostBar
-                drawBar(image, in: ghostBarFrame, alpha: CGFloat(progress(t, ghostShown, ghostShown + 0.12)), on: bitmap)
-                if onTrash { cursor = .pointingHand }
-            }
-            if t >= monkeyShown && t < settingsRelease {
-                let onSettings = t >= 4.6
-                let image = t >= settingsPress ? monkeySettingsPressed : onSettings ? monkeySettings : monkeyBar
-                drawBar(image, in: monkeyBarFrame, alpha: CGFloat(progress(t, monkeyShown, monkeyShown + 0.12)), on: bitmap)
-                if onSettings { cursor = .pointingHand }
-            }
-            if t >= windowShown {
-                let appear = ease(progress(t, windowShown, windowShown + 0.25))
-                Scenery.drawWindow(
-                    windowImage, at: windowOrigin, size: windowSize, on: bitmap,
-                    alpha: CGFloat(appear), scale: windowScale * (0.94 + 0.06 * CGFloat(appear))
-                )
-            }
-            Scenery.drawCursor(cursor, at: pointer, on: bitmap)
-            try sequence.add(bitmap.image)
         }
     }
 
