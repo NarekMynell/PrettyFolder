@@ -120,6 +120,104 @@ nonisolated final class FinderAccessibility: @unchecked Sendable {
         return FinderItem(url: url, layout: .row, iconFrame: iconFrame, nameFrame: nameFrame, rowFrame: frame(of: container))
     }
 
+    // MARK: - Icons on screen
+
+    /// Every icon Finder shows on screen, in its windows on the current Space and on the
+    /// Desktop, by file (`ShownIcon.key(for:)`). Only items in view are looked at, so this stays
+    /// quick in big folders; `nil` if it takes longer than `limit`, counted from now.
+    func shownIcons(finderPID: pid_t, within limit: TimeInterval, completion: @escaping @Sendable ([String: [ShownIcon]]?) -> Void) {
+        let deadline = ProcessInfo.processInfo.systemUptime + limit
+        queue.async { [self] in
+            completion(resolveShownIcons(finderPID: finderPID, deadline: deadline))
+        }
+    }
+
+    /// A look at Finder's icons under way.
+    private struct IconSearch {
+        let deadline: TimeInterval
+        var found: [String: [ShownIcon]] = [:]
+
+        var isOutOfTime: Bool { ProcessInfo.processInfo.systemUptime > deadline }
+    }
+
+    /// The window an icon is in: its frame, and whether it is the Desktop.
+    private typealias Place = (frame: CGRect, isDesktop: Bool)
+
+    private func resolveShownIcons(finderPID: pid_t, deadline: TimeInterval) -> [String: [ShownIcon]]? {
+        var search = IconSearch(deadline: deadline)
+        let app = AXUIElementCreateApplication(finderPID)
+        let windows = (value(app, kAXWindowsAttribute) as? [AnyObject] ?? [])
+            .compactMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+        for window in windows {
+            guard !search.isOutOfTime else { return nil }
+            guard let windowFrame = frame(of: window) else { continue }
+            // Finder's windows are windows; the Desktop is a scroll area over every display.
+            let isDesktop = role(of: window) != kAXWindowRole
+            // Content scrolls on under the toolbar, faded; icons there aren't drawn as they are.
+            let toolbar = children(of: window).first { role(of: $0) == kAXToolbarRole }.flatMap(frame(of:))
+            var area = windowFrame
+            if let toolbar { area = CGRect(x: area.minX, y: toolbar.maxY, width: area.width, height: max(0, area.maxY - toolbar.maxY)) }
+            collectIcons(in: window, depth: 0, area: area, place: (windowFrame, isDesktop), into: &search)
+        }
+        return search.isOutOfTime ? nil : search.found
+    }
+
+    private func collectIcons(in node: AXUIElement, depth: Int, area: CGRect, place: Place, into search: inout IconSearch) {
+        guard depth < 16, !search.isOutOfTime else { return }
+        var area = area
+        switch role(of: node) {
+        case kAXToolbarRole:
+            return
+        case kAXScrollAreaRole:
+            if let frame = frame(of: node) { area = area.intersection(frame) }
+        case kAXImageRole:
+            // Icon view, the Desktop, the gallery: the icon itself has the URL.
+            if let url = fileReference(of: node), let frame = frame(of: node) {
+                add(node, at: frame, for: url, area: area, place: place, to: &search)
+            }
+            return
+        default:
+            break
+        }
+        let kids = visibleChildren(of: node)
+        // List and column views: the name next to the icon has the URL.
+        if let field = kids.first(where: { role(of: $0) == kAXTextFieldRole }), let url = fileReference(of: field),
+           let image = kids.first(where: { role(of: $0) == kAXImageRole }), let frame = frame(of: image) {
+            add(image, at: frame, for: url, area: area, place: place, to: &search)
+            return
+        }
+        for kid in kids {
+            collectIcons(in: kid, depth: depth + 1, area: area, place: place, into: &search)
+        }
+    }
+
+    private func add(_ image: AXUIElement, at frame: CGRect, for url: URL, area: CGRect, place: Place, to search: inout IconSearch) {
+        // Partly scrolled out of view or under the toolbar, it's drawn clipped or faded. A
+        // preview that isn't square doesn't say where in it the icon is drawn.
+        guard frame.width > 0, abs(frame.width - frame.height) < 1, area.insetBy(dx: -0.5, dy: -0.5).contains(frame),
+              let key = ShownIcon.key(for: url)
+        else { return }
+        let icon = ShownIcon(frame: frame, windowFrame: place.frame, isDesktop: place.isDesktop, element: AXElement(image))
+        search.found[key, default: []].append(icon)
+    }
+
+    /// Where each icon is now, as found by `shownIcons`; `nil` for one Finder no longer has.
+    func currentFrames(of icons: [ShownIcon], completion: @escaping @Sendable ([CGRect?]) -> Void) {
+        queue.async { [self] in
+            completion(icons.map { frame(of: $0.element.node) })
+        }
+    }
+
+    /// The children on screen where Finder says which those are (lists and tables), all of them elsewhere.
+    private func visibleChildren(of node: AXUIElement) -> [AXUIElement] {
+        for attribute in [kAXVisibleChildrenAttribute, kAXVisibleRowsAttribute, kAXChildrenAttribute] {
+            if let list = value(node, attribute) as? [AnyObject] {
+                return list.compactMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+            }
+        }
+        return []
+    }
+
     // MARK: - Attribute helpers
 
     private func value(_ node: AXUIElement, _ attribute: String) -> CFTypeRef? {
@@ -156,10 +254,34 @@ nonisolated final class FinderAccessibility: @unchecked Sendable {
 
     /// Finder publishes file reference URLs (`file:///.file/id=…`); this turns them into paths.
     private func fileURL(of node: AXUIElement) -> URL? {
+        fileReference(of: node).flatMap { ($0 as NSURL).filePathURL }
+    }
+
+    private func fileReference(of node: AXUIElement) -> URL? {
         guard let raw = value(node, kAXURLAttribute), CFGetTypeID(raw) == CFURLGetTypeID() else { return nil }
         let url = (raw as! CFURL) as URL
-        guard url.isFileURL else { return nil }
-        return (url as NSURL).filePathURL
+        return url.isFileURL ? url : nil
+    }
+}
+
+/// A place on screen where Finder shows a file's icon.
+nonisolated struct ShownIcon: Sendable {
+    /// The icon, in Accessibility coordinates.
+    let frame: CGRect
+    /// The Finder window it is in, or the Desktop.
+    let windowFrame: CGRect
+    /// On the Desktop, which is one element over all displays, drawn in a window on each.
+    let isDesktop: Bool
+    /// Finder's element for the icon, to ask later whether it moved.
+    let element: AXElement
+
+    /// Identifies a file however its URL is written: by volume and file number, the way
+    /// Finder's file reference URLs do.
+    static func key(for url: URL) -> String? {
+        let reference = (url as NSURL).isFileReferenceURL() ? url : (url as NSURL).fileReferenceURL()
+        guard let reference else { return nil }
+        let text = reference.absoluteString
+        return text.hasSuffix("/") ? String(text.dropLast()) : text
     }
 }
 
@@ -233,4 +355,13 @@ final class FinderProcess {
 
 private extension CGRect {
     var area: CGFloat { isNull ? 0 : width * height }
+}
+
+/// An Accessibility element. Asking one questions works from any thread.
+nonisolated struct AXElement: @unchecked Sendable {
+    let node: AXUIElement
+
+    init(_ node: AXUIElement) {
+        self.node = node
+    }
 }

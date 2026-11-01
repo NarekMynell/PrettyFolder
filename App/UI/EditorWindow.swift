@@ -9,6 +9,8 @@ import UniformTypeIdentifiers
 /// scaled, the default look, and the few settings there are (behind the gear).
 final class EditorWindowController: NSWindowController, NSWindowDelegate {
     let model: EditorModel
+    /// The newest icon shown in the title bar; an older one that comes in later is ignored.
+    private var titleIconSequence = Int.min
 
     init(actions: FolderActions) {
         model = EditorModel(actions: actions)
@@ -46,9 +48,26 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private func updateTitle() {
         guard let window else { return }
         window.title = model.title
-        // Setting it again also picks up the folder's new icon.
-        window.representedURL = nil
-        window.representedURL = model.folders.count == 1 ? model.folders[0] : nil
+        let represented = model.folders.count == 1 ? model.folders[0] : nil
+        // The icon comes from the folder: set again, it shows a removed picture is gone. A
+        // new picture comes through `showIcon` instead.
+        if window.representedURL != represented || !model.hasCustomIcon {
+            window.representedURL = nil
+            window.representedURL = represented
+        }
+    }
+
+    /// The folder's new icon, in the title bar. Asked for by its file, macOS would show a
+    /// plain folder for a moment while it loads the new one.
+    func showIcon(_ icon: RenderedIcon, for folder: URL) {
+        guard icon.sequence > titleIconSequence, let window, let represented = window.representedURL,
+              represented.standardizedFileURL.path == folder.standardizedFileURL.path,
+              let button = window.standardWindowButton(.documentIconButton),
+              let small = icon.image.copy() as? NSImage
+        else { return }
+        titleIconSequence = icon.sequence
+        small.size = button.image?.size ?? NSSize(width: 16, height: 16)
+        button.image = small
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {

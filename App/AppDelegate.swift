@@ -21,6 +21,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quitOtherCopies()
         statusItem = StatusItemController(actions: actions, settings: settings)
         finderIntegration.start()
+        Task { [manager, actions, finderIntegration] in
+            await manager.onIconChange { folder, change in
+                switch change {
+                case .written(let icon):
+                    await MainActor.run { actions.iconWritten(folder, icon: icon) }
+                    await finderIntegration.cover(folder, with: icon)
+                case .removed:
+                    await finderIntegration.uncover(folder)
+                }
+            }
+        }
 
         isReady = true
         for (command, fromOurExtension) in queuedCommands {

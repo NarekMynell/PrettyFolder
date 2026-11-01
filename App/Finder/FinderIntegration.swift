@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import PrettyFolderKit
 import os
 
 /// Turns the two in-Finder helpers (the drop badge and the buttons on folders) on and off
@@ -13,6 +14,7 @@ final class FinderIntegration {
     private let hoverButtons = HoverButtonsController()
     private lazy var dragWatcher = DragWatcher(finder: finder, accessibility: accessibility, badge: dropBadge)
     private lazy var hoverWatcher = HoverWatcher(finder: finder, accessibility: accessibility, buttons: hoverButtons)
+    private lazy var iconCover = IconCover(finder: finder, accessibility: accessibility)
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Finder")
 
     init(actions: FolderActions, settings: AppSettings) {
@@ -36,6 +38,15 @@ final class FinderIntegration {
     func start() {
         apply()
         observe()
+    }
+
+    /// Shows the folder's new icon over its icon in Finder while Finder loads it (see `IconCover`).
+    func cover(_ folder: URL, with icon: RenderedIcon) async {
+        await iconCover.cover(folder, with: icon)
+    }
+
+    func uncover(_ folder: URL) {
+        iconCover.uncover(folder)
     }
 
     private func apply() {

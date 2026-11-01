@@ -1,8 +1,8 @@
 import AppKit
 
 /// A borderless, transparent panel that floats over Finder without ever taking focus
-/// away from it. The drop badge and the buttons on folders each live in one.
-final class OverlayPanel: NSPanel {
+/// away from it. The drop badge, the buttons on folders and the icon covers each live in one.
+class OverlayPanel: NSPanel {
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),

@@ -60,6 +60,11 @@ final class FolderActions {
     }
 
     /// Keeps the window up to date when folders it shows change some other way.
+    /// A folder's new icon is on disk; the window shows it in its title bar straight away.
+    func iconWritten(_ folder: URL, icon: RenderedIcon) {
+        editor?.showIcon(icon, for: folder)
+    }
+
     func picturesChanged(_ folders: [URL]) {
         editor?.model.reload(ifShowing: folders)
     }

@@ -8,6 +8,8 @@
 - Pointing at a folder brings up buttons to choose a picture, remove it or open the window. They replace the button on the folder's tab.
 - Drop a picture on the window to put it on the folder.
 - Finder's right-click menu has a single item, **Folder Picture…**, which opens the window.
+- Finder shows a folder's new picture or look right away, without flashing the plain folder in between. Before, it often kept showing the old picture.
+- Changing a folder's picture no longer changes its modification date, so it doesn't jump around in windows sorted by date.
 
 ## 1.0.1
 
