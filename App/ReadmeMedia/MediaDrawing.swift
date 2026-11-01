@@ -244,8 +244,12 @@ enum Scenery {
         let radius = 5 + 13 * CGFloat(ease(age))
         bitmap.appKit {
             let ring = NSBezierPath(ovalIn: NSRect(x: point.x - radius, y: point.y - radius, width: 2 * radius, height: 2 * radius))
+            // A dark edge under the white, so it shows on light pictures too.
+            ring.lineWidth = 4.5
+            NSColor.black.withAlphaComponent(0.35 * (1 - age)).setStroke()
+            ring.stroke()
             ring.lineWidth = 2.5
-            NSColor.white.withAlphaComponent(0.85 * (1 - age)).setStroke()
+            NSColor.white.withAlphaComponent(0.9 * (1 - age)).setStroke()
             ring.stroke()
         }
     }
