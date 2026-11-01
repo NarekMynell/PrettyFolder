@@ -35,11 +35,17 @@ final class FolderActions {
     /// Opens the window for `folders`. Without folders it comes up as it was left, or
     /// with the default look.
     func showEditor(for folders: [URL] = [], explainingProblems: Bool = true) {
-        let eligible = folders.isEmpty ? [] : checked(folders, explainingProblems: explainingProblems)
-        guard folders.isEmpty || !eligible.isEmpty else { return }
+        guard !folders.isEmpty else { return presentEditor(for: []) }
+        Task {
+            let eligible = await checked(folders, explainingProblems: explainingProblems)
+            if !eligible.isEmpty { presentEditor(for: eligible) }
+        }
+    }
+
+    private func presentEditor(for folders: [URL]) {
         let controller = editor ?? EditorWindowController(actions: self)
         editor = controller
-        controller.show(folders: eligible)
+        controller.show(folders: folders)
     }
 
     /// A folder's new icon is on disk; the window shows it in its title bar straight away.
@@ -70,9 +76,15 @@ final class FolderActions {
     /// Asks for a picture and puts it on `folders`. With a window, the picker is a sheet
     /// on it; without one (the buttons on a folder), focus goes back to Finder afterwards.
     func chooseImage(for folders: [URL], attachedTo window: NSWindow? = nil) {
-        let eligible = checked(folders)
-        guard !eligible.isEmpty else { return }
+        // Who was in front when asked, before anything else can come forward.
         let returnTo = window == nil ? frontmostOtherApp() : nil
+        Task {
+            let eligible = await checked(folders)
+            if !eligible.isEmpty { pick(for: eligible, attachedTo: window, returningTo: returnTo) }
+        }
+    }
+
+    private func pick(for eligible: [URL], attachedTo window: NSWindow?, returningTo returnTo: NSRunningApplication?) {
         let message = eligible.count == 1
             ? String(localized: "Choose a picture for “\(FileManager.default.displayName(atPath: eligible[0].path))”.")
             : String(localized: "Choose a picture for \(eligible.count) folders.")
@@ -162,20 +174,21 @@ final class FolderActions {
         }
     }
 
-    /// Validates folders up front and explains the ones that can't be used.
-    private func checked(_ folders: [URL], explainingProblems: Bool = true) -> [URL] {
-        var eligible: [URL] = []
-        var problems: [FolderOutcome] = []
-        for folder in folders {
-            do {
-                try FolderInspector.validate(folder)
-                eligible.append(folder)
-            } catch {
-                problems.append(FolderOutcome(folder: folder, failure: error.localizedDescription))
+    /// Validates folders up front and explains the ones that can't be used. The disk is asked
+    /// off the main thread: a folder may be on a network disk that has stopped answering.
+    private func checked(_ folders: [URL], explainingProblems: Bool = true) async -> [URL] {
+        let outcomes = await Task.detached(priority: .userInitiated) {
+            folders.map { folder in
+                do {
+                    try FolderInspector.validate(folder)
+                    return FolderOutcome(folder: folder, failure: nil)
+                } catch {
+                    return FolderOutcome(folder: folder, failure: error.localizedDescription)
+                }
             }
-        }
-        if explainingProblems { report(problems) }
-        return eligible
+        }.value
+        if explainingProblems { report(outcomes) }
+        return outcomes.filter(\.succeeded).map(\.folder)
     }
 
     /// Explains what went wrong, if anything did. Never in the middle of a drag in the

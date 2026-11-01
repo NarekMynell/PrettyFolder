@@ -204,13 +204,19 @@ final class EditorModel {
         let generation = loadGeneration
         let writesSoFar = writeGeneration
         let bookmarks = self.bookmarks
+        let opened = self.folders
         let manager = actions.manager
         let queuedWrites = writing
         Task {
             // Read the folders as they are once the writes already on their way are done.
             await queuedWrites?.value
-            // Renamed or moved since the window opened? The disk is asked off the main thread.
-            let moved = await Task.detached(priority: .userInitiated) { Self.locations(of: bookmarks) }.value
+            // Where they are now (renamed or moved since the window opened?) and whether any
+            // has a custom icon. The disk is asked off the main thread.
+            let (moved, anyCustomIcon) = await Task.detached(priority: .userInitiated) {
+                let moved = Self.locations(of: bookmarks)
+                let current = opened.enumerated().map { index, folder in index < moved.count ? moved[index] ?? folder : folder }
+                return (moved, current.contains(where: FolderInspector.hasCustomIcon))
+            }.value
             guard generation == loadGeneration else { return }
             for (index, location) in moved.enumerated() where index < folders.count {
                 if let location, location.path != folders[index].path { folders[index] = location }
@@ -229,7 +235,7 @@ final class EditorModel {
             // Something newer is on its way.
             guard generation == loadGeneration else { return }
             managedFolders = found.map(\.folder)
-            hasCustomIcon = folders.contains(where: FolderInspector.hasCustomIcon)
+            hasCustomIcon = anyCustomIcon
             if pictureURL != folderPictureURL, folderPictureURL != nil {
                 // Another picture, or none. What was being done to the old one, and undoing
                 // what was done to it, would put that onto this one.
