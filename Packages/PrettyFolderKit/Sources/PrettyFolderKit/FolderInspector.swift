@@ -6,6 +6,7 @@ public enum FolderInspector {
         case missing(String)
         case notAFolder(String)
         case package(String)
+        case insidePackage(String)
         case volume(String)
         case readOnly(String)
 
@@ -14,6 +15,7 @@ public enum FolderInspector {
             case .missing(let name): return "“\(name)” no longer exists."
             case .notAFolder(let name): return "“\(name)” is not a folder."
             case .package(let name): return "“\(name)” is an app or a package. Changing its icon could break it, so PrettyFolder leaves it alone."
+            case .insidePackage(let name): return "“\(name)” is inside an app or a package. Changing its icon could break it, so PrettyFolder leaves it alone."
             case .volume(let name): return "“\(name)” is a disk, not a folder."
             case .readOnly(let name): return "You don't have permission to change “\(name)”."
             }
@@ -22,20 +24,27 @@ public enum FolderInspector {
 
     /// Checks that `url` is a plain folder whose icon can be changed safely.
     ///
-    /// Packages (apps, bundles, Photos libraries…) are refused: writing an icon file
-    /// inside an app bundle invalidates its code signature.
+    /// Packages (apps, bundles, Photos libraries…) and the folders inside them are refused:
+    /// writing or removing an icon file inside an app bundle invalidates its code signature.
     public static func validate(_ url: URL) throws {
         let name = FileManager.default.displayName(atPath: url.path)
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .isPackageKey, .isVolumeKey, .isSymbolicLinkKey]
         guard let values = try? url.resourceValues(forKeys: keys) else { throw Problem.missing(name) }
         if values.isSymbolicLink == true || values.isDirectory != true { throw Problem.notAFolder(name) }
         if values.isPackage == true { throw Problem.package(name) }
+        if isInsidePackage(url) { throw Problem.insidePackage(name) }
         if values.isVolume == true { throw Problem.volume(name) }
         if !FileManager.default.isWritableFile(atPath: url.path) { throw Problem.readOnly(name) }
     }
 
-    public static func isEligible(_ url: URL) -> Bool {
-        (try? validate(url)) != nil
+    /// Whether any folder that `url` is in is a package.
+    private static func isInsidePackage(_ url: URL) -> Bool {
+        var folder = url.standardizedFileURL.deletingLastPathComponent()
+        while folder.pathComponents.count > 1 {
+            if (try? folder.resourceValues(forKeys: [.isPackageKey]))?.isPackage == true { return true }
+            folder.deleteLastPathComponent()
+        }
+        return false
     }
 
     /// Whether Finder shows a custom icon for the folder (the `kHasCustomIcon` Finder flag).
@@ -46,7 +55,7 @@ public enum FolderInspector {
     /// Like `hasCustomIcon`, but `nil` when the folder can't be read right now
     /// (no permission, disk going away), which is not the same as "no custom icon".
     static func customIconFlag(_ url: URL) -> Bool? {
-        switch ExtendedAttributes.read(named: "com.apple.FinderInfo", at: url) {
+        switch ExtendedAttributes.read(named: FolderMetadata.finderInfo, at: url) {
         case .missing:
             return false
         case .unreadable:

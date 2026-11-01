@@ -3,7 +3,7 @@ import Foundation
 /// The two small things PrettyFolder does to a folder besides writing its icon: telling Finder
 /// that the icon changed, and keeping the folder's modification date as it was.
 enum FolderMetadata {
-    private static let finderInfo = "com.apple.FinderInfo"
+    static let finderInfo = "com.apple.FinderInfo"
     /// Bytes 26–27 of a folder's Finder info. They once held the folder's comment ID; the
     /// system now calls them reserved and nothing reads them.
     private static let counterOffset = 26
@@ -34,9 +34,15 @@ enum FolderMetadata {
         }
     }
 
-    /// The icon file inside a folder is replaced along with the icon, which would make the
-    /// folder look modified, and jump in windows sorted by date. Pass the date this returns to
-    /// `restoreModificationDate` afterwards.
+    /// Does `change` to the folder's icon file, keeping the folder's modification date: the
+    /// file is written or removed along with the icon, which would make the folder look
+    /// modified and jump in windows sorted by date.
+    static func keepingModificationDate<Result>(of folder: URL, _ change: () throws -> Result) rethrows -> Result {
+        let date = modificationDate(of: folder)
+        defer { if let date { restoreModificationDate(date, of: folder) } }
+        return try change()
+    }
+
     static func modificationDate(of folder: URL) -> timespec? {
         folder.withUnsafeFileSystemRepresentation { path in
             var info = stat()

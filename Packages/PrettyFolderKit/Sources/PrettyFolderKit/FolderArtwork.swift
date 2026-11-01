@@ -15,9 +15,6 @@ public enum FolderArtwork {
     /// Where the folder's parts sit on the icon. Measured from the real artwork once per launch.
     public static let shape: FolderShape = measureShape(in: makeBaseIcon()) ?? .fallback
 
-    /// The folder's tab, the raised strip in the top-left corner.
-    public static var tabRegion: CGRect { shape.tab }
-
     /// Finds the folder's parts in the icon's pixels: the outline from the alpha channel,
     /// the tab from the rows at the top that stop well short of the right edge, and the
     /// front from the step in brightness where it starts, down the middle of the folder.

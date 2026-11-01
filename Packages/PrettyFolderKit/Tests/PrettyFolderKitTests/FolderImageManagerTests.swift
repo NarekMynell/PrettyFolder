@@ -101,6 +101,120 @@ import UniformTypeIdentifiers
         #expect(storedPictures().isEmpty)
     }
 
+    @Test func aRedrawSavesEachFolderBeforeTheAppHearsOfIt() async throws {
+        let folders = try ["R1", "R2", "R3"].map { try temp.folder($0) }
+        _ = await manager.apply(imageAt: picture, to: folders)
+        let checks = Checks()
+        let index = libraryDirectory.appendingPathComponent("Library.json")
+        await manager.onIconChange { folder, _ in
+            // What a copy of the app started right now would find on disk.
+            let saved = (try? Data(contentsOf: index)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let records = saved?["records"] as? [[String: Any]] ?? []
+            let path = FolderInspector.canonicalPath(folder.path)
+            let digest = records.first { $0["lastKnownPath"] as? String == path }?["iconDigest"] as? String
+            checks.add(digest != nil && digest == FolderInspector.iconResource(of: folder)?.sha256)
+        }
+        _ = await manager.redrawAll()
+        #expect(checks.results == [true, true, true])
+    }
+
+    @Test func removeAllKeepsWhatItCannotReachAndSaysSo() async throws {
+        let reachable = try temp.folder("Reachable")
+        let gone = try temp.folder("Gone")
+        let locked = try temp.folder("Locked")
+        _ = await manager.apply(imageAt: picture, to: [reachable, gone, locked])
+        try FileManager.default.removeItem(at: gone)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+
+        let outcomes = await manager.removeAll()
+        #expect(!FolderInspector.hasCustomIcon(reachable))
+        let failed = Set(outcomes.filter { !$0.succeeded }.map(\.folder.lastPathComponent))
+        #expect(failed == ["Gone", "Locked"])
+        #expect(await manager.managedFolderCount() == 2, "kept, to be done when they can be reached")
+        #expect(storedPictures().count == 1, "still needed by them")
+
+        // Once the folder can be changed again, removing everything finishes the job.
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+        _ = await manager.removeAll()
+        #expect(!FolderInspector.hasCustomIcon(locked))
+        #expect(await manager.managedFolderCount() == 1, "the deleted folder is remembered until it's been gone a while")
+    }
+
+    @Test func foldersInsidePackagesAreLeftAlone() async throws {
+        let app = try temp.folder("Tool.app")
+        let inside = app.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+        let outcomes = await manager.apply(imageAt: picture, to: [inside])
+        #expect(outcomes.count == 1 && !outcomes[0].succeeded)
+        #expect(!FileManager.default.fileExists(atPath: FolderInspector.iconFileURL(for: inside).path))
+        #expect(throws: FolderInspector.Problem.insidePackage("Contents")) { try FolderInspector.validate(inside) }
+    }
+
+    @Test func aPictureOverSomeoneElsesIconReplacesTheOldRecordRightAway() async throws {
+        let folder = try temp.folder("Taken")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let first = try #require(storedPictures().first)
+        let foreign = NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
+            NSColor.systemTeal.setFill()
+            rect.fill()
+            return true
+        }
+        #expect(NSWorkspace.shared.setIcon(foreign, forFile: folder.path, options: []))
+
+        let other = temp.file("other.png")
+        TestImages.write(TestImages.solid(width: 120, height: 80, red: 0.2, green: 0.8, blue: 0.2), to: other, type: .png)
+        _ = await manager.apply(imageAt: other, to: [folder])
+        #expect(await manager.managedFolderCount() == 1)
+        #expect(!storedPictures().contains(first))
+        #expect(await manager.look(for: folder)?.followsDefault == true)
+    }
+
+    @Test func forgettingAFolderClearsTheCountUnderSomeoneElsesIcon() async throws {
+        let folder = try temp.folder("Counted")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.2, width: 0.6, height: 0.5, mode: .fit), alignment: .centered, for: folder)
+        #expect(Self.changeCount(folder) == 1)
+        let foreign = NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
+            NSColor.systemPink.setFill()
+            rect.fill()
+            return true
+        }
+        #expect(NSWorkspace.shared.setIcon(foreign, forFile: folder.path, options: []))
+        await manager.prune()
+        #expect(Self.changeCount(folder) == 0)
+        #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
+        #expect(FolderInspector.hasCustomIcon(folder), "their icon stays")
+    }
+
+    @Test func anIconFileLeftWithoutItsFlagIsTakenAway() async throws {
+        let folder = try lived(in: "Unflagged")
+        let before = FolderSnapshot(folder)
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        // Something turns the custom icon flag off and leaves the icon file.
+        var info = try #require(ExtendedAttributes.value(named: "com.apple.FinderInfo", at: folder))
+        info[info.startIndex + 8] &= ~0x04
+        ExtendedAttributes.set(info, named: "com.apple.FinderInfo", at: folder)
+
+        await manager.prune()
+        let after = FolderSnapshot(folder)
+        #expect(after.contents == before.contents, "our icon file is gone")
+        #expect(after.modified?.tv_sec == before.modified?.tv_sec)
+        #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
+        #expect(storedPictures().isEmpty)
+    }
+
+    @Test func foldersWithTheSameLookShareOneIcon() async throws {
+        let folders = try ["S1", "S2", "S3"].map { try temp.folder($0) }
+        let images = Images()
+        await manager.onIconChange { _, change in
+            if case .written(let icon) = change { images.add(icon.image) }
+        }
+        _ = await manager.apply(imageAt: picture, to: folders)
+        #expect(images.all.count == 3)
+        #expect(images.all.allSatisfy { $0 === images.all[0] }, "drawn once")
+    }
+
     @Test func sharesOnePictureBetweenFolders() async throws {
         let folders = try ["A", "B", "C"].map { try temp.folder($0) }
         let outcomes = await manager.apply(imageAt: picture, to: folders)
@@ -463,25 +577,47 @@ import UniformTypeIdentifiers
         #expect(FolderInspector.hasCustomIcon(app), "the package was not touched")
     }
 
-    @Test func anUnreadableLibraryIsSetAsideAndItsPicturesKept() async throws {
+    @Test func anUnreadableLibraryIsSetAsideAndThePicturesItNamesKept() async throws {
         let folder = try temp.folder("Kept")
         _ = await manager.apply(imageAt: picture, to: [folder])
-        #expect(storedPictures().count == 1)
-        try Data("{ not json".utf8).write(to: libraryDirectory.appendingPathComponent("Library.json"))
+        let kept = try #require(storedPictures().first)
+        // Cut off halfway: not JSON any more, but the picture's name is still in it.
+        let index = libraryDirectory.appendingPathComponent("Library.json")
+        let text = try String(contentsOf: index, encoding: .utf8)
+        let cut = try #require(text.range(of: kept)?.upperBound)
+        try Data(text[..<cut].utf8).write(to: index)
 
         let reopened = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard)
         #expect(await reopened.managedFolderCount() == 0)
         let files = try FileManager.default.contentsOfDirectory(atPath: libraryDirectory.path)
         #expect(files.contains { $0.hasPrefix("Library-unreadable-") }, "the bad file is kept for later")
 
-        // Nothing cleans away pictures the unreadable list may still need.
+        // The picture the set-aside list names stays; everything else is cleaned up as usual.
         await reopened.prune()
         let other = try temp.folder("Other")
         let png = temp.file("other.png")
         TestImages.write(TestImages.solid(width: 50, height: 50, red: 0, green: 0, blue: 1), to: png, type: .png)
         _ = await reopened.apply(imageAt: png, to: [other])
-        _ = await reopened.removeImage(from: [other])
         #expect(storedPictures().count == 2)
+        _ = await reopened.removeImage(from: [other])
+        #expect(storedPictures() == [kept])
+    }
+
+    @Test func aNewerLibraryIsLeftAloneEvenWhenItsRecordsLookDifferent() async throws {
+        let index = libraryDirectory.appendingPathComponent("Library.json")
+        let newer = Data(#"{"version": 99, "records": [{"somethingElse": 1}]}"#.utf8)
+        try newer.write(to: index)
+
+        let reopened = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard)
+        let folder = try temp.folder("Fresh")
+        _ = await reopened.apply(imageAt: picture, to: [folder])
+        #expect(FolderInspector.hasCustomIcon(folder), "the app keeps working")
+        _ = await reopened.removeImage(from: [folder])
+        await reopened.prune()
+        #expect(try Data(contentsOf: index) == newer)
+        let files = try FileManager.default.contentsOfDirectory(atPath: libraryDirectory.path)
+        #expect(!files.contains { $0.hasPrefix("Library-unreadable-") }, "not taken for a broken list")
+        #expect(storedPictures().count == 1, "its pictures are never deleted")
     }
 
     @Test func aLibraryFromANewerVersionIsNeverOverwritten() async throws {
@@ -557,4 +693,20 @@ import UniformTypeIdentifiers
         _ = await manager.apply(imageAt: svg, to: [folder])
         #expect(storedPictures().first?.hasSuffix(".svg") == true)
     }
+}
+
+
+/// Collects what a handler on another task found.
+private final class Checks: @unchecked Sendable {
+    private let lock = NSLock()
+    private var collected: [Bool] = []
+    func add(_ result: Bool) { lock.withLock { collected.append(result) } }
+    var results: [Bool] { lock.withLock { collected } }
+}
+
+private final class Images: @unchecked Sendable {
+    private let lock = NSLock()
+    private var collected: [NSImage] = []
+    func add(_ image: NSImage) { lock.withLock { collected.append(image) } }
+    var all: [NSImage] { lock.withLock { collected } }
 }

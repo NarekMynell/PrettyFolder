@@ -35,12 +35,20 @@ struct FolderLibrary {
         var records: [FolderRecord]
     }
 
+    /// Just the version, which every list has, whatever its records look like.
+    private struct Header: Decodable {
+        var version: Int
+    }
+
     let directory: URL
     private(set) var records: [UUID: FolderRecord] = [:]
 
-    /// The list was written by a newer PrettyFolder: use it, but never overwrite it or
-    /// delete pictures it may need.
+    /// The list was written by a newer PrettyFolder: use what of it can be read, but never
+    /// overwrite it or delete pictures it may need.
     private(set) var isReadOnly = false
+    /// Pictures named in lists that couldn't be read and were set aside. They stay, so such
+    /// a list can still be put right by hand; every other picture is cleaned up as usual.
+    private var setAsidePictures: Set<String> = []
 
     var picturesDirectory: URL { directory.appendingPathComponent("Pictures", isDirectory: true) }
     private var indexURL: URL { directory.appendingPathComponent("Library.json", isDirectory: false) }
@@ -48,28 +56,54 @@ struct FolderLibrary {
 
     init(directory: URL) {
         self.directory = directory
+        load()
+        setAsidePictures = Self.pictures(namedInListsSetAsideIn: directory)
+    }
+
+    private mutating func load() {
         guard FileManager.default.fileExists(atPath: indexURL.path) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {
-            let snapshot = try decoder.decode(Snapshot.self, from: Data(contentsOf: indexURL))
+            let data = try Data(contentsOf: indexURL)
+            // A newer PrettyFolder may have changed what its records look like: tell by the
+            // version first, so its list is never taken for a broken one.
+            if let header = try? decoder.decode(Header.self, from: data), header.version > Snapshot.currentVersion {
+                isReadOnly = true
+                if let snapshot = try? decoder.decode(Snapshot.self, from: data) {
+                    records = Dictionary(snapshot.records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                }
+                return
+            }
+            let snapshot = try decoder.decode(Snapshot.self, from: data)
             records = Dictionary(snapshot.records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            isReadOnly = snapshot.version > Snapshot.currentVersion
         } catch {
             // Don't let one bad file wipe everything: keep it next to the new one for a
-            // closer look, and start over. Its pictures stay (see `keepsAllPictures`).
+            // closer look, and start over. The pictures it names stay.
             let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
             let aside = directory.appendingPathComponent(Self.unreadablePrefix + stamp + ".json")
             try? FileManager.default.moveItem(at: indexURL, to: aside)
         }
     }
 
-    /// While a list that couldn't be read is lying around, no stored picture is deleted:
-    /// any of them may belong to it.
-    private var keepsAllPictures: Bool {
-        if isReadOnly { return true }
+    /// The stored pictures that lists set aside as unreadable mention, found by their names
+    /// (a content hash and an extension) however broken the rest of the file is.
+    private static func pictures(namedInListsSetAsideIn directory: URL) -> Set<String> {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        return files.contains { $0.hasPrefix(Self.unreadablePrefix) }
+        var names = Set<String>()
+        for file in files where file.hasPrefix(unreadablePrefix) {
+            guard let data = try? Data(contentsOf: directory.appendingPathComponent(file)) else { continue }
+            let text = String(decoding: data, as: UTF8.self)
+            for match in text.matches(of: /[0-9a-f]{64}\.[A-Za-z0-9]+/) {
+                names.insert(String(match.output))
+            }
+        }
+        return names
+    }
+
+    /// Whether a stored picture must stay even though no record here uses it.
+    private func mustKeep(_ name: String) -> Bool {
+        isReadOnly || setAsidePictures.contains(name)
     }
 
     func record(_ id: UUID) -> FolderRecord? { records[id] }
@@ -100,8 +134,7 @@ struct FolderLibrary {
     /// Stores bytes under their hash and returns the file name.
     func storePicture(_ data: Data, fileExtension: String) throws -> String {
         try FileManager.default.createDirectory(at: picturesDirectory, withIntermediateDirectories: true)
-        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        let name = digest + "." + fileExtension.lowercased()
+        let name = data.sha256 + "." + fileExtension.lowercased()
         let url = pictureURL(named: name)
         if !FileManager.default.fileExists(atPath: url.path) {
             try data.write(to: url, options: .atomic)
@@ -110,18 +143,25 @@ struct FolderLibrary {
     }
 
     func deletePictureIfUnused(_ name: String) {
-        guard !keepsAllPictures, !records.values.contains(where: { $0.pictureName == name }) else { return }
+        guard !mustKeep(name), !records.values.contains(where: { $0.pictureName == name }) else { return }
         try? FileManager.default.removeItem(at: pictureURL(named: name))
     }
 
     /// Removes stored pictures that no record points to (left over after a crash, say).
     func collectGarbage() {
-        guard !keepsAllPictures else { return }
+        guard !isReadOnly else { return }
         let used = Set(records.values.map(\.pictureName))
         let files = (try? FileManager.default.contentsOfDirectory(atPath: picturesDirectory.path)) ?? []
-        for name in files where !used.contains(name) && !name.hasPrefix(".") {
+        for name in files where !used.contains(name) && !mustKeep(name) && !name.hasPrefix(".") {
             try? FileManager.default.removeItem(at: pictureURL(named: name))
         }
+    }
+}
+
+extension Data {
+    /// The SHA-256 of the bytes, in lowercase hex.
+    var sha256: String {
+        SHA256.hash(data: self).map { String(format: "%02x", $0) }.joined()
     }
 }
 

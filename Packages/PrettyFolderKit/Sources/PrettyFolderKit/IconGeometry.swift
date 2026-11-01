@@ -37,11 +37,6 @@ public enum IconGeometry {
         )
     }
 
-    /// The visible part of the picture: the whole rectangle for `.fill`, the image itself for `.fit`.
-    public static func visibleRect(imageSize: CGSize, in target: CGRect, mode: FitMode) -> CGRect {
-        visibleRect(imageSize: imageSize, in: target, mode: mode, alignment: .centered, flipped: false)
-    }
-
     /// The visible part of the picture placed by `alignment`: the whole rectangle for `.fill`,
     /// the image itself for `.fit`.
     public static func visibleRect(
