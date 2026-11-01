@@ -45,6 +45,62 @@ import UniformTypeIdentifiers
         #expect(storedPictures().isEmpty)
     }
 
+    /// A folder with something in it and a date in the past, as folders usually are.
+    private func lived(in name: String) throws -> URL {
+        let folder = try temp.folder(name)
+        try Data("notes".utf8).write(to: folder.appendingPathComponent("notes.txt"))
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_600_000_000)], ofItemAtPath: folder.path)
+        return folder
+    }
+
+    @Test func takingThePictureOffLeavesNoTrace() async throws {
+        let folder = try lived(in: "Pristine")
+        let before = FolderSnapshot(folder)
+
+        // Everything that leaves something on a folder: a picture, a look of its own, a moved
+        // picture, a replaced picture (Finder is told through the Finder info).
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        try await manager.setStyle(IconStyle(x: 0, y: 0, width: 1, height: 0.6, mode: .fill), alignment: PictureAlignment(x: 0.1, y: 0.9), for: folder)
+        let other = temp.file("other.png")
+        TestImages.write(TestImages.solid(width: 300, height: 200, red: 0, green: 0.5, blue: 1), to: other, type: .png)
+        _ = await manager.apply(imageAt: other, to: [folder])
+        #expect(FolderSnapshot(folder) != before)
+        #expect(FolderSnapshot(folder).modified?.tv_sec == before.modified?.tv_sec, "the date never changes")
+
+        _ = await manager.removeImage(from: [folder])
+        #expect(FolderSnapshot(folder) == before, "attributes, contents and date as they were")
+        #expect(await manager.managedFolderCount() == 0)
+        #expect(storedPictures().isEmpty)
+        #expect((try libraryJSON()["records"] as? [Any])?.isEmpty == true)
+    }
+
+    @Test func removingEverythingLeavesNoTrace() async throws {
+        let folders = try ["First", "Second"].map(lived(in:))
+        let before = folders.map(FolderSnapshot.init)
+        _ = await manager.apply(imageAt: picture, to: folders)
+        try await manager.setStyle(nil, alignment: PictureAlignment(x: 0.5, y: 0), for: folders[1])
+        _ = await manager.removeAll()
+        #expect(folders.map(FolderSnapshot.init) == before)
+        #expect(storedPictures().isEmpty)
+        #expect((try libraryJSON()["records"] as? [Any])?.isEmpty == true)
+    }
+
+    @Test func aPictureTakenOffElsewhereIsForgottenWithoutATrace() async throws {
+        let folder = try lived(in: "Elsewhere")
+        let before = FolderSnapshot(folder)
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.8, height: 0.8, mode: .fit), alignment: .centered, for: folder)
+
+        // Finder's Get Info takes the icon off; the next tidy-up notices.
+        #expect(NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: []))
+        await manager.prune()
+        var after = FolderSnapshot(folder)
+        after.modified = before.modified  // Finder changed the date, not PrettyFolder
+        #expect(after == before)
+        #expect(await manager.managedFolderCount() == 0)
+        #expect(storedPictures().isEmpty)
+    }
+
     @Test func sharesOnePictureBetweenFolders() async throws {
         let folders = try ["A", "B", "C"].map { try temp.folder($0) }
         let outcomes = await manager.apply(imageAt: picture, to: folders)

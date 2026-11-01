@@ -83,3 +83,36 @@ enum TestImages {
         return (Int(bytes[0]), Int(bytes[1]), Int(bytes[2]), Int(bytes[3]))
     }
 }
+
+/// Everything about a folder that PrettyFolder could leave behind: its extended attributes
+/// (Finder info included), what is inside it (the hidden icon file included), and its date.
+struct FolderSnapshot: Equatable {
+    var attributes: [String: Data] = [:]
+    var contents: [String] = []
+    var modified: timespec?
+
+    init(_ folder: URL) {
+        folder.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return }
+            let size = listxattr(path, nil, 0, XATTR_NOFOLLOW)
+            if size > 0 {
+                var names = [CChar](repeating: 0, count: size)
+                let read = listxattr(path, &names, size, XATTR_NOFOLLOW)
+                for name in names[0..<max(read, 0)].split(separator: 0).map({ String(decoding: $0.map { UInt8(bitPattern: $0) }, as: UTF8.self) }) {
+                    let length = getxattr(path, name, nil, 0, 0, XATTR_NOFOLLOW)
+                    var value = [UInt8](repeating: 0, count: max(length, 0))
+                    _ = getxattr(path, name, &value, value.count, 0, XATTR_NOFOLLOW)
+                    attributes[name] = Data(value)
+                }
+            }
+            var info = stat()
+            if lstat(path, &info) == 0 { modified = info.st_mtimespec }
+        }
+        contents = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
+    }
+
+    static func == (a: FolderSnapshot, b: FolderSnapshot) -> Bool {
+        a.attributes == b.attributes && a.contents == b.contents
+            && a.modified?.tv_sec == b.modified?.tv_sec && a.modified?.tv_nsec == b.modified?.tv_nsec
+    }
+}
