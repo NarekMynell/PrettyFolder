@@ -13,6 +13,8 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
     var pictureName: String
     /// The folder's own look; `nil` means it follows the default look.
     public var style: IconStyle?
+    /// Where the picture sits in the look's rectangle; `nil` in the middle.
+    public var alignment: PictureAlignment?
     /// SHA-256 of the icon resource PrettyFolder wrote. If the folder's icon no longer
     /// matches, somebody else changed it and PrettyFolder keeps its hands off.
     var iconDigest: String

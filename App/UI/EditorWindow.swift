@@ -181,14 +181,15 @@ private struct EditorView: View {
                 .fill(Color.primary.opacity(0.045))
             StyleEditor(
                 style: $model.style,
+                alignment: $model.alignment,
                 guides: $model.guides,
                 isAdjusting: $model.isAdjusting,
                 picture: model.picture,
                 isEnabled: model.canEdit,
+                movesPicture: model.movesPicture,
                 side: editorSide,
                 onBegin: { model.beginChange() },
-                onCommit: { model.commit(from: $0) },
-                onReset: { model.reset() }
+                onCommit: { model.commit() }
             )
             if model.isEditingFolders && !model.hasPicture {
                 addButton

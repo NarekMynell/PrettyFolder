@@ -17,7 +17,7 @@ import Testing
     }
 
     @Test func silhouetteIsTheFolderWithoutItsShadow() throws {
-        let mask = try #require(renderer.silhouette(pixelSize: 256))
+        let mask = try #require(renderer.surface(pixelSize: 256)?.silhouette)
         #expect(mask.width == 256 && mask.height == 256)
         let shape = FolderArtwork.shape
         let inside = TestImages.pixel(mask, x: 128, y: Int(shape.front.midY * 256))
@@ -90,6 +90,71 @@ import Testing
         let style = IconStyle(x: 0.2, y: 0.4, width: 0.6, height: 0.4, mode: .fill)
         let icon = try #require(renderer.render(picture, style: style, pixelSize: 1024))
         #expect(isRed(TestImages.pixel(icon, x: 512, y: 600)))
+    }
+
+    @Test func shadingLeavesTheMiddleOfTheFrontAlone() throws {
+        let shape = FolderArtwork.shape
+        for side in IconRenderer.pixelSizes {
+            let shading = try #require(renderer.surface(pixelSize: side)?.shading, "size \(side)")
+            let unit = Double(side)
+            for (x, y) in [(0.5, shape.front.midY), (0.25, shape.front.minY + 0.15), (0.75, shape.bounds.maxY - 0.12)] {
+                // The small sizes are drawn by hand, a level or so off a smooth light: below 1%.
+                let strength = TestImages.pixel(shading, x: Int(x * unit), y: Int(y * unit)).a
+                #expect(side >= 128 ? strength == 0 : strength <= 2, "size \(side) at \(x), \(y)")
+            }
+        }
+    }
+
+    @Test func aPictureAcrossTheFolderShowsItsDepth() throws {
+        // A plain gray picture over the whole folder, like a sheet laid on both its parts.
+        let gray = SourceImage(bitmap: TestImages.solid(width: 100, height: 100, red: 0.6, green: 0.6, blue: 0.6))
+        let everywhere = IconStyle(x: 0, y: 0, width: 1, height: 1, mode: .fill)
+        let icon = try #require(renderer.render(gray, style: everywhere, pixelSize: 512))
+        let plain = try #require(renderer.render(nil, style: .standard, pixelSize: 512))
+        let shape = FolderArtwork.shape
+        let frontTop = Int(shape.front.minY * 512)
+        let back = (x: 256, y: frontTop - 4), edge = (x: 256, y: frontTop + 1)
+        let front = (x: 256, y: frontTop + 30), middle = (x: 256, y: Int(shape.front.midY * 512))
+        func brightness(_ image: CGImage, _ point: (x: Int, y: Int)) -> Double {
+            let pixel = TestImages.pixel(image, x: point.x, y: point.y)
+            return 0.299 * Double(pixel.r) + 0.587 * Double(pixel.g) + 0.114 * Double(pixel.b)
+        }
+        // Darker on the back and lighter along the front's top edge, as on the folder itself.
+        #expect(brightness(icon, middle) > 150 && brightness(icon, middle) < 156, "the front's middle keeps the picture's color")
+        #expect(brightness(icon, front) > 150 && brightness(icon, front) < 156)
+        let folderBack = brightness(plain, back) / brightness(plain, front)
+        let pictureBack = brightness(icon, back) / brightness(icon, front)
+        #expect(pictureBack < 0.85 && abs(pictureBack - folderBack) < 0.03, "\(pictureBack) vs \(folderBack)")
+        #expect(brightness(icon, edge) > brightness(icon, front) + 5)
+    }
+
+    @Test func seeThroughPicturesLeaveTheFolderAsItIs() throws {
+        let clear = SourceImage(bitmap: TestImages.solid(width: 100, height: 100, red: 1, green: 1, blue: 1, alpha: 0))
+        let everywhere = IconStyle(x: 0, y: 0, width: 1, height: 1, mode: .fill)
+        let icon = try #require(renderer.render(clear, style: everywhere, pixelSize: 128))
+        let plain = try #require(renderer.render(nil, style: .standard, pixelSize: 128))
+        for (x, y) in [(64, 30), (64, 40), (64, 90), (20, 60)] {
+            #expect(TestImages.pixel(icon, x: x, y: y) == TestImages.pixel(plain, x: x, y: y), "pixel \(x),\(y)")
+        }
+    }
+
+    @Test func alignmentPicksThePartThatShows() throws {
+        // Red on the left half, blue on the right, filling a square: only one half fits.
+        let context = try #require(CGContext(
+            data: nil, width: 200, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ))
+        context.setFillColor(CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+        context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 100, y: 0, width: 100, height: 100))
+        let picture = SourceImage(bitmap: try #require(context.makeImage()))
+        let style = IconStyle(x: 0.3, y: 0.4, width: 0.4, height: 0.4, mode: .fill)
+
+        let left = try #require(renderer.render(picture, style: style, alignment: PictureAlignment(x: 0, y: 0.5), pixelSize: 256))
+        let right = try #require(renderer.render(picture, style: style, alignment: PictureAlignment(x: 1, y: 0.5), pixelSize: 256))
+        #expect(isRed(TestImages.pixel(left, x: 128, y: 150)))
+        #expect(TestImages.pixel(right, x: 128, y: 150).b > 200 && TestImages.pixel(right, x: 128, y: 150).r < 60)
     }
 
     private func isRed(_ pixel: (r: Int, g: Int, b: Int, a: Int)) -> Bool {

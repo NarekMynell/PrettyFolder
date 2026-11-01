@@ -11,10 +11,13 @@ public struct SnapGuide: Hashable, Sendable {
 
     public let axis: Axis
     public let position: Double
+    /// Where the line runs along its axis; `nil` for all the way across the icon.
+    public let extent: ClosedRange<Double>?
 
-    public init(_ axis: Axis, at position: Double) {
+    public init(_ axis: Axis, at position: Double, along extent: ClosedRange<Double>? = nil) {
         self.axis = axis
         self.position = position
+        self.extent = extent
     }
 }
 
@@ -77,6 +80,22 @@ public struct IconSnapping: Sendable {
                                 symmetric: symmetric, lines: rows, center: centerY)
         let result = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
         return (result, guides(for: result))
+    }
+
+    /// A picture moved inside its rectangle `rect`, snapped: on each axis it can move along,
+    /// it sticks to the middle once its own middle comes close. The guides run across `rect`.
+    public func pan(
+        _ alignment: PictureAlignment, imageSize: CGSize, in rect: CGRect, mode: FitMode
+    ) -> (alignment: PictureAlignment, guides: [SnapGuide]) {
+        let room = IconGeometry.room(imageSize: imageSize, in: rect, mode: mode)
+        let movesX = room.width > 1e-9, movesY = room.height > 1e-9
+        // The picture's middle is `room × (alignment − ½)` away from the rectangle's.
+        let x = movesX && abs(room.width * (alignment.x - 0.5)) <= threshold ? 0.5 : alignment.x
+        let y = movesY && abs(room.height * (alignment.y - 0.5)) <= threshold ? 0.5 : alignment.y
+        var guides: [SnapGuide] = []
+        if movesX, x == 0.5 { guides.append(SnapGuide(.vertical, at: rect.midX, along: rect.minY...rect.maxY)) }
+        if movesY, y == 0.5 { guides.append(SnapGuide(.horizontal, at: rect.midY, along: rect.minX...rect.maxX)) }
+        return (PictureAlignment(x: x, y: y), guides)
     }
 
     /// Every column and row that one of the rectangle's edges or centers lies on.

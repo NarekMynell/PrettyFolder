@@ -28,6 +28,8 @@ public struct FolderLook: Sendable, Equatable {
     public let pictureURL: URL
     /// The style currently in effect.
     public let style: IconStyle
+    /// Where the picture sits in the style's rectangle.
+    public let alignment: PictureAlignment
     /// `true` when the folder follows the default look.
     public let followsDefault: Bool
 }
@@ -110,7 +112,8 @@ public actor FolderImageManager {
 
     // MARK: - Putting pictures on folders
 
-    /// Puts the picture in `imageURL` on every folder. Folders keep their own look if they have one.
+    /// Puts the picture in `imageURL` on every folder. Folders keep their own look if they
+    /// have one; the picture starts in the middle of it.
     public func apply(imageAt imageURL: URL, to folders: [URL]) async -> [FolderOutcome] {
         let type = (try? imageURL.resourceValues(forKeys: [.contentTypeKey]))?.contentType
             ?? UTType(filenameExtension: imageURL.pathExtension)
@@ -158,10 +161,11 @@ public actor FolderImageManager {
         for folder in unique(folders) {
             do {
                 try FolderInspector.validate(folder)
-                // Keep the folder's own look when it already had a picture from us.
+                // Keep the folder's own look when it already had a picture from us. Where the
+                // old picture sat in it says nothing about the new one.
                 let existing = ownedRecord(for: folder)
                 let style = existing?.style
-                let icon = try writeIcon(picture, style: style ?? defaultStyle, to: folder)
+                let icon = try writeIcon(picture, style: style ?? defaultStyle, alignment: .centered, to: folder)
                 written.append(icon)
                 let now = Date()
                 let record = FolderRecord(
@@ -247,18 +251,21 @@ public actor FolderImageManager {
             folder: folder,
             pictureURL: library.pictureURL(named: record.pictureName),
             style: record.style ?? defaultStyle,
+            alignment: record.alignment ?? .centered,
             followsDefault: record.style == nil
         )
     }
 
-    /// Changes one folder's look. Pass `nil` to make it follow the default look again.
-    public func setStyle(_ style: IconStyle?, for folder: URL) async throws {
+    /// Changes one folder's look and where its picture sits in it. Pass `nil` for the look to
+    /// make the folder follow the default look again; the picture stays where `alignment` says.
+    public func setStyle(_ style: IconStyle?, alignment: PictureAlignment, for folder: URL) async throws {
         guard var record = ownedRecord(for: folder) else {
             throw FolderImageError.notManaged(displayName(folder))
         }
         let picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
         record.style = style
-        let icon = try writeIcon(picture, style: style ?? defaultStyle, to: folder)
+        record.alignment = alignment == .centered ? nil : alignment
+        let icon = try writeIcon(picture, style: style ?? defaultStyle, alignment: alignment, to: folder)
         record.iconDigest = icon.digest
         record.updated = Date()
         library.upsert(record)
@@ -392,7 +399,7 @@ public actor FolderImageManager {
                         picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
                         pictures[record.pictureName] = picture
                     }
-                    let icon = try writeIcon(picture, style: record.style ?? defaultStyle, to: folder)
+                    let icon = try writeIcon(picture, style: record.style ?? defaultStyle, alignment: record.alignment ?? .centered, to: folder)
                     record.iconDigest = icon.digest
                     record.updated = Date()
                     library.upsert(record)
@@ -421,8 +428,8 @@ public actor FolderImageManager {
     }
 
     /// Renders the icon and writes it. Finder isn't told yet: see `show`.
-    private func writeIcon(_ picture: SourceImage, style: IconStyle, to folder: URL) throws -> WrittenIcon {
-        let icon: NSImage? = autoreleasepool { renderer.makeIcon(with: picture, style: style) }
+    private func writeIcon(_ picture: SourceImage, style: IconStyle, alignment: PictureAlignment, to folder: URL) throws -> WrittenIcon {
+        let icon: NSImage? = autoreleasepool { renderer.makeIcon(with: picture, style: style, alignment: alignment) }
         guard let icon else { throw FolderImageError.renderFailed }
         let replacing = FolderInspector.hasCustomIcon(folder)
         let modified = FolderMetadata.modificationDate(of: folder)
@@ -479,7 +486,7 @@ public actor FolderImageManager {
             record = FolderRecord(
                 id: UUID(), bookmark: bookmark, lastKnownPath: FolderInspector.canonicalPath(folder.path),
                 pictureName: record.pictureName,
-                style: record.style, iconDigest: record.iconDigest, created: now, updated: now
+                style: record.style, alignment: record.alignment, iconDigest: record.iconDigest, created: now, updated: now
             )
             ExtendedAttributes.set(Data(record.id.uuidString.utf8), named: Self.markerAttribute, at: folder)
         } else {

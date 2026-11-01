@@ -74,3 +74,29 @@ public struct IconStyle: Codable, Sendable, Hashable {
         y = min(max(y, 0), 1 - height)
     }
 }
+
+/// Where a picture sits in its rectangle when the two aren't the same shape: on each axis
+/// from 0 (against the left or top edge) to 1 (against the right or bottom edge), with 0.5
+/// in the middle. With Fill it picks the part of the picture that shows; with Fit, where
+/// the picture sits. It belongs to one folder's picture: a new picture starts in the middle.
+public struct PictureAlignment: Codable, Sendable, Hashable {
+    public let x: Double
+    public let y: Double
+
+    public static let centered = PictureAlignment(x: 0.5, y: 0.5)
+
+    public init(x: Double, y: Double) {
+        self.x = Self.clamped(x)
+        self.y = Self.clamped(y)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(x: try container.decode(Double.self, forKey: .x), y: try container.decode(Double.self, forKey: .y))
+    }
+
+    /// Between the edges; anything that isn't a finite number is the middle.
+    private static func clamped(_ value: Double) -> Double {
+        value.isFinite ? min(max(value, 0), 1) : 0.5
+    }
+}

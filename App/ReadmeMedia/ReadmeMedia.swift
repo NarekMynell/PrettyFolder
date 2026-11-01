@@ -150,8 +150,8 @@ final class Studio {
     }
 
     /// The icon PrettyFolder makes: the folder with `picture` on it, or the plain folder.
-    func icon(_ picture: SourceImage?, style: IconStyle = .standard, side: CGFloat) -> CGImage {
-        renderer.render(picture, style: style, pixelSize: Int((side * Stage.scale).rounded()))!
+    func icon(_ picture: SourceImage?, style: IconStyle = .standard, alignment: PictureAlignment = .centered, side: CGFloat) -> CGImage {
+        renderer.render(picture, style: style, alignment: alignment, pixelSize: Int((side * Stage.scale).rounded()))!
     }
 
     // MARK: - Windows and views
@@ -216,7 +216,8 @@ final class Studio {
     /// Where the window's controls are, in points from its top-left corner, found in its
     /// view hierarchy so the scenes can point at them without repeating its layout.
     struct WindowControls {
-        /// The folder icon being edited.
+        /// The folder icon being edited, and where it is.
+        var editorView: StyleEditorView
         var editor: CGRect
         /// The Fill / Fit switch.
         var scaling: CGRect
@@ -235,24 +236,16 @@ final class Studio {
             let frame = view.convert(view.bounds, to: nil)
             return CGRect(x: frame.minX, y: window.frame.height - frame.maxY, width: frame.width, height: frame.height)
         }
-        // The stage is the drop target around the folder; the folder sits in its middle.
-        guard let stage = views.first(where: { "\(type(of: $0))".contains("DraggingDestinationView") }).map(frame),
+        guard let editor = views.compactMap({ $0 as? StyleEditorView }).first,
               let scaling = views.compactMap({ $0 as? NSSegmentedControl })
                 .first(where: { $0.segmentCount == 2 && $0.label(forSegment: 1) == "Fit" }).map(frame)
         else { return nil }
-        let side = Self.editorSide
         let buttons = views.filter { "\(type(of: $0))".contains("FocusRing") }.map(frame)
             .filter { abs($0.midY - scaling.midY) < 8 }
             .sorted { $0.minX < $1.minX }
-        return WindowControls(
-            editor: CGRect(x: stage.midX - side / 2, y: stage.midY - side / 2, width: side, height: side),
-            scaling: scaling,
-            buttons: buttons
-        )
+        let margin = StyleEditorView.margin
+        return WindowControls(editorView: editor, editor: frame(editor).insetBy(dx: margin, dy: margin), scaling: scaling, buttons: buttons)
     }
-
-    /// The size of the folder in the window (`EditorView` lays it out at this size).
-    static let editorSide: CGFloat = 300
 
     // MARK: - Output
 

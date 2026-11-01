@@ -82,7 +82,7 @@ import UniformTypeIdentifiers
         let before = try #require(FolderInspector.iconResource(of: folder))
 
         let custom = IconStyle(x: 0.05, y: 0.05, width: 0.5, height: 0.5, mode: .fit)
-        try await manager.setStyle(custom, for: folder)
+        try await manager.setStyle(custom, alignment: .centered, for: folder)
         let look = try #require(await manager.look(for: folder))
         #expect(look.style == custom && !look.followsDefault)
         #expect(FolderInspector.iconResource(of: folder) != before)
@@ -94,7 +94,7 @@ import UniformTypeIdentifiers
         #expect(await manager.look(for: folder)?.style == custom)
         #expect(storedPictures().count == 1, "the replaced picture is cleaned up")
 
-        try await manager.setStyle(nil, for: folder)
+        try await manager.setStyle(nil, alignment: .centered, for: folder)
         #expect(await manager.look(for: folder)?.followsDefault == true)
     }
 
@@ -113,7 +113,7 @@ import UniformTypeIdentifiers
         _ = await manager.apply(imageAt: picture, to: [folder])
         #expect(Self.changeCount(folder) == 0, "a first icon shows by itself")
 
-        try await manager.setStyle(IconStyle(x: 0.1, y: 0.2, width: 0.6, height: 0.5, mode: .fit), for: folder)
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.2, width: 0.6, height: 0.5, mode: .fit), alignment: .centered, for: folder)
         #expect(Self.changeCount(folder) == 1)
         let other = temp.file("other.png")
         TestImages.write(TestImages.solid(width: 300, height: 200, red: 0, green: 0.5, blue: 1), to: other, type: .png)
@@ -145,7 +145,7 @@ import UniformTypeIdentifiers
             }
         }
         _ = await manager.apply(imageAt: picture, to: [folder])
-        try await manager.setStyle(IconStyle(x: 0, y: 0, width: 1, height: 1, mode: .fill), for: folder)
+        try await manager.setStyle(IconStyle(x: 0, y: 0, width: 1, height: 1, mode: .fill), alignment: .centered, for: folder)
         #expect(Self.changeCount(folder) == 1)
         _ = await manager.removeImage(from: [folder])
 
@@ -164,7 +164,7 @@ import UniformTypeIdentifiers
         await manager.onIconChange { url, change in
             if case .written = change { _ = await manager.removeImage(from: [url]) }
         }
-        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.5, height: 0.5, mode: .fill), for: folder)
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.5, height: 0.5, mode: .fill), alignment: .centered, for: folder)
         #expect(!FolderInspector.hasCustomIcon(folder))
         #expect(Self.changeCount(folder) == 0)
         #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
@@ -183,7 +183,7 @@ import UniformTypeIdentifiers
     @Test func aPictureRemovedElsewhereLeavesNothingBehind() async throws {
         let folder = try temp.folder("Elsewhere")
         _ = await manager.apply(imageAt: picture, to: [folder])
-        try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), for: folder)
+        try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), alignment: .centered, for: folder)
         #expect(Self.changeCount(folder) == 1)
         // As Get Info does it.
         NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: [])
@@ -200,7 +200,7 @@ import UniformTypeIdentifiers
 
         _ = await manager.apply(imageAt: picture, to: [folder])
         #expect(modificationDate(folder) == past)
-        try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), for: folder)
+        try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), alignment: .centered, for: folder)
         #expect(modificationDate(folder) == past)
         _ = await manager.removeImage(from: [folder])
         #expect(modificationDate(folder) == past)
@@ -241,7 +241,7 @@ import UniformTypeIdentifiers
         let pinned = try temp.folder("Pinned")
         _ = await manager.apply(imageAt: picture, to: [follower, pinned])
         let pinnedStyle = IconStyle(x: 0, y: 0, width: 0.3, height: 0.3, mode: .fill)
-        try await manager.setStyle(pinnedStyle, for: pinned)
+        try await manager.setStyle(pinnedStyle, alignment: .centered, for: pinned)
         let pinnedIcon = FolderInspector.iconResource(of: pinned)
         let followerIcon = FolderInspector.iconResource(of: follower)
 
@@ -308,7 +308,7 @@ import UniformTypeIdentifiers
         let renamed = temp.url.appendingPathComponent("After", isDirectory: true)
         try FileManager.default.moveItem(at: folder, to: renamed)
 
-        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.4, height: 0.4, mode: .fill), for: renamed)
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.4, height: 0.4, mode: .fill), alignment: .centered, for: renamed)
         await manager.prune()
         #expect(await manager.managedFolderCount() == 1)
         // The new path sticks; it isn't overwritten by the copy of the record setStyle worked on.
@@ -322,7 +322,7 @@ import UniformTypeIdentifiers
         try FileManager.default.copyItem(at: original, to: copy)
 
         let style = IconStyle(x: 0.3, y: 0.3, width: 0.3, height: 0.3, mode: .fit)
-        try await manager.setStyle(style, for: copy)
+        try await manager.setStyle(style, alignment: .centered, for: copy)
         #expect(await manager.managedFolderCount() == 2)
         #expect(await manager.look(for: original)?.followsDefault == true)
         #expect(await manager.look(for: copy)?.style == style)
@@ -352,7 +352,7 @@ import UniformTypeIdentifiers
         let original = try temp.folder("Moving")
         let style = IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fit)
         _ = await manager.apply(imageAt: picture, to: [original])
-        try await manager.setStyle(style, for: original)
+        try await manager.setStyle(style, alignment: .centered, for: original)
         // Finder moves across disks by copying and then deleting the original.
         let moved = temp.url.appendingPathComponent("Moved", isDirectory: true)
         try FileManager.default.copyItem(at: original, to: moved)
@@ -438,6 +438,35 @@ import UniformTypeIdentifiers
         _ = await reopened.apply(imageAt: picture, to: [folder])
         #expect(FolderInspector.hasCustomIcon(folder), "the app keeps working")
         #expect(try Data(contentsOf: index) == newer)
+    }
+
+    @Test func aMovedPictureStaysPutUntilANewPictureComes() async throws {
+        let folder = try temp.folder("Moved")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let centered = FolderInspector.iconResource(of: folder)
+
+        // Moving the picture doesn't give the folder a look of its own.
+        let low = PictureAlignment(x: 0.5, y: 1)
+        try await manager.setStyle(nil, alignment: low, for: folder)
+        var look = try #require(await manager.look(for: folder))
+        #expect(look.alignment == low && look.followsDefault)
+        #expect(FolderInspector.iconResource(of: folder) != centered)
+
+        // It stays where it was through a new default look and a redraw.
+        let newDefault = IconStyle(x: 0.1, y: 0.3, width: 0.8, height: 0.3, mode: .fill)
+        _ = await manager.setDefaultStyle(newDefault, updateExisting: true)
+        _ = await manager.redrawAll()
+        look = try #require(await manager.look(for: folder))
+        #expect(look.alignment == low && look.style == newDefault)
+        let reopened = FolderImageManager(directory: libraryDirectory, defaultStyle: newDefault)
+        #expect(await reopened.look(for: folder)?.alignment == low)
+
+        // A new picture starts in the middle, in the folder's own look if it has one.
+        let own = IconStyle(x: 0.2, y: 0.3, width: 0.6, height: 0.4, mode: .fit)
+        try await manager.setStyle(own, alignment: low, for: folder)
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        look = try #require(await manager.look(for: folder))
+        #expect(look.alignment == .centered && look.style == own)
     }
 
     @Test func removeAllCleansUp() async throws {

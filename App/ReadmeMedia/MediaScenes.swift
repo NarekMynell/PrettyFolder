@@ -246,8 +246,8 @@ extension Studio {
 
     // MARK: - The window
 
-    /// Moving and resizing the picture in the window, with the folder on the Desktop
-    /// following every change.
+    /// Moving and resizing the picture in the window, and moving the picture inside its
+    /// frame, with the folder on the Desktop following every change.
     func renderWindow() async throws {
         let size = CGSize(width: 780, height: 540)
         let wallpaper = Scenery.wallpaper(size: size)
@@ -265,7 +265,7 @@ extension Studio {
         guard let controls = controls(of: window), controls.buttons.count == 4 else {
             throw MediaError("Couldn't find the window's controls")
         }
-        let editor = controls.editor, scaling = controls.scaling
+        let editor = controls.editor, scaling = controls.scaling, editorView = controls.editorView
 
         // Choose, reset, remove.
         let reset = controls.buttons[1]
@@ -279,82 +279,117 @@ extension Studio {
         func pictureRect(_ style: IconStyle) -> CGRect {
             IconGeometry.targetRect(for: style, canvas: side, flipped: true).offsetBy(dx: editor.minX, dy: editor.minY)
         }
+        /// The editor's own view of a point in the window: what is there, the way it decides.
+        func editorPoint(_ local: CGPoint) -> CGPoint {
+            editorView.convert(NSPoint(x: local.x, y: windowSize.height - local.y), from: nil)
+        }
 
         // The folder on the Desktop, big enough to see it change.
         let folderFrame = CGRect(x: 92, y: 168, width: 150, height: 150)
-        var desktopStyle = model.style
+        var desktop = (style: model.style, alignment: model.alignment)
         var previousIcon: CGImage?
-        var currentIcon = icon(rocket, style: desktopStyle, side: folderFrame.width)
+        var currentIcon = icon(rocket, style: desktop.style, alignment: desktop.alignment, side: folderFrame.width)
         var iconChangedAt = -10.0
 
-        // Where the pointer goes: grab the picture and move it until it snaps; pull its
-        // top-left corner over the folder's tab, where it takes the folder's shape; switch
-        // to Fit; and back to the default look.
+        // Where the pointer goes: take the frame by its top edge and move it until it snaps;
+        // pull its top-left corner over the folder's tab, where it takes the folder's shape;
+        // move the picture inside it; switch to Fit; and back to the default look.
+        let snapping = StyleEditor.snapping(side: side)
         let start = model.style
-        let grab = onStage(CGPoint(x: pictureRect(start).midX, y: pictureRect(start).midY))
-        let moveFree = CGPoint(x: grab.x - 52, y: grab.y - 10)
-        let moveSnapped = CGPoint(x: grab.x + 2, y: grab.y - (start.y - FolderArtwork.shape.front.minY) * side - 2)
+        let edge = onStage(CGPoint(x: pictureRect(start).minX + pictureRect(start).width * 0.7, y: pictureRect(start).minY + 1))
+        let lift = (start.y - FolderArtwork.shape.front.minY) * side
+        let moveFree = CGPoint(x: edge.x - 52, y: edge.y - 10)
+        let moveSnapped = CGPoint(x: edge.x + 2, y: edge.y - lift - 2)
         let moved = IconStyle(rect: start.rect.offsetBy(dx: 0, dy: FolderArtwork.shape.front.minY - start.y), mode: start.mode)
         let corner = onStage(CGPoint(x: pictureRect(moved).minX, y: pictureRect(moved).minY))
         let stretched = onStage(CGPoint(x: editor.minX + 3, y: editor.minY + 3))
+        // Where the stretch will end, worked out the way the drag below does it.
+        let stretchedRect = snapping.resize(
+            ResizeHandle.topLeft.resize(moved.rect, dx: (stretched.x - corner.x) / side, dy: (stretched.y - corner.y) / side, keepRatio: false, fromCenter: false),
+            moving: ResizeHandle.topLeft.edges, symmetric: false
+        ).rect
+        let grab = onStage(CGPoint(x: pictureRect(IconStyle(rect: stretchedRect, mode: start.mode)).midX + 24, y: pictureRect(IconStyle(rect: stretchedRect, mode: start.mode)).midY + 18))
+        let slid = CGPoint(x: grab.x - 34, y: grab.y + 2)
         let fit = onStage(CGPoint(x: scaling.maxX - scaling.width / 4, y: scaling.midY))
         let resetPoint = onStage(CGPoint(x: reset.midX, y: reset.midY))
 
         var path = PointerPath(start: CGPoint(x: 300, y: 470))
-        path.move(to: grab, from: 0.4, to: 1.2)
+        path.move(to: edge, from: 0.4, to: 1.2)
         path.move(to: moveFree, from: 1.5, to: 2.2, arc: 0.08)
         path.move(to: moveSnapped, from: 2.3, to: 3.1, arc: -0.06)
         path.move(to: corner, from: 3.8, to: 4.4)
         path.move(to: stretched, from: 4.6, to: 5.7, arc: 0)
-        path.move(to: fit, from: 6.3, to: 6.9)
-        path.move(to: resetPoint, from: 7.6, to: 8.2)
-        path.move(to: CGPoint(x: 300, y: 470), from: 9.0, to: 9.8)
+        path.move(to: grab, from: 6.3, to: 6.9)
+        path.move(to: slid, from: 7.2, to: 8.1, arc: 0.04)
+        path.move(to: fit, from: 8.8, to: 9.4)
+        path.move(to: resetPoint, from: 10.1, to: 10.7)
+        path.move(to: CGPoint(x: 300, y: 470), from: 11.5, to: 12.3)
 
-        // The editor's drags, the way its gestures handle them: the same resizing and
+        // The editor's drags, the way it handles them: the same moving, resizing and
         // snapping code, the same model. (A window off screen gets no mouse events.)
-        enum Grip { case none, picture, corner }
+        enum Grip { case none, edge, corner, picture }
         var grip = Grip.none
-        var gripStart = (style: start, pointer: CGPoint.zero)
-        let snapping = StyleEditor.snapping(side: side)
+        var gripStart = (style: start, alignment: model.alignment, pointer: CGPoint.zero)
         let sequence = try frameSequence("window")
-        for index in 0..<frameCount(10.6) {
+        for index in 0..<frameCount(13.1) {
             let t = Double(index) / Stage.framesPerSecond
             let pointer = path.position(at: t)
             let local = inWindow(pointer)
 
+            let wanted: Grip = switch t {
+            case 1.4..<3.3: .edge
+            case 4.5..<5.9: .corner
+            case 7.1..<8.3: .picture
+            default: .none
+            }
+            if wanted != grip {
+                if grip != .none {
+                    model.guides = []
+                    model.isAdjusting = false
+                    model.commit()
+                }
+                grip = wanted
+                if grip != .none {
+                    gripStart = (model.style, model.alignment, pointer)
+                    model.beginChange()
+                    model.isAdjusting = true
+                }
+            }
+            let dx = pointer.x - gripStart.pointer.x, dy = pointer.y - gripStart.pointer.y
             switch grip {
-            case .none where t >= 1.4 && t < 3.3, .none where t >= 4.5 && t < 5.9:
-                grip = t < 4 ? .picture : .corner
-                gripStart = (model.style, pointer)
-                model.isAdjusting = true
-            case .picture where t >= 3.3, .corner where t >= 5.9:
-                grip = .none
-                model.guides = []
-                model.isAdjusting = false
-                model.commit(from: gripStart.style)
-            case .picture, .corner:
-                let dx = (pointer.x - gripStart.pointer.x) / side
-                let dy = (pointer.y - gripStart.pointer.y) / side
-                let snapped = grip == .picture
-                    ? snapping.move(gripStart.style.rect.offsetBy(dx: dx, dy: dy))
-                    : snapping.resize(
-                        ResizeHandle.topLeft.resize(gripStart.style.rect, dx: dx, dy: dy, keepRatio: false, fromCenter: false),
-                        moving: ResizeHandle.topLeft.edges, symmetric: false
-                    )
+            case .edge:
+                let snapped = snapping.move(gripStart.style.rect.offsetBy(dx: dx / side, dy: dy / side))
                 model.style = IconStyle(rect: snapped.rect, mode: model.style.mode)
                 model.guides = snapped.guides
-            default:
-                break
+            case .corner:
+                let snapped = snapping.resize(
+                    ResizeHandle.topLeft.resize(gripStart.style.rect, dx: dx / side, dy: dy / side, keepRatio: false, fromCenter: false),
+                    moving: ResizeHandle.topLeft.edges, symmetric: false
+                )
+                model.style = IconStyle(rect: snapped.rect, mode: model.style.mode)
+                model.guides = snapped.guides
+            case .picture:
+                let target = IconGeometry.targetRect(for: model.style, canvas: side, flipped: true)
+                let slid = IconGeometry.alignment(gripStart.alignment, movedBy: CGSize(width: dx, height: dy), imageSize: rocket.size, in: target, mode: model.style.mode)
+                let snapped = snapping.pan(slid, imageSize: rocket.size, in: model.style.rect, mode: model.style.mode)
+                model.alignment = snapped.alignment
+                model.guides = snapped.guides
+            case .none:
+                // Pointing, not holding: the editor shows what is under the pointer.
+                editorView.mouseMoved(with: NSEvent.mouseEvent(
+                    with: .mouseMoved, location: NSPoint(x: local.x, y: windowSize.height - local.y), modifierFlags: [],
+                    timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0
+                )!)
             }
-            if index == frameCount(7.0) { model.setMode(.fit) }
-            if index == frameCount(8.3) { model.reset() }
+            if index == frameCount(9.5) { model.setMode(.fit) }
+            if index == frameCount(10.8) { model.reset() }
             await settle(window, milliseconds: 15)
 
             // The folder on the Desktop shows each change once it's written.
-            if grip == .none, model.style != desktopStyle {
-                desktopStyle = model.style
+            if grip == .none, model.style != desktop.style || model.alignment != desktop.alignment {
+                desktop = (model.style, model.alignment)
                 previousIcon = currentIcon
-                currentIcon = icon(rocket, style: desktopStyle, side: folderFrame.width)
+                currentIcon = icon(rocket, style: desktop.style, alignment: desktop.alignment, side: folderFrame.width)
                 iconChangedAt = t + 0.15
             }
 
@@ -370,18 +405,11 @@ extension Studio {
             Scenery.drawLabel("Moonshots", on: bitmap, below: folderFrame, selected: false)
             Scenery.drawWindow(snapshot(window), at: windowOrigin, size: windowSize, on: bitmap)
 
-            let cursor: NSCursor
-            switch grip {
-            case .picture: cursor = .closedHand
-            case .corner:
-                if #available(macOS 15, *) {
-                    cursor = .frameResize(position: .topLeft, directions: .all)
-                } else {
-                    cursor = .crosshair
-                }
-            case .none:
-                let rect = pictureRect(model.style).insetBy(dx: 4, dy: 4)
-                cursor = rect.contains(local) && model.canEdit ? .openHand : .arrow
+            let cursor: NSCursor = switch grip {
+            case .edge: .arrow
+            case .corner: ResizeHandle.topLeft.cursor
+            case .picture: .closedHand
+            case .none: editorView.cursor(for: editorView.part(at: editorPoint(local)))
             }
             Scenery.drawCursor(cursor, at: pointer, on: bitmap)
             try sequence.add(bitmap.image)

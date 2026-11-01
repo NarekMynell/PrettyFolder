@@ -36,8 +36,12 @@ final class EditorModel {
     private(set) var folderPicture: SourceImage?
     /// The look the editor shows for them: the first one's.
     private(set) var folderStyle: IconStyle
+    /// Where their picture sits in that look: the first one's.
+    private(set) var folderAlignment = PictureAlignment.centered
     /// Whether all of them follow the default look.
     private(set) var followsDefault = true
+    /// Whether all of their pictures sit in the middle of their rectangle.
+    private(set) var isPictureCentered = true
     /// Whether any of them has a custom icon at all, from PrettyFolder or not.
     private(set) var hasCustomIcon = false
 
@@ -55,15 +59,26 @@ final class EditorModel {
     /// Work on many folders at once, shown at the bottom of the window.
     let progress = BatchProgress()
 
-    /// Each folder's own look, or `nil` for one that follows the default look.
-    @ObservationIgnored private var looks: [URL: IconStyle?] = [:]
+    /// A folder's own look (`nil` when it follows the default look) and where its picture sits in it.
+    private struct Look: Equatable {
+        var style: IconStyle?
+        var alignment: PictureAlignment
+
+        static let standard = Look(style: nil, alignment: .centered)
+    }
+
+    /// Each folder's look.
+    @ObservationIgnored private var looks: [URL: Look] = [:]
     @ObservationIgnored private var folderPictureURL: URL?
     @ObservationIgnored private var loadGeneration = 0
     @ObservationIgnored private var writeGeneration = 0
     @ObservationIgnored private var writing: Task<Void, Never>?
     /// The editor's change in progress (a drag, a pinch, a burst of arrow keys): what it
-    /// was made in, and the look it started from.
-    @ObservationIgnored private var pendingChange: (scope: Scope, folders: [URL], start: IconStyle)?
+    /// was made in, and where it started from.
+    @ObservationIgnored private var pendingChange: (scope: Scope, folders: [URL], start: Placement)?
+
+    /// The look and where the picture sits in it, as the editor shows them.
+    private typealias Placement = (style: IconStyle, alignment: PictureAlignment)
     /// Learns how saving the default look ended: saved, or not.
     @ObservationIgnored private var afterSavingDefault: ((Bool) -> Void)?
 
@@ -102,8 +117,22 @@ final class EditorModel {
         }
     }
 
+    /// Where the picture sits in the look. Only the folders' own picture moves: the default
+    /// look always has it in the middle.
+    var alignment: PictureAlignment {
+        get { isEditingFolders ? folderAlignment : .centered }
+        set {
+            if isEditingFolders { folderAlignment = newValue }
+        }
+    }
+
     var canEdit: Bool { isEditingFolders ? hasPicture : true }
-    var canReset: Bool { isEditingFolders ? hasPicture && !followsDefault : defaultDraft != .standard }
+    var movesPicture: Bool { isEditingFolders && hasPicture }
+    var canReset: Bool {
+        isEditingFolders ? hasPicture && !(followsDefault && isPictureCentered) : defaultDraft != .standard
+    }
+
+    private var placement: Placement { (style, alignment) }
 
     // MARK: - Showing folders
 
@@ -118,7 +147,9 @@ final class EditorModel {
             folderPictureURL = nil
             hasCustomIcon = false
             followsDefault = true
+            isPictureCentered = true
             folderStyle = settings.defaultStyle
+            folderAlignment = .centered
         }
         scope = folders.isEmpty ? .standard : .folders
         reload()
@@ -153,9 +184,14 @@ final class EditorModel {
             hasCustomIcon = folders.contains(where: FolderInspector.hasCustomIcon)
             // A change in the editor, or one made since this started, is newer than what was read.
             if pendingChange == nil, writesSoFar == writeGeneration {
-                looks = Dictionary(found.map { ($0.folder, $0.look.followsDefault ? nil : $0.look.style) }, uniquingKeysWith: { first, _ in first })
+                looks = Dictionary(
+                    found.map { ($0.folder, Look(style: $0.look.followsDefault ? nil : $0.look.style, alignment: $0.look.alignment)) },
+                    uniquingKeysWith: { first, _ in first }
+                )
                 folderStyle = found.first?.look.style ?? settings.defaultStyle
+                folderAlignment = found.first?.look.alignment ?? .centered
                 followsDefault = found.allSatisfy(\.look.followsDefault)
+                isPictureCentered = found.allSatisfy { $0.look.alignment == .centered }
             }
             if let first = found.first?.look {
                 if first.pictureURL != folderPictureURL {
@@ -175,16 +211,16 @@ final class EditorModel {
     /// The editor started a change: a drag, a pinch, a burst of arrow keys.
     func beginChange() {
         guard pendingChange == nil else { return }
-        pendingChange = (scope, folders, style)
+        pendingChange = (scope, folders, placement)
     }
 
-    /// The editor finished its change; `previous` is the look from before it.
-    func commit(from previous: IconStyle) {
+    /// The editor finished its change.
+    func commit() {
         // Already finished, because the scope or the folders changed under it.
         guard let pending = pendingChange else { return }
         pendingChange = nil
         guard pending.scope == scope, pending.folders == folders else { return }
-        record(from: previous, in: scope)
+        record(from: pending.start, in: scope)
     }
 
     /// Finishes a change that is still going on, in what it was made in.
@@ -196,31 +232,37 @@ final class EditorModel {
     }
 
     /// Keeps a finished change: writes it to the folders, or keeps it in the draft, and
-    /// lets it be undone.
-    private func record(from previous: IconStyle, in scope: Scope) {
+    /// lets it be undone. A moved picture doesn't give the folders a look of their own.
+    private func record(from previous: Placement, in scope: Scope) {
         switch scope {
         case .folders:
-            guard hasFolders, hasPicture, folderStyle != previous else { return }
-            change(to: folderStyle)
+            let style = folderStyle, alignment = folderAlignment
+            let restyled = style != previous.style, moved = alignment != previous.alignment
+            guard hasFolders, hasPicture, restyled || moved else { return }
+            change { look in
+                if restyled { look.style = style }
+                if moved { look.alignment = alignment }
+            }
         case .standard:
-            guard defaultDraft != previous else { return }
-            registerUndo(restoringDraft: previous)
+            guard defaultDraft != previous.style else { return }
+            registerUndo(restoringDraft: previous.style)
         }
     }
 
     func setMode(_ mode: FitMode) {
         finishPendingChange()
-        let previous = style
+        let previous = placement
         style.mode = mode
         record(from: previous, in: scope)
     }
 
-    /// Back to the default look for the folders, back to the standard look for the default.
+    /// Back to the default look for the folders, picture in the middle; back to the standard
+    /// look for the default.
     func reset() {
         finishPendingChange()
         if isEditingFolders {
-            guard hasPicture, !followsDefault else { return }
-            change(to: nil)
+            guard canReset else { return }
+            change { $0 = .standard }
         } else {
             guard defaultDraft != .standard else { return }
             let previous = defaultDraft
@@ -229,20 +271,28 @@ final class EditorModel {
         }
     }
 
-    /// Gives every folder `style`, or makes them all follow the default look with `nil`.
-    private func change(to style: IconStyle?) {
+    /// Makes the same change to every folder's look.
+    private func change(_ edit: (inout Look) -> Void) {
         let before = looks
-        apply(Dictionary(managedFolders.map { ($0, style) }, uniquingKeysWith: { first, _ in first }))
+        var after: [URL: Look] = [:]
+        for folder in managedFolders {
+            var look = before[folder] ?? .standard
+            edit(&look)
+            after[folder] = look
+        }
+        apply(after)
         registerUndo(restoring: before)
     }
 
     /// Shows each folder's look and writes it. Writes happen one after another, in the
     /// order they were asked for.
-    private func apply(_ newLooks: [URL: IconStyle?]) {
+    private func apply(_ newLooks: [URL: Look]) {
         looks = newLooks
-        let first: IconStyle? = managedFolders.first.flatMap { newLooks[$0] ?? nil }
-        folderStyle = first ?? settings.defaultStyle
-        followsDefault = newLooks.values.allSatisfy { $0 == nil }
+        let first = managedFolders.first.flatMap { newLooks[$0] }
+        folderStyle = first?.style ?? settings.defaultStyle
+        folderAlignment = first?.alignment ?? .centered
+        followsDefault = newLooks.values.allSatisfy { $0.style == nil }
+        isPictureCentered = newLooks.values.allSatisfy { $0.alignment == .centered }
         writeGeneration += 1
         let manager = actions.manager
         let previous = writing
@@ -251,7 +301,7 @@ final class EditorModel {
             var failures: [FolderOutcome] = []
             for (folder, look) in newLooks {
                 do {
-                    try await manager.setStyle(look, for: folder)
+                    try await manager.setStyle(look.style, alignment: look.alignment, for: folder)
                 } catch {
                     failures.append(FolderOutcome(folder: folder, failure: error.localizedDescription))
                 }
@@ -262,7 +312,7 @@ final class EditorModel {
     }
 
     /// Undo puts every folder back to its own look from before.
-    private func registerUndo(restoring looks: [URL: IconStyle?]) {
+    private func registerUndo(restoring looks: [URL: Look]) {
         guard let undoManager else { return }
         let folders = self.folders
         undoManager.registerUndo(withTarget: self) { model in

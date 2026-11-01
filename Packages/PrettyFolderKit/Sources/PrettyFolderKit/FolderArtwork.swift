@@ -74,21 +74,108 @@ public enum FolderArtwork {
         return shape.isPlausible ? shape : nil
     }
 
-    /// The folder's outline at `side` × `side` pixels, for clipping: white where the folder
-    /// is and black around it. The soft shadow around the artwork is left out, so whatever
-    /// is clipped to it ends exactly where the folder does.
-    public static func silhouette(of icon: NSImage, side: Int) -> CGImage? {
-        guard let pixels = pixels(of: icon, side: side) else { return nil }
+    /// What the folder in `icon` gives a picture drawn on it at `side` × `side` pixels: its
+    /// outline, and its light and shade. `shape` says where the folder's front is.
+    public static func surface(of icon: NSImage, side: Int, shape: FolderShape) -> FolderSurface? {
+        guard let pixels = pixels(of: icon, side: side), let silhouette = silhouette(from: pixels, side: side) else {
+            return nil
+        }
+        return FolderSurface(silhouette: silhouette, shading: shading(from: pixels, side: side, shape: shape))
+    }
+
+    /// The folder's outline (see `FolderSurface.silhouette`) from the icon's pixels.
+    private static func silhouette(from pixels: [UInt8], side: Int) -> CGImage? {
         var mask = [UInt8](repeating: 0, count: side * side)
         for index in mask.indices {
             // The shadow never gets denser than about 100; the folder itself is opaque.
             let alpha = Int(pixels[index * 4 + 3])
             mask[index] = UInt8(clamping: (alpha - 110) * 255 / 140)
         }
-        guard let provider = CGDataProvider(data: Data(mask) as CFData) else { return nil }
+        return image(from: mask, side: side, bytesPerPixel: 1, alpha: .none)
+    }
+
+    /// The folder's light and shade (see `FolderSurface.shading`) from the icon's pixels.
+    ///
+    /// The middle of the front is lit evenly, apart from a gentle fall-off from top to bottom:
+    /// a plane through its brightness stands for that light everywhere on the folder, and each
+    /// pixel of the folder is compared with it. The back comes out darker, the front's top edge
+    /// lighter, and the middle of the front the same, give or take a level of noise.
+    private static func shading(from pixels: [UInt8], side: Int, shape: FolderShape) -> CGImage? {
+        let bytesPerRow = side * 4
+        // Brightness on the 0–255 scale; nothing where the folder fades into its shadow.
+        func brightness(_ index: Int) -> Double? {
+            let alpha = Double(pixels[index + 3])
+            guard alpha >= 128 else { return nil }
+            let red = Double(pixels[index]), green = Double(pixels[index + 1]), blue = Double(pixels[index + 2])
+            return (0.299 * red + 0.587 * green + 0.114 * blue) * 255 / alpha
+        }
+
+        // brightness ≈ a + b·row + c·column, by least squares over the middle of the front.
+        let unit = Double(side)
+        let top = Int((shape.front.minY + 0.08) * unit), bottom = Int((shape.bounds.maxY - 0.06) * unit)
+        let left = Int((shape.bounds.minX + 0.06) * unit), right = Int((shape.bounds.maxX - 0.06) * unit)
+        guard top >= 0, top < bottom, bottom < side, left >= 0, left < right, right < side else { return nil }
+        let step = max(1, side / 128)
+        var count = 0.0, r = 0.0, c = 0.0, rr = 0.0, rc = 0.0, cc = 0.0, v = 0.0, rv = 0.0, cv = 0.0
+        for row in stride(from: top, through: bottom, by: step) {
+            for column in stride(from: left, through: right, by: step) {
+                guard let value = brightness(row * bytesPerRow + column * 4) else { continue }
+                let y = Double(row), x = Double(column)
+                count += 1; r += y; c += x; rr += y * y; rc += y * x; cc += x * x
+                v += value; rv += y * value; cv += x * value
+            }
+        }
+        guard let plane = solve([count, r, c, r, rr, rc, c, rc, cc], [v, rv, cv]) else { return nil }
+
+        // Differences this small are noise in the artwork, not light.
+        let noise = 1.5
+        var shade = [UInt8](repeating: 0, count: side * side * 2)
+        for row in 0..<side {
+            for column in 0..<side {
+                guard let value = brightness(row * bytesPerRow + column * 4) else { continue }
+                let light = min(max(plane[0] + plane[1] * Double(row) + plane[2] * Double(column), 1), 254)
+                let difference = value - light
+                let index = (row * side + column) * 2
+                if difference < -noise {
+                    // Black: the picture darkens as much as the folder does here.
+                    shade[index + 1] = UInt8(clamping: Int(((-difference - noise) / light * 255).rounded()))
+                } else if difference > noise {
+                    // White, premultiplied: the picture brightens toward white as the folder does.
+                    let alpha = UInt8(clamping: Int(((difference - noise) / (255 - light) * 255).rounded()))
+                    shade[index] = alpha
+                    shade[index + 1] = alpha
+                }
+            }
+        }
+        return image(from: shade, side: side, bytesPerPixel: 2, alpha: .premultipliedLast)
+    }
+
+    /// Solves the 3 × 3 system `matrix · x = values`; `nil` when it has no single answer.
+    private static func solve(_ matrix: [Double], _ values: [Double]) -> [Double]? {
+        var a = matrix, b = values
+        for column in 0..<3 {
+            guard let pivot = (column..<3).max(by: { abs(a[$0 * 3 + column]) < abs(a[$1 * 3 + column]) }),
+                  abs(a[pivot * 3 + column]) > 1e-9
+            else { return nil }
+            if pivot != column {
+                for j in 0..<3 { a.swapAt(pivot * 3 + j, column * 3 + j) }
+                b.swapAt(pivot, column)
+            }
+            for row in 0..<3 where row != column {
+                let factor = a[row * 3 + column] / a[column * 3 + column]
+                for j in 0..<3 { a[row * 3 + j] -= factor * a[column * 3 + j] }
+                b[row] -= factor * b[column]
+            }
+        }
+        return (0..<3).map { b[$0] / a[$0 * 3 + $0] }
+    }
+
+    /// A gray image (with alpha when `bytesPerPixel` is 2) from bytes with the top row first.
+    private static func image(from bytes: [UInt8], side: Int, bytesPerPixel: Int, alpha: CGImageAlphaInfo) -> CGImage? {
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
         return CGImage(
-            width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: side,
-            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+            width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 8 * bytesPerPixel, bytesPerRow: side * bytesPerPixel,
+            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: alpha.rawValue),
             provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
         )
     }
@@ -113,6 +200,21 @@ public enum FolderArtwork {
         }
         return drawn ? pixels : nil
     }
+}
+
+/// What the folder's artwork gives a picture drawn on it, at one pixel size. Both images
+/// have the icon's size and its top row first, like the icon.
+public struct FolderSurface: @unchecked Sendable {
+    /// The folder's outline: white where the folder is, black around it. A picture is clipped
+    /// to it, so it ends exactly where the folder does, without the soft shadow around it.
+    public let silhouette: CGImage
+    /// The folder's light and shade, for a picture on it to catch the way the folder does:
+    /// the back darker than the front, and the light along the front's top edge, so a
+    /// picture across both shows the same depth. Black where the folder is darker than the
+    /// evenly lit middle of its front, white where it is lighter, how much in alpha; clear on
+    /// that middle, so a picture there keeps its colors. Draw it over the picture alone.
+    /// `nil` when the artwork has no front to measure the light by.
+    public let shading: CGImage?
 }
 
 /// Where the parts of the folder sit on the icon, in unit coordinates with a top-left
