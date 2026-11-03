@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+
+- Turn the picture to any angle with the new dial below the folder: drag it sideways and the picture turns with it, a degree for every few points. It reads the angle as you go, sticks to upright and quarter turns, and ⇧ turns in steps of 15°. Scrolling on it or its arrow keys turn a degree at a time, and a double-click puts the picture upright. The buttons on either side of it turn a quarter turn left or right, and replace the rotate button.
+
 ## 1.2.0
 
 - Turn the picture: twist two fingers on the trackpad, drag just outside a corner of its frame, click the new rotate button (⌥-click turns the other way), or press ⌘L or ⌘R. It sticks to upright and to quarter turns, and ⇧ turns it in steps of 15°. With **Fill** a turned picture still covers its whole frame; with **Fit** all of it stays inside.
