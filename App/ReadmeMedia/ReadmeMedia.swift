@@ -7,9 +7,10 @@ import SwiftUI
 
 /// Renders the README's pictures and animations from the app's own views and icons:
 ///
-///     PrettyFolder --readme-media <output folder> --pictures <folder> [--only <scene>]
+///     PrettyFolder --readme-media <output folder> --pictures <folder> [--only <scene>] [--scale 2] [--fps 25]
 ///
 /// writes a folder of numbered PNG frames for each animation, and single PNGs, then quits.
+/// `wallpaper.jpg` among the pictures, if there is one, is the desktop the scenes are on.
 /// `make readme-media` builds a debug copy, runs this and turns the frames into GIFs.
 ///
 /// Nothing on screen is touched: windows are drawn off screen, the pointer is drawn into
@@ -20,6 +21,8 @@ enum ReadmeMedia {
         guard let output = value(after: "--readme-media", in: arguments) else { return }
         let pictures = value(after: "--pictures", in: arguments) ?? output
         let only = value(after: "--only", in: arguments)
+        if let scale = value(after: "--scale", in: arguments).flatMap(Double.init) { Stage.scale = CGFloat(scale) }
+        if let rate = value(after: "--fps", in: arguments).flatMap(Double.init) { Stage.framesPerSecond = rate }
 
         MainActor.assumeIsolated {
             NSApplication.shared.setActivationPolicy(.accessory)
@@ -105,6 +108,8 @@ final class Studio {
         let defaults = UserDefaults(suiteName: defaultsDomain)!
         defaults.removePersistentDomain(forName: defaultsDomain)
         settings = AppSettings(defaults: defaults)
+        let wallpaper = pictures.appendingPathComponent("wallpaper.jpg")
+        Scenery.desktopPicture = NSImage(contentsOf: wallpaper)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
         manager = FolderImageManager(directory: workspace.appendingPathComponent("Library", isDirectory: true), defaultStyle: settings.defaultStyle)
         actions = FolderActions(manager: manager, settings: settings)
     }
@@ -112,9 +117,12 @@ final class Studio {
     func render(only: String?) async throws {
         let scenes: [(name: String, render: () async throws -> Void)] = [
             ("hero", renderHero),
+            ("depth", renderDepth),
             ("drop", renderDrop),
             ("hover", renderHover),
-            ("window", renderWindow),
+            ("zoom", renderZoom),
+            ("turn", renderTurn),
+            ("fit", renderFit),
         ]
         for scene in scenes where only == nil || only == scene.name {
             print("Rendering \(scene.name)…")
@@ -231,8 +239,11 @@ final class Studio {
         var editor: CGRect
         /// The Fill / Fit switch.
         var scaling: CGRect
-        /// The buttons below the folder, left to right: choose, rotate, reset, remove, Done.
+        /// The buttons below the folder, left to right: choose, reset, remove, Done.
         var buttons: [CGRect]
+        /// The dial that turns the picture, and where it is.
+        var dialView: TurnDialView
+        var dial: CGRect
     }
 
     func controls(of window: NSWindow) -> WindowControls? {
@@ -247,6 +258,7 @@ final class Studio {
             return CGRect(x: frame.minX, y: window.frame.height - frame.maxY, width: frame.width, height: frame.height)
         }
         guard let editor = views.compactMap({ $0 as? StyleEditorView }).first,
+              let dial = views.compactMap({ $0 as? TurnDialView }).first,
               let scaling = views.compactMap({ $0 as? NSSegmentedControl })
                 .first(where: { $0.segmentCount == 2 && $0.label(forSegment: 1) == "Fit" }).map(frame)
         else { return nil }
@@ -254,7 +266,10 @@ final class Studio {
             .filter { abs($0.midY - scaling.midY) < 8 }
             .sorted { $0.minX < $1.minX }
         let margin = StyleEditorView.margin
-        return WindowControls(editorView: editor, editor: frame(editor).insetBy(dx: margin, dy: margin), scaling: scaling, buttons: buttons)
+        return WindowControls(
+            editorView: editor, editor: frame(editor).insetBy(dx: margin, dy: margin), scaling: scaling, buttons: buttons,
+            dialView: dial, dial: frame(dial)
+        )
     }
 
     // MARK: - Output

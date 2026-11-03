@@ -7,7 +7,7 @@
 <p align="center">Put any picture on a folder icon on your Mac.</p>
 
 <p align="center">
-  <img src="docs/hero.png" width="760" alt="Folders on a Mac desktop with pictures on them: a rubber duck, a donut, a monkey in sunglasses, a rocket and a ghost">
+  <img src="docs/hero.png" width="800" alt="Ten folders on a Mac desktop, each with its own picture: a kitten astronaut, a bowl of ramen, a corgi in heart sunglasses, Mount Ararat, a glowing record player, a little robot, a game controller, a monstera, a light bulb bursting with paint and a piggy bank in glasses">
 </p>
 
 ## Install
@@ -25,31 +25,49 @@ PrettyFolder starts with your Mac and lives in the menu bar. Needs macOS 14 Sono
 
 ## Use
 
-### Drop a picture on a folder
+### 1. Drop a picture on a folder
 
-<img src="docs/drop.gif" width="720" alt="A picture of a rubber duck is dragged over the Debugging folder. A Set as Icon badge appears on the folder, the picture is dropped on it, and the folder shows the duck.">
+<img src="docs/drop.gif" width="720" alt="A photo of a corgi is dragged over the Pets folder on the Desktop. A Set as Icon badge appears beside the folder, the photo is dropped on it, and the folder shows the corgi.">
 
 Drag a picture over a folder and drop it on **Set as Icon**. Dropping it on the folder itself works as always.
 
-### Point at a folder
+### 2. Point at a folder
 
-<img src="docs/hover.gif" width="720" alt="The pointer rests on a folder and three buttons appear on top of it. The ghost picture on the Spooky folder is removed, then the Monkey Business folder opens in PrettyFolder's window.">
+<img src="docs/hover.gif" width="720" alt="The pointer rests on a folder and three buttons appear on top of it. The piggy bank picture on the Taxes folder is removed, then the Games folder opens in PrettyFolder's window.">
 
-Buttons appear on top of the folder: choose a picture, remove it, or open the folder in PrettyFolder's window. This works in Finder's icon view and on the Desktop.
+Buttons appear on top of the folder: choose a picture, remove it, or open the folder in PrettyFolder's window. This works in Finder's icon view and on the Desktop. You can also right-click one folder or several and choose **Folder Picture…**.
 
-You can also right-click a folder and choose **Folder Picture…**, for one folder or several.
+### 3. Zoom in
 
-### Fine-tune it
+<img src="docs/zoom.gif" width="760" alt="In PrettyFolder's window, two fingers pinch the frame around a photo of hot air balloons until it is much bigger than the folder, then dragging the frame brings the big balloon over the folder. The folder on the Desktop changes along with it.">
 
-<img src="docs/window.gif" width="780" alt="In PrettyFolder's window, pointing at the folder brings up a thin frame around the rocket picture. A pinch makes the frame bigger than the folder, so the rocket fills it. Two fingers twist the picture until the rocket flies straight up, and the right mouse button slides it a little. Moving the pointer away leaves the folder alone to look at; then the picture is switched to Fit and reset. The folder on the Desktop changes along with it.">
+Point at the folder in the window and a thin frame shows up around the picture. Pinch or scroll to make it bigger or smaller, up to eight times the folder, to zoom into part of the picture, and drag the frame to choose which part. Its handles change its shape.
 
-Point at the folder and its frame shows up. Drag the frame to move it and its handles to resize it, or pinch or scroll to make it bigger or smaller, up to eight times the folder to zoom into part of the picture; the picture grows and shrinks with it. To move the picture inside the frame, drag it with the right mouse button (or hold Control, or double-click and drag): with **Fill**, which covers the whole frame, to pick the part that shows; with **Fit**, which shows the whole picture, to pick where it sits. To turn the picture, twist two fingers on the trackpad, drag just outside a corner of the frame, or click the rotate button (⌥-click turns it the other way). Everything snaps to the folder's edges and middle, and the picture to upright and quarter turns. The picture never spills outside the folder, and where it reaches the folder's edge it covers it right up to the outline. Where it covers both the back and the front of the folder, it takes on the folder's light and shade. The folder changes right away, ⌘Z undoes, and **Done** closes the window.
+### 4. Turn it to any angle
 
-Hold ⇧ to keep the proportions or to turn in steps of 15°, ⌥ to resize around the middle, ⌘ to turn snapping off. Arrow keys nudge the frame, ⌥ and arrow keys the picture, ⌘+ and ⌘− make the frame bigger or smaller, and ⌘L and ⌘R turn the picture a quarter turn.
+<img src="docs/turn.gif" width="760" alt="A photo of a sailboat with a crooked horizon is on the Sailing folder. Dragging the dial under the folder turns the photo 12 degrees until the horizon is level, on the folder in the window and on the Desktop.">
 
-**Default** is the look new pictures get. When you save it, PrettyFolder asks whether the folders already using it should change too.
+Drag the dial under the folder and the picture turns with it, to any angle. The dial shows the angle as you go and sticks to upright and to quarter turns; hold ⇧ for steps of 15°. Scroll on it or use the arrow keys to turn a degree at a time, and double-click it to make the picture upright again. The buttons on either side of it turn the picture a quarter turn. You can also twist two fingers on the trackpad, or drag just outside a corner of the frame.
 
-Any picture macOS can open works: JPEG, PNG, HEIC, WebP, GIF, TIFF, PSD, RAW, PDF, SVG and more.
+### 5. Fill or Fit
+
+<img src="docs/fit.gif" width="760" alt="A tall photo of a giraffe is on the Safari folder. With Fill, the right mouse button slides the photo down to show the giraffe's head. Fit then shows the whole giraffe, and Fill brings the head back.">
+
+**Fill** covers the whole frame; drag the picture with the right mouse button (or hold Control, or double-click and drag) to choose the part that shows. **Fit** shows the whole picture inside the frame.
+
+### 6. Make the whole folder a picture
+
+<img src="docs/depth.png" width="760" alt="Four folders covered completely by a picture: denim, walnut, a mustard cable knit and holographic glass. Each keeps the folder's tab, light and shade.">
+
+Stretch the frame over the whole folder and the picture covers it right up to its outline, back and front, with the folder's own light and shade.
+
+### Good to know
+
+- Everything snaps to the folder's edges and middle. Hold ⇧ to keep the proportions, ⌥ to resize around the middle, ⌘ to turn snapping off.
+- Arrow keys nudge the frame, ⌥ and the arrow keys nudge the picture, ⌘+ and ⌘− make the frame bigger or smaller, and ⌘L and ⌘R turn the picture a quarter turn.
+- The folder changes as you go, ⌘Z undoes, and **Done** closes the window.
+- **Default** is the look new pictures get. When you save it, PrettyFolder asks whether the folders already using it should change too.
+- Any picture macOS can open works: JPEG, PNG, HEIC, WebP, GIF, TIFF, PSD, RAW, PDF, SVG and more.
 
 ## Uninstall
 
@@ -66,7 +84,7 @@ cd PrettyFolder
 make install
 ```
 
-`make test` runs the tests.
+`make test` runs the tests, and `make readme-media` draws the pictures and animations in this README from the app's own views.
 
 ## License
 

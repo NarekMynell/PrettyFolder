@@ -70,7 +70,7 @@ release:
 	./Scripts/package-release.sh "$(DIST_APP)" "$(DIST)"
 
 # The animations are drawn by a debug build from the app's own views, off screen.
-# The pictures on the folders come from Scripts/make-demo-pictures.py (Blender).
+# The pictures on the folders are in docs/pictures.
 readme-media: debug
 	./Scripts/make-readme-media.sh "$(DEBUG_APP)" docs
 

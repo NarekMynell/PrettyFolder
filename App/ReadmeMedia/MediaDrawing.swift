@@ -4,9 +4,9 @@ import SwiftUI
 
 /// The stage every scene is drawn on.
 enum Stage {
-    /// Pixels per point in the frames.
-    static let scale: CGFloat = 2
-    static let framesPerSecond = 25.0
+    /// Pixels per point in the frames: 2 for the README, more for a video that zooms in.
+    nonisolated(unsafe) static var scale: CGFloat = 2
+    nonisolated(unsafe) static var framesPerSecond = 25.0
 
     /// Where the stage would be on screen, in Accessibility coordinates. The app's own
     /// layout code works in screen coordinates, so scenes hand it these.
@@ -153,10 +153,21 @@ extension CGColor {
 }
 
 enum Scenery {
-    /// A soft desktop picture, like the ones macOS ships: deep blue to violet to warm pink,
-    /// with a couple of glows.
+    /// The desktop picture the scenes use, when there is one among the pictures.
+    nonisolated(unsafe) static var desktopPicture: CGImage?
+
+    /// The desktop picture, filling `size`; without one, a soft gradient like the ones macOS
+    /// ships: deep blue to violet to warm pink, with a couple of glows.
     static func wallpaper(size: CGSize) -> CGImage {
         let bitmap = Bitmap(size: size)
+        if let picture = desktopPicture {
+            let aspect = CGFloat(picture.width) / CGFloat(picture.height)
+            let fill = size.width / size.height > aspect
+                ? CGSize(width: size.width, height: size.width / aspect)
+                : CGSize(width: size.height * aspect, height: size.height)
+            bitmap.draw(picture, in: CGRect(x: (size.width - fill.width) / 2, y: (size.height - fill.height) / 2, width: fill.width, height: fill.height))
+            return bitmap.image
+        }
         let context = bitmap.context
         let space = CGColorSpace(name: CGColorSpace.sRGB)!
         let base = CGGradient(
@@ -236,6 +247,21 @@ enum Scenery {
         let rect = CGRect(x: point.x - cursor.hotSpot.x, y: point.y - cursor.hotSpot.y, width: image.size.width, height: image.size.height)
         bitmap.appKit {
             image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+    }
+
+    /// A click, as a ring that grows and fades around the pointer while `amount` goes from 0 to 1.
+    static func drawClick(at point: CGPoint, amount: Double, on bitmap: Bitmap) {
+        guard amount > 0, amount < 1 else { return }
+        let radius = 6 + 16 * CGFloat(ease(amount))
+        let alpha = CGFloat(1 - amount)
+        bitmap.appKit {
+            let ring = NSBezierPath(ovalIn: NSRect(x: point.x - radius, y: point.y - radius, width: 2 * radius, height: 2 * radius))
+            NSColor.white.withAlphaComponent(0.85 * alpha).setStroke()
+            ring.lineWidth = 2
+            ring.stroke()
+            NSColor.white.withAlphaComponent(0.18 * alpha).setFill()
+            ring.fill()
         }
     }
 

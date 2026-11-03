@@ -10,13 +10,23 @@ extension Studio {
         let picture: String?
     }
 
+    /// The folders on the Desktop, and what's on them.
     private static let cast = [
-        Folder(name: "Debugging", picture: "rubber-duck.jpg"),
-        Folder(name: "Snacks", picture: "donut.jpg"),
-        Folder(name: "Monkey Business", picture: "cool-monkey.jpg"),
-        Folder(name: "Moonshots", picture: "rocket.jpg"),
-        Folder(name: "Spooky", picture: "ghost.jpg"),
+        Folder(name: "Space", picture: "space-cat.jpg"),
+        Folder(name: "Recipes", picture: "ramen.jpg"),
+        Folder(name: "Pets", picture: "corgi.jpg"),
+        Folder(name: "Travel", picture: "ararat.jpg"),
+        Folder(name: "Music", picture: "vinyl.jpg"),
+        Folder(name: "Code", picture: "robot.jpg"),
+        Folder(name: "Games", picture: "gamepad.jpg"),
+        Folder(name: "Plants", picture: "monstera.jpg"),
+        Folder(name: "Ideas", picture: "lightbulb.jpg"),
+        Folder(name: "Taxes", picture: "piggy-bank.jpg"),
     ]
+
+    private static func folder(_ name: String) -> Folder {
+        cast.first { $0.name == name }!
+    }
 
     /// Folders on the Desktop, in a row.
     private func row(count: Int, side: CGFloat, top: CGFloat, spacing: CGFloat, width: CGFloat) -> [CGRect] {
@@ -32,17 +42,34 @@ extension Studio {
 
     // MARK: - Hero
 
-    /// A row of folders with pictures on them.
+    /// Two rows of folders with pictures on them.
     func renderHero() async throws {
-        let size = CGSize(width: 760, height: 236)
+        let size = CGSize(width: 880, height: 396)
         let bitmap = Bitmap(size: size)
         bitmap.draw(Scenery.wallpaper(size: size), in: CGRect(origin: .zero, size: size))
-        let frames = row(count: Self.cast.count, side: 112, top: 48, spacing: 142, width: size.width)
+        let frames = row(count: 5, side: 112, top: 34, spacing: 162, width: size.width)
+            + row(count: 5, side: 112, top: 210, spacing: 162, width: size.width)
         for (folder, frame) in zip(Self.cast, frames) {
             let icon = icon(try folder.picture.map(picture), side: frame.width)
             Scenery.drawItem(on: bitmap, icon: icon, frame: frame, name: folder.name)
         }
         try write(bitmap.image, to: "hero.png")
+    }
+
+    // MARK: - Depth
+
+    /// Pictures that cover the whole folder, back and front, with its light and shade.
+    func renderDepth() async throws {
+        let size = CGSize(width: 760, height: 236)
+        let bitmap = Bitmap(size: size)
+        bitmap.draw(Scenery.wallpaper(size: size), in: CGRect(origin: .zero, size: size))
+        let covering = IconStyle(rect: CGRect(x: 0, y: 0, width: 1, height: 1), mode: .fill)
+        let materials = [("Denim", "denim.jpg"), ("Walnut", "walnut.jpg"), ("Knitwear", "knit.jpg"), ("Holo", "iridescent.jpg")]
+        let frames = row(count: materials.count, side: 120, top: 40, spacing: 172, width: size.width)
+        for ((name, file), frame) in zip(materials, frames) {
+            Scenery.drawItem(on: bitmap, icon: icon(try picture(file), style: covering, side: frame.width), frame: frame, name: name)
+        }
+        try write(bitmap.image, to: "depth.png")
     }
 
     // MARK: - Drag and drop
@@ -51,17 +78,18 @@ extension Studio {
     func renderDrop() async throws {
         let size = CGSize(width: 720, height: 420)
         let wallpaper = Scenery.wallpaper(size: size)
-        let names = ["Snacks", "Monkey Business", "Debugging", "Moonshots"]
-        let pictures: [String?] = ["donut.jpg", "cool-monkey.jpg", nil, "rocket.jpg"]
+        let names = ["Music", "Ideas", "Pets", "Plants"]
+        let pictures: [String?] = ["vinyl.jpg", "lightbulb.jpg", nil, "monstera.jpg"]
         let frames = row(count: 4, side: 96, top: 88, spacing: 140, width: size.width)
         var icons = try pictures.map { icon(try $0.map(picture), side: 96) }
         let target = 2
-        let duckIcon = icon(try picture("rubber-duck.jpg"), side: 96)
+        let dropped = "corgi.jpg"
+        let droppedIcon = icon(try picture(dropped), side: 96)
 
         // The picture file, as Finder shows it on the Desktop.
-        let duck = NSImage(contentsOf: pictureURL("rubber-duck.jpg"))!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+        let file = NSImage(contentsOf: pictureURL(dropped))!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
         let fileFrame = CGRect(x: 172, y: 272, width: 96, height: 96)
-        let thumbnail = Scenery.thumbnail(of: duck, fitting: 96)
+        let thumbnail = Scenery.thumbnail(of: file, fitting: 96)
 
         // The badge, in each of its looks, where the app puts it for this folder.
         // Grabbed by its bottom-right corner, so what's dragged rides up and to the left of
@@ -69,7 +97,7 @@ extension Studio {
         let pressPoint = CGPoint(x: fileFrame.minX + 86, y: fileFrame.minY + 74)
         let overFolder = CGPoint(x: frames[target].midX - 4, y: frames[target].midY + 8)
         let item = FinderItem(
-            url: URL(fileURLWithPath: "/Debugging/"), layout: .icon,
+            url: URL(fileURLWithPath: "/Pets/"), layout: .icon,
             iconFrame: Stage.accessibilityRect(frames[target]), nameFrame: nil, rowFrame: nil
         )
         guard let badgeScreenFrame = DropBadgeController.frame(for: item, avoiding: Stage.appKitPoint(overFolder)) else {
@@ -105,7 +133,7 @@ extension Studio {
                 let pointer = path.position(at: t)
                 let dragging = t >= pressAt && t < releaseAt
                 let overBadge = dragging && t >= badgeShownAt && badgeFrame.insetBy(dx: badgeInset, dy: badgeInset).contains(pointer)
-                if t >= doneAt { icons[target] = duckIcon }
+                if t >= doneAt { icons[target] = droppedIcon }
 
                 let bitmap = Bitmap(size: size)
                 bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
@@ -113,7 +141,7 @@ extension Studio {
                     let targeted = dragging && position == target && frame.contains(pointer) && !overBadge
                     Scenery.drawItem(on: bitmap, icon: icons[position], frame: frame, name: names[position], targeted: targeted)
                 }
-                Scenery.drawItem(on: bitmap, icon: thumbnail, frame: fileFrame, name: "rubber-duck.jpg", selected: t >= pressAt)
+                Scenery.drawItem(on: bitmap, icon: thumbnail, frame: fileFrame, name: dropped, selected: t >= pressAt)
 
                 // The badge comes up a moment after the picture reaches the folder.
                 if t >= badgeShownAt && t < badgeHiddenAt + 0.1 {
@@ -129,7 +157,7 @@ extension Studio {
                     let dragFrame = CGRect(x: pointer.x + offset.x, y: pointer.y + offset.y, width: fileFrame.width, height: fileFrame.height)
                     bitmap.context.saveGState()
                     bitmap.context.setAlpha(0.75)
-                    Scenery.drawItem(on: bitmap, icon: thumbnail, frame: dragFrame, name: "rubber-duck.jpg", selected: true)
+                    Scenery.drawItem(on: bitmap, icon: thumbnail, frame: dragFrame, name: dropped, selected: true)
                     bitmap.context.restoreGState()
                 }
                 Scenery.drawCursor(overBadge ? .dragCopy : .arrow, at: pointer, on: bitmap)
@@ -145,10 +173,11 @@ extension Studio {
     func renderHover() async throws {
         let size = CGSize(width: 720, height: 420)
         let wallpaper = Scenery.wallpaper(size: size)
-        let folders = [Self.cast[0], Self.cast[1], Self.cast[2], Self.cast[4]]
+        let folders = ["Code", "Recipes", "Games", "Taxes"].map(Self.folder)
         let frames = row(count: 4, side: 96, top: 120, spacing: 140, width: size.width)
         var icons = try folders.map { icon(try $0.picture.map(picture), side: 96) }
         let plainIcon = icon(nil, side: 96)
+        // The picture comes off Taxes; Games opens in the window.
         let ghost = 3, monkey = 2
 
         // The buttons, as the app lays them out on each of the two folders.
@@ -179,7 +208,7 @@ extension Studio {
         let settingsButton = button(.settings, in: monkeyLayout)
 
         // The window it opens.
-        let folder = try await makeFolder("Monkey Business", picture: "cool-monkey.jpg")
+        let folder = try await makeFolder("Games", picture: "gamepad.jpg")
         let controller = EditorWindowController(actions: actions)
         let window = controller.window!
         controller.model.show([folder])
@@ -199,7 +228,7 @@ extension Studio {
         let ghostShown = 1.3, trashPress = 2.45, trashRelease = 2.6
         let monkeyShown = 3.8, settingsPress = 4.85, settingsRelease = 5.0
         let windowShown = 5.15
-        let windowScale: CGFloat = 0.78
+        let windowScale: CGFloat = 0.72
         let windowOrigin = CGPoint(x: (size.width - windowSize.width) / 2, y: (size.height - windowSize.height) / 2)
         let sequence = try frameSequence("hover")
         for index in 0..<frameCount(7.8) {
@@ -252,15 +281,71 @@ extension Studio {
 
     // MARK: - The window
 
-    /// Pointing at the folder in the window, which brings up the frame; pinching it bigger than
-    /// the folder; turning the picture with two fingers until the rocket flies straight up;
-    /// moving the picture with the right button; leaving, which leaves the folder alone to look
-    /// at; Fit; and back to the default look. The folder on the Desktop follows every change.
-    func renderWindow() async throws {
-        let size = CGSize(width: 780, height: 540)
-        let wallpaper = Scenery.wallpaper(size: size)
-        let folder = try await makeFolder("Moonshots", picture: "rocket.jpg")
-        let rocket = try picture("rocket.jpg")
+    /// What a hand does in the window for a while: pinch, twist, drag the frame, hold the
+    /// picture with the right button, or drag the dial; each by as much over its time.
+    private enum Grip {
+        /// Spreading two fingers until the frame is `exp(growth)` times as big.
+        case pinch(growth: Double)
+        case twist(degrees: Double)
+        case frame
+        case picture
+        case dial(degrees: Double)
+    }
+
+    private struct Hold {
+        let grip: Grip
+        let start: Double
+        let end: Double
+
+        /// How far the hand has got at `t`: done a little before letting go.
+        func amount(at t: Double) -> Double { ease(progress(t, start, end - 0.15)) }
+    }
+
+    /// A scene in the window: where the pointer goes, what it holds when, and what is clicked.
+    private struct WindowScript {
+        var duration: Double
+        var pointer: PointerPath
+        var holds: [Hold] = []
+        var clicks: [(time: Double, action: (EditorModel) -> Void)] = []
+    }
+
+    /// Where things are on the stage of a window scene, to plan it by.
+    private struct WindowShot {
+        let size: CGSize
+        let windowOrigin: CGPoint
+        let windowSize: CGSize
+        let controls: WindowControls
+
+        func onStage(_ point: CGPoint) -> CGPoint {
+            CGPoint(x: windowOrigin.x + point.x, y: windowOrigin.y + point.y)
+        }
+
+        func onStage(_ rect: CGRect) -> CGRect {
+            rect.offsetBy(dx: windowOrigin.x, dy: windowOrigin.y)
+        }
+
+        /// The picture's frame for `style`, on the stage.
+        func pictureFrame(_ style: IconStyle) -> CGRect {
+            let editor = controls.editor
+            return onStage(IconGeometry.targetRect(for: style, canvas: editor.width, flipped: true).offsetBy(dx: editor.minX, dy: editor.minY))
+        }
+
+        var dial: CGRect { onStage(controls.dial) }
+        var fill: CGPoint { onStage(CGPoint(x: controls.scaling.minX + controls.scaling.width / 4, y: controls.scaling.midY)) }
+        var fit: CGPoint { onStage(CGPoint(x: controls.scaling.maxX - controls.scaling.width / 4, y: controls.scaling.midY)) }
+        /// Somewhere to rest the pointer away from the window.
+        var rest: CGPoint { CGPoint(x: windowOrigin.x / 2 + 40, y: size.height - 46) }
+    }
+
+    /// Shoots a scene in the window for a folder with `pictureName` on it, the folder on the
+    /// Desktop beside it following every change. The pinch, the twist and the dial go through
+    /// the editor's own code, step by step; the right-button drag through the same moving and
+    /// snapping code it uses. (A window off screen gets no events.)
+    private func shootWindow(
+        _ name: String, folder folderName: String, picture pictureName: String, plan: (WindowShot, EditorModel) -> WindowScript
+    ) async throws {
+        let folder = try await makeFolder(folderName, picture: pictureName)
+        let picture = try picture(pictureName)
         let controller = EditorWindowController(actions: actions)
         let model = controller.model
         let window = controller.window!
@@ -269,23 +354,20 @@ extension Studio {
         try await settleUntilShown(model, in: window)
 
         let windowSize = window.frame.size
-        let windowOrigin = CGPoint(x: size.width - windowSize.width - 46, y: (size.height - windowSize.height) / 2 - 6)
-        guard let controls = controls(of: window), controls.buttons.count == 5 else {
+        guard let controls = controls(of: window), controls.buttons.count == 4 else {
             throw MediaError("Couldn't find the window's controls")
         }
-        let editor = controls.editor, scaling = controls.scaling, editorView = controls.editorView
+        let size = CGSize(width: 800, height: (windowSize.height + 64).rounded())
+        let windowOrigin = CGPoint(x: size.width - windowSize.width - 52, y: ((size.height - windowSize.height) / 2).rounded())
+        let shot = WindowShot(size: size, windowOrigin: windowOrigin, windowSize: windowSize, controls: controls)
+        let script = plan(shot, model)
+        let wallpaper = Scenery.wallpaper(size: size)
+        let editorView = controls.editorView, dialView = controls.dialView
+        let side = controls.editor.width
+        let snapping = StyleEditor.snapping(side: side)
 
-        // Choose, rotate, reset, remove, Done.
-        let reset = controls.buttons[2]
-        let side = editor.width
-        func onStage(_ point: CGPoint) -> CGPoint {
-            CGPoint(x: windowOrigin.x + point.x, y: windowOrigin.y + point.y)
-        }
         func inWindow(_ point: CGPoint) -> CGPoint {
             CGPoint(x: point.x - windowOrigin.x, y: point.y - windowOrigin.y)
-        }
-        func pictureRect(_ style: IconStyle) -> CGRect {
-            IconGeometry.targetRect(for: style, canvas: side, flipped: true).offsetBy(dx: editor.minX, dy: editor.minY)
         }
         /// The editor's own view of a point in the window: what is there, the way it decides.
         func editorPoint(_ local: CGPoint) -> CGPoint {
@@ -299,93 +381,91 @@ extension Studio {
         }
 
         // The folder on the Desktop, big enough to see it change.
-        let folderFrame = CGRect(x: 92, y: 168, width: 150, height: 150)
+        let folderFrame = CGRect(x: ((windowOrigin.x - 160) / 2).rounded(), y: (size.height / 2 - 96).rounded(), width: 160, height: 160)
         var desktop = (style: model.style, placement: model.placement)
         var previousIcon: CGImage?
-        var currentIcon = icon(rocket, style: desktop.style, placement: desktop.placement, side: folderFrame.width)
+        var currentIcon = icon(picture, style: desktop.style, placement: desktop.placement, side: folderFrame.width)
         var iconChangedAt = -10.0
 
-        let start = model.style
-        let over = onStage(CGPoint(x: pictureRect(start).midX + 18, y: pictureRect(start).midY + 6))
-        let hold = CGPoint(x: over.x + 6, y: over.y + 10)
-        let slid = CGPoint(x: hold.x - 26, y: hold.y + 22)
-        let fit = onStage(CGPoint(x: scaling.maxX - scaling.width / 4, y: scaling.midY))
-        let resetPoint = onStage(CGPoint(x: reset.midX, y: reset.midY))
+        // Where things are, for whoever edits the frames into something else.
+        let layout: [String: [Double]] = [
+            "size": [size.width, size.height],
+            "editor": [shot.onStage(controls.editor)].flatMap { [$0.minX, $0.minY, $0.width, $0.height] },
+            "dial": [shot.dial].flatMap { [$0.minX, $0.minY, $0.width, $0.height] },
+            "scaling": [shot.onStage(controls.scaling)].flatMap { [$0.minX, $0.minY, $0.width, $0.height] },
+            "window": [windowOrigin.x, windowOrigin.y, windowSize.width, windowSize.height],
+            "folder": [folderFrame.minX, folderFrame.minY, folderFrame.width, folderFrame.height],
+        ]
+        try JSONSerialization.data(withJSONObject: layout, options: [.sortedKeys]).write(to: output.appendingPathComponent("\(name).json"))
 
-        var path = PointerPath(start: CGPoint(x: 300, y: 470))
-        path.move(to: over, from: 0.4, to: 1.2)
-        path.move(to: hold, from: 5.4, to: 5.7, arc: 0)
-        path.move(to: slid, from: 6.0, to: 7.0, arc: 0.04)
-        path.move(to: fit, from: 7.8, to: 8.5)
-        path.move(to: resetPoint, from: 9.9, to: 10.5)
-        path.move(to: CGPoint(x: 300, y: 470), from: 11.6, to: 12.4)
-
-        // Two fingers spreading, then twisting, then the right button held down on the picture.
-        let pinchTime = (start: 1.6, end: 3.1), growth = log(1.75)
-        let twistTime = (start: 3.6, end: 5.1), turn = 40.0
-        let rightButton = (down: 5.9, up: 7.2)
-
-        // The pinch and the twist go through the editor's own gesture code, step by step; the
-        // right-button drag through the same moving and snapping code it uses. (A window off
-        // screen gets no events.)
-        enum Grip { case none, pinch, twist, picture }
-        var grip = Grip.none
-        var gripStart = (style: start, placement: model.placement, pointer: CGPoint.zero)
+        var held: (index: Int, start: (style: IconStyle, placement: PicturePlacement, pointer: CGPoint, turn: Double))?
         var pinched = 0.0, twisted = 0.0
         var pointerInEditor = false
-        let snapping = StyleEditor.snapping(side: side)
-        let sequence = try frameSequence("window")
-        for index in 0..<frameCount(13.4) {
+        let sequence = try frameSequence(name)
+        for index in 0..<frameCount(script.duration) {
             let t = Double(index) / Stage.framesPerSecond
-            let pointer = path.position(at: t)
+            let pointer = script.pointer.position(at: t)
             let local = inWindow(pointer)
 
-            let wanted: Grip = switch t {
-            case pinchTime.start..<pinchTime.end: .pinch
-            case twistTime.start..<twistTime.end: .twist
-            case rightButton.down..<rightButton.up: .picture
-            default: .none
-            }
-            if wanted != grip {
-                switch grip {
-                case .pinch: editorView.pinch(.ended, by: 0, modifiers: [])
-                case .twist: editorView.twist(.ended, by: 0, modifiers: [])
-                case .picture:
-                    model.guides = []
-                    model.isAdjusting = false
-                    model.commit()
-                case .none: break
+            let holding = script.holds.firstIndex { t >= $0.start && t < $0.end }
+            if holding != held?.index {
+                if let held {
+                    switch script.holds[held.index].grip {
+                    case .pinch: editorView.pinch(.ended, by: 0, modifiers: [])
+                    case .twist: editorView.twist(.ended, by: 0, modifiers: [])
+                    case .dial: editorView.endDialTurn(restoring: false)
+                    case .picture, .frame:
+                        model.guides = []
+                        model.isAdjusting = false
+                        model.commit()
+                    }
                 }
-                grip = wanted
-                switch grip {
-                case .pinch: editorView.pinch(.began, by: 0, modifiers: [])
-                case .twist: editorView.twist(.began, by: 0, modifiers: [])
-                case .picture:
-                    gripStart = (model.style, model.placement, pointer)
-                    model.beginChange(holding: true)
-                    model.isAdjusting = true
-                case .none: break
+                held = nil
+                if let holding {
+                    held = (holding, (model.style, model.placement, pointer, model.placement.rotation))
+                    pinched = 0
+                    twisted = 0
+                    switch script.holds[holding].grip {
+                    case .pinch: editorView.pinch(.began, by: 0, modifiers: [])
+                    case .twist: editorView.twist(.began, by: 0, modifiers: [])
+                    case .dial:
+                        guard editorView.beginDialTurn() else { throw MediaError("The dial wouldn't turn") }
+                    case .picture, .frame:
+                        model.beginChange(holding: true)
+                        model.isAdjusting = true
+                    }
                 }
             }
-            switch grip {
-            case .pinch:
-                let spread = growth * ease(progress(t, pinchTime.start, pinchTime.end - 0.15))
-                editorView.pinch(.changed, by: spread - pinched, modifiers: [])
-                pinched = spread
-            case .twist:
-                let angle = turn * ease(progress(t, twistTime.start, twistTime.end - 0.15))
-                editorView.twist(.changed, by: angle - twisted, modifiers: [])
-                twisted = angle
-            case .picture:
-                let dx = pointer.x - gripStart.pointer.x, dy = pointer.y - gripStart.pointer.y
-                let slid = IconGeometry.placement(
-                    gripStart.placement, movedBy: CGSize(width: dx, height: dy), imageSize: rocket.size, style: model.style,
-                    canvas: side, folder: StyleEditorView.folderEdges
-                )
-                let snapped = snapping.pan(slid, imageSize: rocket.size, style: model.style, canvas: side, folder: StyleEditorView.folderEdges)
-                model.placement = snapped.placement
-                model.guides = snapped.guides
-            case .none:
+            if let held {
+                let hold = script.holds[held.index]
+                switch hold.grip {
+                case .pinch(let growth):
+                    let spread = growth * hold.amount(at: t)
+                    editorView.pinch(.changed, by: spread - pinched, modifiers: [])
+                    pinched = spread
+                case .twist(let degrees):
+                    let angle = degrees * hold.amount(at: t)
+                    editorView.twist(.changed, by: angle - twisted, modifiers: [])
+                    twisted = angle
+                case .dial(let degrees):
+                    editorView.dialTurn(to: (held.start.turn + degrees * hold.amount(at: t)).rounded(), modifiers: [], reach: TurnDialView.reach)
+                case .frame:
+                    let moved = held.start.style.rect.offsetBy(dx: (pointer.x - held.start.pointer.x) / side, dy: (pointer.y - held.start.pointer.y) / side)
+                    let snapped = snapping.move(moved)
+                    var style = model.style
+                    style.rect = snapped.rect
+                    model.style = style
+                    model.guides = snapped.guides
+                case .picture:
+                    let moved = IconGeometry.placement(
+                        held.start.placement, movedBy: CGSize(width: pointer.x - held.start.pointer.x, height: pointer.y - held.start.pointer.y),
+                        imageSize: picture.size, style: model.style, canvas: side, folder: StyleEditorView.folderEdges
+                    )
+                    let snapped = snapping.pan(moved, imageSize: picture.size, style: model.style, canvas: side, folder: StyleEditorView.folderEdges)
+                    model.placement = snapped.placement
+                    model.guides = snapped.guides
+                }
+            } else {
                 // Pointing, not holding: the editor shows what is under the pointer, and its
                 // frame only while the pointer is over it.
                 let inEditor = editorView.bounds.contains(editorPoint(local))
@@ -396,53 +476,131 @@ extension Studio {
                 }
                 pointerInEditor = inEditor
             }
-            if index == frameCount(8.8) { model.setMode(.fit) }
-            if index == frameCount(10.8) { model.reset() }
+            for click in script.clicks where index == frameCount(click.time) {
+                click.action(model)
+            }
             await settle(window, milliseconds: 15)
 
             // The folder on the Desktop shows each change once it's written.
-            if grip == .none, model.style != desktop.style || model.placement != desktop.placement {
+            if held == nil, model.style != desktop.style || model.placement != desktop.placement {
                 desktop = (model.style, model.placement)
                 previousIcon = currentIcon
-                currentIcon = icon(rocket, style: desktop.style, placement: desktop.placement, side: folderFrame.width)
+                currentIcon = icon(picture, style: desktop.style, placement: desktop.placement, side: folderFrame.width)
                 iconChangedAt = t + 0.15
             }
 
-            let bitmap = Bitmap(size: size)
-            bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
-            let fade = progress(t, iconChangedAt, iconChangedAt + 0.2)
-            if let previousIcon, fade < 1 {
-                bitmap.draw(previousIcon, in: folderFrame)
-                bitmap.draw(currentIcon, in: folderFrame, alpha: CGFloat(fade))
-            } else {
-                bitmap.draw(currentIcon, in: folderFrame)
-            }
-            Scenery.drawLabel("Moonshots", on: bitmap, below: folderFrame, selected: false)
-            Scenery.drawWindow(snapshot(window), at: windowOrigin, size: windowSize, on: bitmap)
+            try autoreleasepool {
+                let bitmap = Bitmap(size: size)
+                bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
+                let fade = progress(t, iconChangedAt, iconChangedAt + 0.2)
+                if let previousIcon, fade < 1 {
+                    bitmap.draw(previousIcon, in: folderFrame)
+                    bitmap.draw(currentIcon, in: folderFrame, alpha: CGFloat(fade))
+                } else {
+                    bitmap.draw(currentIcon, in: folderFrame)
+                }
+                Scenery.drawLabel(folderName, on: bitmap, below: folderFrame, selected: false)
+                Scenery.drawWindow(snapshot(window), at: windowOrigin, size: windowSize, on: bitmap)
 
-            if t >= rightButton.down - 0.12, t < rightButton.up + 0.2 {
-                let shown = min(progress(t, rightButton.down - 0.12, rightButton.down + 0.04), 1 - progress(t, rightButton.up, rightButton.up + 0.2))
-                Scenery.drawRightButton(beside: pointer, alpha: shown, on: bitmap)
+                for hold in script.holds where t >= hold.start - 0.15 && t < hold.end + 0.2 {
+                    let shown = min(progress(t, hold.start - 0.15, hold.start + 0.05), 1 - progress(t, hold.end - 0.05, hold.end + 0.15))
+                    switch hold.grip {
+                    case .picture:
+                        let shown = min(progress(t, hold.start - 0.12, hold.start + 0.04), 1 - progress(t, hold.end, hold.end + 0.2))
+                        Scenery.drawRightButton(beside: pointer, alpha: shown, on: bitmap)
+                    case .pinch:
+                        Scenery.drawPinch(around: pointer, spread: hold.amount(at: t), alpha: shown, on: bitmap)
+                    case .twist(let degrees):
+                        Scenery.drawTwist(around: pointer, degrees: degrees * hold.amount(at: t), alpha: shown, on: bitmap)
+                    case .dial, .frame:
+                        break
+                    }
+                }
+                for click in script.clicks {
+                    Scenery.drawClick(at: script.pointer.position(at: click.time), amount: progress(t, click.time - 0.05, click.time + 0.35), on: bitmap)
+                }
+                let cursor: NSCursor = if let held {
+                    switch script.holds[held.index].grip {
+                    case .picture, .dial, .frame: NSCursor.closedHand
+                    case .pinch, .twist: editorView.cursor(for: editorView.part(at: editorPoint(local)))
+                    }
+                } else if shot.dial.contains(pointer), dialView.isEnabled {
+                    NSCursor.openHand
+                } else if editorView.bounds.contains(editorPoint(local)) {
+                    editorView.cursor(for: editorView.part(at: editorPoint(local)))
+                } else {
+                    NSCursor.arrow
+                }
+                Scenery.drawCursor(cursor, at: pointer, on: bitmap)
+                try sequence.add(bitmap.image)
             }
-            if t >= pinchTime.start - 0.15, t < pinchTime.end + 0.15 {
-                let spread = ease(progress(t, pinchTime.start, pinchTime.end - 0.15))
-                let shown = min(progress(t, pinchTime.start - 0.15, pinchTime.start + 0.05), 1 - progress(t, pinchTime.end - 0.05, pinchTime.end + 0.15))
-                Scenery.drawPinch(around: pointer, spread: spread, alpha: shown, on: bitmap)
-            }
-            if t >= twistTime.start - 0.15, t < twistTime.end + 0.15 {
-                let angle = turn * ease(progress(t, twistTime.start, twistTime.end - 0.15))
-                let shown = min(progress(t, twistTime.start - 0.15, twistTime.start + 0.05), 1 - progress(t, twistTime.end - 0.05, twistTime.end + 0.15))
-                Scenery.drawTwist(around: pointer, degrees: angle, alpha: shown, on: bitmap)
-            }
-            let cursor: NSCursor = switch grip {
-            case .picture: editorView.cursor(for: StyleEditorView.Drag.picture)
-            case .pinch, .twist, .none: editorView.cursor(for: editorView.part(at: editorPoint(local)))
-            }
-            Scenery.drawCursor(cursor, at: pointer, on: bitmap)
-            try sequence.add(bitmap.image)
         }
         window.close()
     }
+
+    /// Zooming into a part of a picture: a pinch makes the frame well bigger than the folder,
+    /// then dragging the frame brings the part to show over the folder.
+    func renderZoom() async throws {
+        try await shootWindow("zoom", folder: "Balloons", picture: "hot-air-balloons.jpg") { shot, model in
+            let frame = shot.pictureFrame(model.style)
+            let over = CGPoint(x: frame.midX + 16, y: frame.midY + 8)
+            let hold = CGPoint(x: over.x - 4, y: over.y + 6)
+            var path = PointerPath(start: shot.rest)
+            path.move(to: over, from: 0.3, to: 1.0)
+            path.move(to: hold, from: 3.1, to: 3.35, arc: 0)
+            path.move(to: CGPoint(x: hold.x + ReadmeTuning.zoomSlide.width, y: hold.y + ReadmeTuning.zoomSlide.height), from: 3.6, to: 4.7, arc: 0.04)
+            path.move(to: shot.rest, from: 5.4, to: 6.1)
+            return WindowScript(
+                duration: 7.2, pointer: path,
+                holds: [Hold(grip: .pinch(growth: log(ReadmeTuning.zoomFactor)), start: 1.2, end: 2.8),
+                        Hold(grip: .frame, start: 3.45, end: 4.85)]
+            )
+        }
+    }
+
+    /// Straightening a crooked photo with the dial, to any angle.
+    func renderTurn() async throws {
+        try await shootWindow("turn", folder: "Sailing", picture: "sailboat-crooked.jpg") { shot, model in
+            let grab = CGPoint(x: shot.dial.midX - 2, y: shot.dial.midY + 5)
+            let turn = ReadmeTuning.straighten
+            var path = PointerPath(start: shot.rest)
+            path.move(to: grab, from: 0.3, to: 1.2)
+            path.move(to: CGPoint(x: grab.x + CGFloat(turn) * TurnDialView.pointsPerDegree, y: grab.y), from: 1.5, to: 3.25, arc: 0)
+            path.move(to: shot.rest, from: 4.1, to: 4.9)
+            return WindowScript(duration: 6.2, pointer: path, holds: [Hold(grip: .dial(degrees: turn), start: 1.5, end: 3.4)])
+        }
+    }
+
+    /// Fill crops a tall picture, so the right button picks the part that shows; Fit shows all
+    /// of it, and back to Fill.
+    func renderFit() async throws {
+        try await shootWindow("fit", folder: "Safari", picture: "giraffe.jpg") { shot, model in
+            let frame = shot.pictureFrame(model.style)
+            let over = CGPoint(x: frame.midX + 12, y: frame.midY - 4)
+            let hold = CGPoint(x: over.x + 4, y: over.y - 2)
+            var path = PointerPath(start: shot.rest)
+            path.move(to: over, from: 0.3, to: 1.0)
+            path.move(to: hold, from: 1.2, to: 1.4, arc: 0)
+            path.move(to: CGPoint(x: hold.x, y: hold.y + ReadmeTuning.giraffeSlide), from: 1.65, to: 2.85, arc: 0.02)
+            path.move(to: shot.fit, from: 3.4, to: 4.0)
+            path.move(to: shot.fill, from: 5.2, to: 5.6, arc: 0)
+            path.move(to: shot.rest, from: 6.5, to: 7.2)
+            return WindowScript(
+                duration: 8.2, pointer: path,
+                holds: [Hold(grip: .picture, start: 1.5, end: 3.0)],
+                clicks: [(4.2, { $0.setMode(.fit) }), (5.8, { $0.setMode(.fill) })]
+            )
+        }
+    }
+}
+
+/// Numbers that depend on the pictures: how far to zoom, slide and turn.
+enum ReadmeTuning {
+    static let zoomFactor = 2.4
+    /// Far enough to bring the frame's left edge to the folder's: the balloon on the left.
+    static let zoomSlide = CGSize(width: ((IconStyle.standard.width * zoomFactor / 2 - 0.5) * 300).rounded(), height: 0)
+    static let straighten = 12.0
+    static let giraffeSlide: CGFloat = 46
 }
 
 extension Stage {
