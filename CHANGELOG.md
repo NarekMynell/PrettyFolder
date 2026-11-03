@@ -3,7 +3,7 @@
 ## 1.2.0
 
 - Turn the picture: twist two fingers on the trackpad, drag just outside a corner of its frame, click the new rotate button (⌥-click turns the other way), or press ⌘L or ⌘R. It sticks to upright and to quarter turns, and ⇧ turns it in steps of 15°. With **Fill** a turned picture still covers its whole frame; with **Fit** all of it stays inside.
-- The frame can now be made up to eight times as big as the folder, to zoom into part of a picture: pinch, scroll or press ⌘+ well past the folder. A frame bigger than the folder always covers it, so moving it never leaves part of the folder bare. Pictures are kept at twice the size they were, so they stay sharp zoomed in.
+- The frame can now be made up to eight times as big as the folder, to zoom into part of a picture: pinch, scroll or press ⌘+ well past the folder. A frame bigger than the folder always covers it, so moving it never leaves part of the folder bare. Pictures put on folders from now on are kept at twice the size, so they stay sharp zoomed in.
 - Pinching or scrolling a frame that covers the folder zooms around the middle of the folder, so what you look at stays in view.
 - The frame in the window is a thin line just outside the picture, with small handles, and shows only while the pointer is over the folder. While you move, resize or turn something, only a faint line is left, so nothing hides the picture's edges.
 - A picture taken to the folder's edges now covers the folder right up to its outline at every icon size: no light rim of the folder around it, and no corners of the folder peeking out beside the picture's rounded ones. Folders that already have a picture are redrawn once after the update.
