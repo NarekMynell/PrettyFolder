@@ -5,24 +5,58 @@ import SwiftUI
 
 /// The README's picture and animations, shot frame by frame.
 extension Studio {
+    /// How a picture sits on a folder. Every one of these is made in the window: the frame
+    /// anywhere from a corner to well past the folder, Fill or Fit, the picture turned.
+    private struct Look {
+        var style: IconStyle
+        var placement: PicturePlacement = .natural
+
+        static let standard = Look(style: .standard)
+        /// The whole folder, tab and all.
+        static let cover = Look(style: IconStyle(x: 0, y: 0, width: 1, height: 1, mode: .fill))
+        /// Edge to edge on the front.
+        static let front = Look(style: IconStyle(x: 0, y: 0.29, width: 1, height: 0.71, mode: .fill))
+        /// Small, in the bottom-right corner.
+        static let corner = Look(style: IconStyle(x: 0.54, y: 0.5, width: 0.34, height: 0.27, mode: .fill))
+        /// A small square in the middle.
+        static let badge = Look(style: IconStyle(x: 0.33, y: 0.37, width: 0.34, height: 0.34, mode: .fill))
+
+        /// A frame `factor` times the folder: zoomed into the part at `x`, `y`.
+        static func zoomed(_ factor: Double, x: Double = 0.5, y: Double = 0.5) -> Look {
+            Look(style: IconStyle(x: 0.5 - factor / 2, y: 0.5 - factor / 2, width: factor, height: factor, mode: .fill),
+                 placement: PicturePlacement(x: x, y: y))
+        }
+
+        /// The whole picture, turned `degrees` counterclockwise: a card laid on the folder.
+        static func card(turned degrees: Double) -> Look {
+            Look(style: IconStyle(x: 0.19, y: 0.36, width: 0.62, height: 0.45, mode: .fit),
+                 placement: PicturePlacement(x: 0.5, y: 0.5, rotation: degrees))
+        }
+    }
+
     private struct Folder {
         let name: String
         let picture: String?
+        var look = Look.standard
     }
 
-    /// The folders on the Desktop, and what's on them.
+    /// The folders on the Desktop, what's on them and how.
     private static let cast = [
-        Folder(name: "Space", picture: "space-cat.jpg"),
+        Folder(name: "Space", picture: "space-cat.jpg", look: .zoomed(1.5, y: 0.45)),
         Folder(name: "Recipes", picture: "ramen.jpg"),
-        Folder(name: "Pets", picture: "corgi.jpg"),
-        Folder(name: "Travel", picture: "ararat.jpg"),
-        Folder(name: "Music", picture: "vinyl.jpg"),
-        Folder(name: "Code", picture: "robot.jpg"),
-        Folder(name: "Games", picture: "gamepad.jpg"),
-        Folder(name: "Plants", picture: "monstera.jpg"),
+        Folder(name: "Pets", picture: "corgi.jpg", look: .card(turned: -8)),
+        Folder(name: "Travel", picture: "ararat.jpg", look: .front),
+        Folder(name: "Music", picture: "vinyl.jpg", look: .badge),
+        Folder(name: "Code", picture: "robot.jpg", look: .corner),
+        Folder(name: "Games", picture: "gamepad.jpg", look: .cover),
+        Folder(name: "Plants", picture: "monstera.jpg", look: .zoomed(2)),
         Folder(name: "Ideas", picture: "lightbulb.jpg"),
-        Folder(name: "Taxes", picture: "piggy-bank.jpg"),
+        Folder(name: "Taxes", picture: "piggy-bank.jpg", look: .card(turned: 7)),
     ]
+
+    private func icon(_ folder: Folder, side: CGFloat) throws -> CGImage {
+        icon(try folder.picture.map(picture), style: folder.look.style, placement: folder.look.placement, side: side)
+    }
 
     private static func folder(_ name: String) -> Folder {
         cast.first { $0.name == name }!
@@ -42,7 +76,7 @@ extension Studio {
 
     // MARK: - Hero
 
-    /// Two rows of folders with pictures on them.
+    /// Two rows of folders with pictures on them, each its own way.
     func renderHero() async throws {
         let size = CGSize(width: 880, height: 396)
         let bitmap = Bitmap(size: size)
@@ -50,8 +84,7 @@ extension Studio {
         let frames = row(count: 5, side: 112, top: 34, spacing: 162, width: size.width)
             + row(count: 5, side: 112, top: 210, spacing: 162, width: size.width)
         for (folder, frame) in zip(Self.cast, frames) {
-            let icon = icon(try folder.picture.map(picture), side: frame.width)
-            Scenery.drawItem(on: bitmap, icon: icon, frame: frame, name: folder.name)
+            Scenery.drawItem(on: bitmap, icon: try icon(folder, side: frame.width), frame: frame, name: folder.name)
         }
         try write(bitmap.image, to: "hero.png")
     }
@@ -60,14 +93,18 @@ extension Studio {
 
     /// Pictures that cover the whole folder, back and front, with its light and shade.
     func renderDepth() async throws {
-        let size = CGSize(width: 760, height: 236)
+        let size = CGSize(width: 760, height: 400)
         let bitmap = Bitmap(size: size)
         bitmap.draw(Scenery.wallpaper(size: size), in: CGRect(origin: .zero, size: size))
-        let covering = IconStyle(rect: CGRect(x: 0, y: 0, width: 1, height: 1), mode: .fill)
-        let materials = [("Denim", "denim.jpg"), ("Walnut", "walnut.jpg"), ("Knitwear", "knit.jpg"), ("Holo", "iridescent.jpg")]
-        let frames = row(count: materials.count, side: 120, top: 40, spacing: 172, width: size.width)
+        let materials = [
+            ("Soft Skills", "fur.jpg"), ("Old Projects", "moss.jpg"), ("Portfolio", "marble.jpg"), ("Deadlines", "lava.jpg"),
+            ("Party", "sprinkles.jpg"), ("Vacation", "ocean.jpg"), ("Wardrobe", "denim.jpg"), ("Winter", "knit.jpg"),
+        ]
+        let frames = row(count: 4, side: 120, top: 32, spacing: 172, width: size.width)
+            + row(count: 4, side: 120, top: 212, spacing: 172, width: size.width)
         for ((name, file), frame) in zip(materials, frames) {
-            Scenery.drawItem(on: bitmap, icon: icon(try picture(file), style: covering, side: frame.width), frame: frame, name: name)
+            let folder = Folder(name: name, picture: file, look: .cover)
+            Scenery.drawItem(on: bitmap, icon: try icon(folder, side: frame.width), frame: frame, name: name)
         }
         try write(bitmap.image, to: "depth.png")
     }
@@ -78,10 +115,15 @@ extension Studio {
     func renderDrop() async throws {
         let size = CGSize(width: 720, height: 420)
         let wallpaper = Scenery.wallpaper(size: size)
-        let names = ["Music", "Ideas", "Pets", "Plants"]
-        let pictures: [String?] = ["vinyl.jpg", "lightbulb.jpg", nil, "monstera.jpg"]
+        let folders = [
+            Folder(name: "Music", picture: "vinyl.jpg", look: .zoomed(1.5)),
+            Folder(name: "Ideas", picture: "lightbulb.jpg", look: .badge),
+            Folder(name: "Pets", picture: nil),
+            Folder(name: "Plants", picture: "monstera.jpg", look: .cover),
+        ]
+        let names = folders.map(\.name)
         let frames = row(count: 4, side: 96, top: 88, spacing: 140, width: size.width)
-        var icons = try pictures.map { icon(try $0.map(picture), side: 96) }
+        var icons = try folders.map { try icon($0, side: 96) }
         let target = 2
         let dropped = "corgi.jpg"
         let droppedIcon = icon(try picture(dropped), side: 96)
@@ -173,9 +215,13 @@ extension Studio {
     func renderHover() async throws {
         let size = CGSize(width: 720, height: 420)
         let wallpaper = Scenery.wallpaper(size: size)
-        let folders = ["Code", "Recipes", "Games", "Taxes"].map(Self.folder)
+        // Games is the way the window opens it: as a new picture comes.
+        let folders = [
+            Self.folder("Code"), Folder(name: "Recipes", picture: "ramen.jpg", look: .front),
+            Folder(name: "Games", picture: "gamepad.jpg"), Self.folder("Taxes"),
+        ]
         let frames = row(count: 4, side: 96, top: 120, spacing: 140, width: size.width)
-        var icons = try folders.map { icon(try $0.picture.map(picture), side: 96) }
+        var icons = try folders.map { try icon($0, side: 96) }
         let plainIcon = icon(nil, side: 96)
         // The picture comes off Taxes; Games opens in the window.
         let ghost = 3, monkey = 2
@@ -508,8 +554,10 @@ extension Studio {
                     case .picture:
                         let shown = min(progress(t, hold.start - 0.12, hold.start + 0.04), 1 - progress(t, hold.end, hold.end + 0.2))
                         Scenery.drawRightButton(beside: pointer, alpha: shown, on: bitmap)
-                    case .pinch:
-                        Scenery.drawPinch(around: pointer, spread: hold.amount(at: t), alpha: shown, on: bitmap)
+                    case .pinch(let growth):
+                        // Spreading to make the frame bigger, closing to make it smaller.
+                        let amount = hold.amount(at: t)
+                        Scenery.drawPinch(around: pointer, spread: growth < 0 ? 1 - amount : amount, alpha: shown, on: bitmap)
                     case .twist(let degrees):
                         Scenery.drawTwist(around: pointer, degrees: degrees * hold.amount(at: t), alpha: shown, on: bitmap)
                     case .dial, .frame:
@@ -536,6 +584,27 @@ extension Studio {
             }
         }
         window.close()
+    }
+
+    /// Any size, anywhere: a pinch makes the frame small, and dragging it puts the picture in
+    /// the folder's corner.
+    func renderSize() async throws {
+        try await shootWindow("size", folder: "Code", picture: "robot.jpg") { shot, model in
+            let frame = shot.pictureFrame(model.style)
+            let over = CGPoint(x: frame.midX + 10, y: frame.midY + 6)
+            let small = shot.pictureFrame(IconStyle(rect: IconGeometry.scaled(model.style.rect, by: ReadmeTuning.shrink), mode: .fill))
+            let hold = CGPoint(x: small.midX + 3, y: small.midY + 2)
+            var path = PointerPath(start: shot.rest)
+            path.move(to: over, from: 0.3, to: 1.0)
+            path.move(to: hold, from: 2.85, to: 3.15, arc: 0)
+            path.move(to: CGPoint(x: hold.x + ReadmeTuning.cornerSlide.width, y: hold.y + ReadmeTuning.cornerSlide.height), from: 3.45, to: 4.55, arc: -0.05)
+            path.move(to: shot.rest, from: 5.3, to: 6.0)
+            return WindowScript(
+                duration: 7.0, pointer: path,
+                holds: [Hold(grip: .pinch(growth: log(ReadmeTuning.shrink)), start: 1.2, end: 2.7),
+                        Hold(grip: .frame, start: 3.3, end: 4.7)]
+            )
+        }
     }
 
     /// Zooming into a part of a picture: a pinch makes the frame well bigger than the folder,
@@ -596,6 +665,9 @@ extension Studio {
 
 /// Numbers that depend on the pictures: how far to zoom, slide and turn.
 enum ReadmeTuning {
+    /// Small enough for a corner, and the way there, in points of the window's folder (300).
+    static let shrink = 0.42
+    static let cornerSlide = CGSize(width: 64, height: 40)
     static let zoomFactor = 2.4
     /// Far enough to bring the frame's left edge to the folder's: the balloon on the left.
     static let zoomSlide = CGSize(width: ((IconStyle.standard.width * zoomFactor / 2 - 0.5) * 300).rounded(), height: 0)

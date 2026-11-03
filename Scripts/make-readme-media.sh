@@ -23,7 +23,7 @@ for picture in hero depth; do
         -pix_fmt pal8 "$docs/$picture.png"
     echo "Wrote $docs/$picture.png"
 done
-for scene in drop hover zoom turn fit; do
+for scene in drop hover size zoom turn fit; do
     # One palette for the whole animation keeps still parts still, so only what moves
     # is stored frame to frame. Ordered dithering and 20 frames a second keep photos
     # moving across the screen to a few megabytes.

@@ -120,6 +120,7 @@ final class Studio {
             ("depth", renderDepth),
             ("drop", renderDrop),
             ("hover", renderHover),
+            ("size", renderSize),
             ("zoom", renderZoom),
             ("turn", renderTurn),
             ("fit", renderFit),
