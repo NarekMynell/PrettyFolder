@@ -7,7 +7,7 @@
 <p align="center">Put any picture on a folder icon on your Mac.</p>
 
 <p align="center">
-  <img src="docs/hero.png" width="800" alt="Ten folders on a Mac desktop, each with its own picture, each its own way: a kitten astronaut zoomed in, a bowl of ramen, a corgi photo laid at a tilt, Mount Ararat edge to edge, a small glowing record player, a little robot in a corner, a game controller covering the whole folder, a close-up monstera, a light bulb bursting with paint and a tilted piggy bank">
+  <img src="docs/hero.gif" width="800" alt="A Finder window with 32 folders that together show one huge picture of a tiger, which winks. All the folders turn over one after another to show a snowy mountain at sunrise, then koi fish, and then each folder gets a picture of its own: logos, cut-outs, photos and materials, at every size.">
 </p>
 
 ## Install
@@ -37,33 +37,39 @@ Drag a picture over a folder and drop it on **Set as Icon**. Dropping it on the 
 
 Buttons appear on top of the folder: choose a picture, remove it, or open the folder in PrettyFolder's window. This works in Finder's icon view and on the Desktop. You can also right-click one folder or several and choose **Folder Picture…**.
 
-### 3. Any size, anywhere
+### 3. Logos and cut-outs
+
+<img src="docs/clear.gif" width="720" alt="A transparent rocket.png and a transparent logo.svg sit on the Desktop on a checkerboard. Each is dragged onto a folder and dropped on the Set as Icon badge. On the folder only the rocket and the lightning bolt are left, the blue folder showing all around them.">
+
+A transparent PNG or an SVG leaves the folder showing all around it, so a logo or a cut-out sits right on the folder. SVGs stay sharp at every size.
+
+### 4. Any size, anywhere
 
 <img src="docs/size.gif" width="760" alt="In PrettyFolder's window, two fingers pinch the frame around a picture of a little robot until it is small, then the frame is dragged into the folder's bottom-right corner. The Code folder on the Desktop changes along with it.">
 
 Point at the folder in the window and a thin frame shows up around the picture. Pinch or scroll to make it smaller or bigger, drag it anywhere on the folder, and drag its handles to change its shape.
 
-### 4. Zoom in
+### 5. Zoom in
 
 <img src="docs/zoom.gif" width="760" alt="In PrettyFolder's window, two fingers pinch the frame around a photo of hot air balloons until it is much bigger than the folder, then dragging the frame brings the big balloon over the folder. The folder on the Desktop changes along with it.">
 
 Make the frame bigger than the folder, up to eight times, to zoom into part of the picture, and drag it to choose which part.
 
-### 5. Turn it to any angle
+### 6. Turn it to any angle
 
 <img src="docs/turn.gif" width="760" alt="A photo of a sailboat with a crooked horizon is on the Sailing folder. Dragging the dial under the folder turns the photo 12 degrees until the horizon is level, on the folder in the window and on the Desktop.">
 
 Drag the dial under the folder and the picture turns with it, to any angle. The dial shows the angle as you go and sticks to upright and to quarter turns; hold ⇧ for steps of 15°. Scroll on it or use the arrow keys to turn a degree at a time, and double-click it to make the picture upright again. The buttons on either side of it turn the picture a quarter turn. You can also twist two fingers on the trackpad, or drag just outside a corner of the frame.
 
-### 6. Fill or Fit
+### 7. Fill or Fit
 
 <img src="docs/fit.gif" width="760" alt="A tall photo of a giraffe is on the Safari folder. With Fill, the right mouse button slides the photo down to show the giraffe's head. Fit then shows the whole giraffe, and Fill brings the head back.">
 
 **Fill** covers the whole frame; drag the picture with the right mouse button (or hold Control, or double-click and drag) to choose the part that shows. **Fit** shows the whole picture inside the frame.
 
-### 7. Make the whole folder a picture
+### 8. Make the whole folder a picture
 
-<img src="docs/depth.png" width="760" alt="Eight folders covered completely by a picture: pink fur, green moss, gold-veined marble, glowing lava, rainbow sprinkles, sunlit water, denim and a mustard cable knit. Each keeps the folder's tab, light and shade.">
+<img src="docs/depth.png" width="760" alt="Eight folders covered completely by a picture: juicy watermelon, green moss, jewel-toned stained glass, glowing lava, rainbow sprinkles, sunlit water, a pepperoni pizza and a starry nebula. Each keeps the folder's tab, light and shade.">
 
 Stretch the frame over the whole folder and the picture covers it right up to its outline, back and front, with the folder's own light and shade.
 

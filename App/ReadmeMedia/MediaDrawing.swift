@@ -241,6 +241,29 @@ enum Scenery {
         return bitmap.image
     }
 
+    /// A picture file with nothing around it, on the checkerboard every drawing app shows
+    /// nothing with.
+    static func clearThumbnail(of picture: CGImage, fitting side: CGFloat) -> CGImage {
+        let bitmap = Bitmap(size: CGSize(width: side, height: side))
+        let tile = CGRect(x: 3, y: 3, width: side - 6, height: side - 6)
+        bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.45), blur: 3, offset: CGSize(width: 0, height: 1)) {
+            bitmap.context.setFillColor(CGColor(gray: 1, alpha: 1))
+            bitmap.context.fill(tile)
+        }
+        let square: CGFloat = 9
+        bitmap.context.setFillColor(CGColor(gray: 0.78, alpha: 1))
+        for row in 0..<Int((tile.height / square).rounded(.up)) {
+            for column in 0..<Int((tile.width / square).rounded(.up)) where (row + column) % 2 == 0 {
+                bitmap.context.fill(CGRect(x: tile.minX + CGFloat(column) * square, y: tile.minY + CGFloat(row) * square, width: square, height: square).intersection(tile))
+            }
+        }
+        let aspect = CGFloat(picture.width) / CGFloat(picture.height)
+        let room = side - 14
+        let size = aspect >= 1 ? CGSize(width: room, height: room / aspect) : CGSize(width: room * aspect, height: room)
+        bitmap.draw(picture, in: CGRect(x: (side - size.width) / 2, y: (side - size.height) / 2, width: size.width, height: size.height))
+        return bitmap.image
+    }
+
     /// The pointer, its hot spot at `point`.
     static func drawCursor(_ cursor: NSCursor, at point: CGPoint, on bitmap: Bitmap) {
         let image = cursor.image

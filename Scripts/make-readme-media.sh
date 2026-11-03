@@ -17,18 +17,21 @@ trap 'rm -rf "$frames"' EXIT
 "$app/Contents/MacOS/PrettyFolder" --readme-media "$frames" --pictures "$docs/pictures"
 
 # 256 colors are plenty for the pictures too, at a third of the size.
-for picture in hero depth; do
+for picture in depth; do
     ffmpeg -loglevel error -y -i "$frames/$picture.png" \
         -vf "format=rgb24,split[a][b];[a]palettegen=max_colors=256[p];[b][p]paletteuse=dither=sierra2_4a" \
         -pix_fmt pal8 "$docs/$picture.png"
     echo "Wrote $docs/$picture.png"
 done
-for scene in drop hover size zoom turn fit; do
+for scene in hero drop hover clear size zoom turn fit; do
     # One palette for the whole animation keeps still parts still, so only what moves
     # is stored frame to frame. Ordered dithering and 20 frames a second keep photos
     # moving across the screen to a few megabytes.
+    # The hero is big and everything on it moves at once, so it gets fewer pixels and frames.
+    size="fps=20"
+    [ "$scene" = hero ] && size="fps=15,scale=1000:-1:flags=lanczos"
     ffmpeg -loglevel error -y -framerate 25 -i "$frames/$scene/frame-%04d.png" \
-        -vf "fps=20,format=rgb24,split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" \
+        -vf "$size,format=rgb24,split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" \
         "$docs/$scene.gif"
     echo "Wrote $docs/$scene.gif"
 done

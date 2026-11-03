@@ -21,6 +21,9 @@ extension Studio {
         /// A small square in the middle.
         static let badge = Look(style: IconStyle(x: 0.33, y: 0.37, width: 0.34, height: 0.34, mode: .fill))
 
+        /// A logo or a cut-out, the folder showing all around it.
+        static let sticker = Look(style: IconStyle(x: 0.21, y: 0.31, width: 0.58, height: 0.52, mode: .fit))
+
         /// A frame `factor` times the folder: zoomed into the part at `x`, `y`.
         static func zoomed(_ factor: Double, x: Double = 0.5, y: Double = 0.5) -> Look {
             Look(style: IconStyle(x: 0.5 - factor / 2, y: 0.5 - factor / 2, width: factor, height: factor, mode: .fill),
@@ -40,18 +43,51 @@ extension Studio {
         var look = Look.standard
     }
 
-    /// The folders on the Desktop, what's on them and how.
+    /// The folders in the hero's window when each has its own picture, its own way.
     private static let cast = [
         Folder(name: "Space", picture: "space-cat.jpg", look: .zoomed(1.5, y: 0.45)),
-        Folder(name: "Recipes", picture: "ramen.jpg"),
-        Folder(name: "Pets", picture: "corgi.jpg", look: .card(turned: -8)),
+        Folder(name: "Code", picture: "code.svg", look: .sticker),
+        Folder(name: "Wins", picture: "trophy.png", look: .sticker),
         Folder(name: "Travel", picture: "ararat.jpg", look: .front),
-        Folder(name: "Music", picture: "vinyl.jpg", look: .badge),
-        Folder(name: "Code", picture: "robot.jpg", look: .corner),
-        Folder(name: "Games", picture: "gamepad.jpg", look: .cover),
-        Folder(name: "Plants", picture: "monstera.jpg", look: .zoomed(2)),
         Folder(name: "Ideas", picture: "lightbulb.jpg"),
+        Folder(name: "Summer", picture: "watermelon.jpg", look: .cover),
+        Folder(name: "Launch", picture: "rocket.png", look: .sticker),
+        Folder(name: "Pets", picture: "corgi.jpg", look: .card(turned: -8)),
+
+        Folder(name: "Lunch", picture: "pizza.jpg", look: .cover),
+        Folder(name: "Work", picture: nil),
+        Folder(name: "Music", picture: "note.svg", look: .sticker),
+        Folder(name: "Recipes", picture: "ramen.jpg"),
+        Folder(name: "Stars", picture: "galaxy.jpg", look: .cover),
+        Folder(name: "Photos", picture: "camera.png", look: .sticker),
+        Folder(name: "Robots", picture: "robot.jpg", look: .corner),
+        Folder(name: "Plants", picture: "monstera.jpg", look: .zoomed(2)),
+
+        Folder(name: "Art", picture: "stained-glass.jpg", look: .cover),
+        Folder(name: "Cats", picture: "cat.png", look: .sticker),
+        Folder(name: "Energy", picture: "bolt.svg", look: .sticker),
+        Folder(name: "Vinyl", picture: "vinyl.jpg", look: .badge),
         Folder(name: "Taxes", picture: "piggy-bank.jpg", look: .card(turned: 7)),
+        Folder(name: "Games", picture: "gamepad.jpg", look: .cover),
+        Folder(name: "Peaks", picture: "peak.svg", look: .sticker),
+        Folder(name: "Sea", picture: "ocean.jpg", look: .cover),
+
+        Folder(name: "Trips", picture: "hot-air-balloons.jpg", look: .zoomed(1.5)),
+        Folder(name: "Sweets", picture: "donut.png", look: .sticker),
+        Folder(name: "Old Stuff", picture: "moss.jpg", look: .cover),
+        Folder(name: "Love", picture: "heart.svg", look: .sticker),
+        Folder(name: "Deadlines", picture: "lava.jpg", look: .cover),
+        Folder(name: "Happy", picture: "smile.svg", look: .sticker),
+        Folder(name: "Desert", picture: "cactus.png", look: .sticker),
+        Folder(name: "Party", picture: "sprinkles.jpg", look: .cover),
+    ]
+
+    /// The same folders when they're one big picture: the names everyone's folders have.
+    private static let everydayNames = [
+        "Invoices", "Work", "Not Work", "Final", "Final_v2", "Final_v2_REAL", "Screenshots", "Stuff",
+        "More Stuff", "Misc", "Taxes 2023", "Backups", "Receipts", "Do Not Open", "Clients", "Temp",
+        "New Folder", "New Folder 2", "asdf", "Untitled", "Untitled 2", "Side Project", "Side Project 7", "Resume",
+        "Resume_new", "Photos", "Videos", "Drafts", "Archive", "Important", "Later", "Memes",
     ]
 
     private func icon(_ folder: Folder, side: CGFloat) throws -> CGImage {
@@ -76,17 +112,155 @@ extension Studio {
 
     // MARK: - Hero
 
-    /// Two rows of folders with pictures on them, each its own way.
+    /// A Finder window whose folders together show one huge picture: it winks, then all the
+    /// folders turn over to another one, and at last each to a picture of its own.
     func renderHero() async throws {
-        let size = CGSize(width: 880, height: 396)
-        let bitmap = Bitmap(size: size)
-        bitmap.draw(Scenery.wallpaper(size: size), in: CGRect(origin: .zero, size: size))
-        let frames = row(count: 5, side: 112, top: 34, spacing: 162, width: size.width)
-            + row(count: 5, side: 112, top: 210, spacing: 162, width: size.width)
-        for (folder, frame) in zip(Self.cast, frames) {
-            Scenery.drawItem(on: bitmap, icon: try icon(folder, side: frame.width), frame: frame, name: folder.name)
+        enum Wall: Equatable {
+            /// A big picture, and how far down it the window's middle is.
+            case big(String, Double)
+            case own
         }
-        try write(bitmap.image, to: "hero.png")
+        let size = CGSize(width: 880, height: 480)
+        let window = CGRect(x: 16, y: 14, width: 848, height: 452)
+        let bar: CGFloat = 38
+        let columns = 8, rows = 4
+        let pitch = CGSize(width: 106, height: 102)
+        let side: CGFloat = 115
+        func center(_ column: Int, _ row: Int) -> CGPoint {
+            CGPoint(x: window.minX + (CGFloat(column) + 0.5) * pitch.width, y: window.minY + bar + 45 + CGFloat(row) * pitch.height)
+        }
+
+        let tiger = Wall.big("tiger.jpg", 0.4)
+        let waves: [(start: Double, to: Wall, origin: CGPoint)] = [
+            (1.8, .big("ararat-epic.jpg", 0.42), CGPoint(x: 3.5, y: 1.5)),
+            (3.3, .big("koi.jpg", 0.5), CGPoint(x: 0, y: 0)),
+            (4.8, .own, CGPoint(x: 7, y: 3)),
+            (7.0, tiger, CGPoint(x: 3.5, y: 3)),
+        ]
+        let winks = 0.7...1.05
+        let flip = 0.3, spread = 0.5
+        // The folders the closed eye touches, found by comparing the two pictures.
+        let winkPicture = "tiger-wink.jpg"
+
+        // Every folder's piece of a big picture, as the app draws it.
+        var loaded: [String: CGImage] = [:]
+        var pieces: [String: CGImage] = [:]
+        func piece(_ name: String, down: Double, column: Int, row: Int) throws -> CGImage {
+            let key = "\(name)|\(column)|\(row)"
+            if let cached = pieces[key] { return cached }
+            if loaded[name] == nil {
+                loaded[name] = NSImage(contentsOf: pictureURL(name))!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+            }
+            let image = loaded[name]!
+            let shown = size.width + 40
+            let scale = CGFloat(image.width) / shown
+            let top = CGFloat(image.height) * CGFloat(down) - size.height / 2 * scale
+            let spot = center(column, row)
+            let crop = CGRect(x: (spot.x - side / 2 + 20) * scale, y: top + (spot.y - side / 2) * scale, width: side * scale, height: side * scale)
+            let made = icon(SourceImage(bitmap: image.cropping(to: crop.integral)!), style: Look.cover.style, side: side)
+            pieces[key] = made
+            return made
+        }
+        // The closed eye only changes the folders it touches.
+        func differs(_ column: Int, _ row: Int) throws -> Bool {
+            guard FileManager.default.fileExists(atPath: pictureURL(winkPicture).path) else { return false }
+            let a = try piece("tiger.jpg", down: 0.4, column: column, row: row), b = try piece(winkPicture, down: 0.4, column: column, row: row)
+            return Self.difference(a, b) > 14
+        }
+        var winking = Set<Int>()
+        for row in 0..<rows {
+            for column in 0..<columns where try differs(column, row) { winking.insert(row * columns + column) }
+        }
+        let own = try Self.cast.map { try icon($0, side: side) }
+
+        let wallpaper = Scenery.wallpaper(size: size)
+        let sequence = try frameSequence("hero")
+        for index in 0..<frameCount(8.0) {
+            try autoreleasepool {
+                let t = Double(index) / Stage.framesPerSecond
+                let bitmap = Bitmap(size: size)
+                let context = bitmap.context
+                bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
+                bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.5), blur: 14, offset: CGSize(width: 0, height: 5)) {
+                    context.addPath(CGPath(roundedRect: window, cornerWidth: 11, cornerHeight: 11, transform: nil))
+                    context.setFillColor(CGColor.hex(0x17171A))
+                    context.fillPath()
+                }
+                context.saveGState()
+                context.addPath(CGPath(roundedRect: window, cornerWidth: 11, cornerHeight: 11, transform: nil))
+                context.clip()
+                context.setFillColor(CGColor.hex(0x2A2A2E))
+                context.fill(CGRect(x: window.minX, y: window.minY, width: window.width, height: bar))
+                context.restoreGState()
+                for (light, color) in [0xFF5F57, 0xFEBC2E, 0x28C840].enumerated() {
+                    context.setFillColor(CGColor.hex(UInt32(color)))
+                    context.fillEllipse(in: CGRect(x: window.minX + 14 + CGFloat(light) * 20, y: window.minY + bar / 2 - 6, width: 12, height: 12))
+                }
+                let title = NSAttributedString(string: "Documents", attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: NSColor.white])
+                bitmap.appKit { title.draw(at: CGPoint(x: size.width / 2 - title.size().width / 2, y: window.minY + bar / 2 - title.size().height / 2)) }
+
+                for row in 0..<rows {
+                    for column in 0..<columns {
+                        var now = tiger, before = tiger
+                        var amount = 1.0
+                        for wave in waves {
+                            let far = [CGPoint(x: 0, y: 0), CGPoint(x: 7, y: 0), CGPoint(x: 0, y: 3), CGPoint(x: 7, y: 3)]
+                                .map { hypot($0.x - wave.origin.x, $0.y - wave.origin.y) }.max()!
+                            let start = wave.start + spread * Double(hypot(CGFloat(column) - wave.origin.x, CGFloat(row) - wave.origin.y) / far)
+                            guard t >= start else { break }
+                            before = now
+                            now = wave.to
+                            amount = min(1, (t - start) / flip)
+                        }
+                        let shown = amount < 0.5 ? before : now
+                        let position = row * columns + column
+                        let image: CGImage
+                        switch shown {
+                        case .big(let name, let down):
+                            let closed = name == "tiger.jpg" && winks.contains(t) && winking.contains(position)
+                            image = try piece(closed ? winkPicture : name, down: down, column: column, row: row)
+                        case .own:
+                            image = own[position]
+                        }
+                        let spot = center(column, row)
+                        context.saveGState()
+                        context.translateBy(x: spot.x, y: spot.y)
+                        if amount < 1 {
+                            let angle = amount * .pi
+                            let lift = 1 + 0.14 * CGFloat(sin(angle))
+                            context.concatenate(CGAffineTransform(a: max(CGFloat(abs(cos(angle))), 0.02) * lift, b: CGFloat(sin(angle)) * 0.15 * (amount < 0.5 ? 1 : -1), c: 0, d: lift, tx: 0, ty: 0))
+                        }
+                        bitmap.draw(image, in: CGRect(x: -side / 2, y: -side / 2, width: side, height: side))
+                        context.restoreGState()
+
+                        let name = shown == .own ? Self.cast[position].name : Self.everydayNames[position]
+                        let label = NSAttributedString(string: name, attributes: [.font: NSFont.systemFont(ofSize: 10.5, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(0.93)])
+                        bitmap.appKit { label.draw(at: CGPoint(x: spot.x - label.size().width / 2, y: spot.y + side * 0.37 - 1)) }
+                    }
+                }
+                try sequence.add(bitmap.image)
+            }
+        }
+    }
+
+    /// How different two icons of the same size are: the biggest difference of a small square
+    /// between them, on a scale of 0 to 255.
+    private static func difference(_ a: CGImage, _ b: CGImage) -> Double {
+        let side = 16
+        func small(_ image: CGImage) -> [UInt8] {
+            var bytes = [UInt8](repeating: 0, count: side * side * 4)
+            let context = CGContext(data: &bytes, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                    space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.interpolationQuality = .medium
+            context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return bytes
+        }
+        let x = small(a), y = small(b)
+        var most = 0.0
+        for k in Swift.stride(from: 0, to: x.count, by: 4) {
+            most = max(most, (0..<3).map { abs(Double(x[k + $0]) - Double(y[k + $0])) }.max()!)
+        }
+        return most
     }
 
     // MARK: - Depth
@@ -97,8 +271,8 @@ extension Studio {
         let bitmap = Bitmap(size: size)
         bitmap.draw(Scenery.wallpaper(size: size), in: CGRect(origin: .zero, size: size))
         let materials = [
-            ("Soft Skills", "fur.jpg"), ("Old Projects", "moss.jpg"), ("Portfolio", "marble.jpg"), ("Deadlines", "lava.jpg"),
-            ("Party", "sprinkles.jpg"), ("Vacation", "ocean.jpg"), ("Wardrobe", "denim.jpg"), ("Winter", "knit.jpg"),
+            ("Summer", "watermelon.jpg"), ("Old Projects", "moss.jpg"), ("Art", "stained-glass.jpg"), ("Deadlines", "lava.jpg"),
+            ("Party", "sprinkles.jpg"), ("Vacation", "ocean.jpg"), ("Lunch", "pizza.jpg"), ("Stars", "galaxy.jpg"),
         ]
         let frames = row(count: 4, side: 120, top: 32, spacing: 172, width: size.width)
             + row(count: 4, side: 120, top: 212, spacing: 172, width: size.width)
@@ -113,99 +287,169 @@ extension Studio {
 
     /// A picture dragged from the Desktop onto a folder's Set as Icon badge.
     func renderDrop() async throws {
+        try await renderDrags(
+            "drop",
+            folders: [
+                Folder(name: "Music", picture: "vinyl.jpg", look: .zoomed(1.5)),
+                Folder(name: "Ideas", picture: "lightbulb.jpg", look: .badge),
+                Folder(name: "Pets", picture: nil),
+                Folder(name: "Plants", picture: "monstera.jpg", look: .cover),
+            ],
+            drags: [Drag(file: "corgi.jpg", target: 2, look: .standard, start: 0, at: CGPoint(x: 172, y: 272))],
+            seconds: 6.6, pointerStart: CGPoint(x: 560, y: 380), pointerEnd: CGPoint(x: 520, y: 330)
+        )
+    }
+
+    /// Transparent files, on the checkerboard every drawing app shows nothing with, dropped on
+    /// folders: on the folder only the picture is left, the folder showing all around it.
+    func renderClear() async throws {
+        try await renderDrags(
+            "clear",
+            folders: [
+                Folder(name: "Launch", picture: nil),
+                Folder(name: "Wins", picture: "trophy.png", look: .sticker),
+                Folder(name: "Startup", picture: nil),
+                Folder(name: "Cats", picture: "cat.png", look: .sticker),
+            ],
+            drags: [
+                Drag(file: "rocket.png", target: 0, look: .sticker, start: 0, at: CGPoint(x: 172, y: 272), clear: true),
+                Drag(file: "bolt.svg", target: 2, look: .sticker, start: 3.7, at: CGPoint(x: 452, y: 272), clear: true),
+            ],
+            seconds: 9.6, pointerStart: CGPoint(x: 360, y: 395), pointerEnd: CGPoint(x: 340, y: 240)
+        )
+    }
+
+    /// A picture file on its way to a folder.
+    private struct Drag {
+        let file: String
+        let target: Int
+        let look: Look
+        /// When this drag begins, in the scene.
+        let start: Double
+        /// Where the file is on the Desktop.
+        let at: CGPoint
+        /// It has nothing around it: shown on a checkerboard.
+        var clear = false
+    }
+
+    private func renderDrags(_ scene: String, folders: [Folder], drags: [Drag], seconds: Double, pointerStart: CGPoint, pointerEnd: CGPoint) async throws {
         let size = CGSize(width: 720, height: 420)
         let wallpaper = Scenery.wallpaper(size: size)
-        let folders = [
-            Folder(name: "Music", picture: "vinyl.jpg", look: .zoomed(1.5)),
-            Folder(name: "Ideas", picture: "lightbulb.jpg", look: .badge),
-            Folder(name: "Pets", picture: nil),
-            Folder(name: "Plants", picture: "monstera.jpg", look: .cover),
-        ]
         let names = folders.map(\.name)
-        let frames = row(count: 4, side: 96, top: 88, spacing: 140, width: size.width)
+        let frames = row(count: folders.count, side: 96, top: 88, spacing: 140, width: size.width)
         var icons = try folders.map { try icon($0, side: 96) }
-        let target = 2
-        let dropped = "corgi.jpg"
-        let droppedIcon = icon(try picture(dropped), side: 96)
 
-        // The picture file, as Finder shows it on the Desktop.
-        let file = NSImage(contentsOf: pictureURL(dropped))!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
-        let fileFrame = CGRect(x: 172, y: 272, width: 96, height: 96)
-        let thumbnail = Scenery.thumbnail(of: file, fitting: 96)
+        struct Prepared {
+            let dropped: CGImage
+            let frame: CGRect
+            let thumbnail: CGImage
+            let press: CGPoint
+            let over: CGPoint
+            let badgeFrame: CGRect
+            let onBadge: CGPoint
+            let badges: [DropBadgeModel.State: CGImage]
+        }
+        var prepared: [Prepared] = []
+        var path = PointerPath(start: pointerStart)
+        for drag in drags {
+            let target = drag.target
+            let droppedIcon = icon(try picture(drag.file), style: drag.look.style, placement: drag.look.placement, side: 96)
 
-        // The badge, in each of its looks, where the app puts it for this folder.
-        // Grabbed by its bottom-right corner, so what's dragged rides up and to the left of
-        // the pointer and the badge's title stays in sight.
-        let pressPoint = CGPoint(x: fileFrame.minX + 86, y: fileFrame.minY + 74)
-        let overFolder = CGPoint(x: frames[target].midX - 4, y: frames[target].midY + 8)
-        let item = FinderItem(
-            url: URL(fileURLWithPath: "/Pets/"), layout: .icon,
-            iconFrame: Stage.accessibilityRect(frames[target]), nameFrame: nil, rowFrame: nil
-        )
-        guard let badgeScreenFrame = DropBadgeController.frame(for: item, avoiding: Stage.appKitPoint(overFolder)) else {
-            throw MediaError("The badge has nowhere to go")
+            // The picture file, as Finder shows it on the Desktop.
+            let file = NSImage(contentsOf: pictureURL(drag.file))!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+            let fileFrame = CGRect(origin: drag.at, size: CGSize(width: 96, height: 96))
+            let thumbnail = drag.clear ? Scenery.clearThumbnail(of: file, fitting: 96) : Scenery.thumbnail(of: file, fitting: 96)
+
+            // The badge, in each of its looks, where the app puts it for this folder.
+            // Grabbed by its bottom-right corner, so what's dragged rides up and to the left of
+            // the pointer and the badge's title stays in sight.
+            let pressPoint = CGPoint(x: fileFrame.minX + 86, y: fileFrame.minY + 74)
+            let overFolder = CGPoint(x: frames[target].midX - 4, y: frames[target].midY + 8)
+            let item = FinderItem(
+                url: URL(fileURLWithPath: "/\(names[target])/"), layout: .icon,
+                iconFrame: Stage.accessibilityRect(frames[target]), nameFrame: nil, rowFrame: nil
+            )
+            guard let badgeScreenFrame = DropBadgeController.frame(for: item, avoiding: Stage.appKitPoint(overFolder)) else {
+                throw MediaError("The badge has nowhere to go")
+            }
+            let badgeFrame = Stage.stageRect(fromAppKit: badgeScreenFrame)
+            let badgeModel = DropBadgeModel()
+            badgeModel.fontSize = DropBadgeController.fontSize(for: item)
+            var badges: [DropBadgeModel.State: CGImage] = [:]
+            for state in [DropBadgeModel.State.ready, .targeted, .working, .done] {
+                badgeModel.state = state
+                let host = NSHostingView(rootView: DropBadgeContent(model: badgeModel))
+                _ = sprite(of: host, size: badgeFrame.size)
+                await settle(milliseconds: 450)
+                badges[state] = sprite(of: host, size: badgeFrame.size)
+            }
+            let onBadge = CGPoint(x: badgeFrame.minX + DropBadgeController.shadowMargin + 18, y: badgeFrame.midY + 1)
+
+            path.move(to: pressPoint, from: drag.start + 0.4, to: drag.start + 1.2)
+            path.move(to: overFolder, from: drag.start + 1.45, to: drag.start + 2.55, arc: -0.12)
+            path.move(to: onBadge, from: drag.start + 2.95, to: drag.start + 3.3, arc: 0)
+            prepared.append(Prepared(dropped: droppedIcon, frame: fileFrame, thumbnail: thumbnail, press: pressPoint, over: overFolder,
+                                     badgeFrame: badgeFrame, onBadge: onBadge, badges: badges))
         }
-        let badgeFrame = Stage.stageRect(fromAppKit: badgeScreenFrame)
-        let badgeModel = DropBadgeModel()
-        badgeModel.fontSize = DropBadgeController.fontSize(for: item)
-        var badges: [DropBadgeModel.State: CGImage] = [:]
-        for state in [DropBadgeModel.State.ready, .targeted, .working, .done] {
-            badgeModel.state = state
-            let host = NSHostingView(rootView: DropBadgeContent(model: badgeModel))
-            _ = sprite(of: host, size: badgeFrame.size)
-            await settle(milliseconds: 450)
-            badges[state] = sprite(of: host, size: badgeFrame.size)
-        }
+        path.move(to: pointerEnd, from: drags.last!.start + 4.7, to: drags.last!.start + 5.5)
+
         let badgeInset = DropBadgeController.shadowMargin
-        let onBadge = CGPoint(x: badgeFrame.minX + badgeInset + 18, y: badgeFrame.midY + 1)
-
-        var path = PointerPath(start: CGPoint(x: 560, y: 380))
-        path.move(to: pressPoint, from: 0.4, to: 1.2)
-        path.move(to: overFolder, from: 1.45, to: 2.55, arc: -0.12)
-        path.move(to: onBadge, from: 2.95, to: 3.3, arc: 0)
-        path.move(to: CGPoint(x: 520, y: 330), from: 4.7, to: 5.5)
-
-        let pressAt = 1.3, releaseAt = 3.45
-        let badgeShownAt = 2.55 + 0.18, doneAt = 3.75, badgeHiddenAt = doneAt + 0.7
-        let sequence = try frameSequence("drop")
-        for index in 0..<frameCount(6.6) {
+        let sequence = try frameSequence(scene)
+        for index in 0..<frameCount(seconds) {
             // A frame's images go once it's written, not when the whole scene is done.
             try autoreleasepool {
                 let t = Double(index) / Stage.framesPerSecond
                 let pointer = path.position(at: t)
-                let dragging = t >= pressAt && t < releaseAt
-                let overBadge = dragging && t >= badgeShownAt && badgeFrame.insetBy(dx: badgeInset, dy: badgeInset).contains(pointer)
-                if t >= doneAt { icons[target] = droppedIcon }
+                // The drag under way or the last one done.
+                let current = drags.lastIndex { t >= $0.start } ?? 0
+                let drag = drags[current], ready = prepared[current]
+                let local = t - drag.start
+                let pressAt = 1.3, releaseAt = 3.45
+                let badgeShownAt = 2.55 + 0.18, doneAt = 3.75, badgeHiddenAt = doneAt + 0.7
+                let dragging = local >= pressAt && local < releaseAt
+                let overBadge = dragging && local >= badgeShownAt && ready.badgeFrame.insetBy(dx: badgeInset, dy: badgeInset).contains(pointer)
+                for (done, other) in zip(drags, prepared) where t >= done.start + doneAt { icons[done.target] = other.dropped }
 
                 let bitmap = Bitmap(size: size)
                 bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
                 for (position, frame) in frames.enumerated() {
-                    let targeted = dragging && position == target && frame.contains(pointer) && !overBadge
+                    let targeted = dragging && position == drag.target && frame.contains(pointer) && !overBadge
                     Scenery.drawItem(on: bitmap, icon: icons[position], frame: frame, name: names[position], targeted: targeted)
                 }
-                Scenery.drawItem(on: bitmap, icon: thumbnail, frame: fileFrame, name: dropped, selected: t >= pressAt)
+                for (position, (other, file)) in zip(drags, prepared).enumerated() {
+                    Scenery.drawItem(on: bitmap, icon: file.thumbnail, frame: file.frame, name: fileName(other),
+                                     selected: position == current && local >= pressAt)
+                }
 
                 // The badge comes up a moment after the picture reaches the folder.
-                if t >= badgeShownAt && t < badgeHiddenAt + 0.1 {
-                    let state: DropBadgeModel.State = t >= doneAt ? .done : t >= releaseAt ? .working : overBadge ? .targeted : .ready
-                    let fadeIn = progress(t, badgeShownAt, badgeShownAt + 0.12)
-                    let fadeOut = 1 - progress(t, badgeHiddenAt, badgeHiddenAt + 0.1)
-                    bitmap.draw(badges[state]!, in: badgeFrame, alpha: CGFloat(fadeIn * fadeOut))
+                for (other, file) in zip(drags, prepared) {
+                    let at = t - other.start
+                    if at >= badgeShownAt && at < badgeHiddenAt + 0.1 {
+                        let state: DropBadgeModel.State = at >= doneAt ? .done : at >= releaseAt ? .working : overBadge ? .targeted : .ready
+                        let fadeIn = progress(at, badgeShownAt, badgeShownAt + 0.12)
+                        let fadeOut = 1 - progress(at, badgeHiddenAt, badgeHiddenAt + 0.1)
+                        bitmap.draw(file.badges[state]!, in: file.badgeFrame, alpha: CGFloat(fadeIn * fadeOut))
+                    }
                 }
 
                 if dragging {
                     // What is being dragged follows the pointer, a little see-through.
-                    let offset = CGPoint(x: fileFrame.minX - pressPoint.x, y: fileFrame.minY - pressPoint.y)
-                    let dragFrame = CGRect(x: pointer.x + offset.x, y: pointer.y + offset.y, width: fileFrame.width, height: fileFrame.height)
+                    let offset = CGPoint(x: ready.frame.minX - ready.press.x, y: ready.frame.minY - ready.press.y)
+                    let dragFrame = CGRect(x: pointer.x + offset.x, y: pointer.y + offset.y, width: ready.frame.width, height: ready.frame.height)
                     bitmap.context.saveGState()
                     bitmap.context.setAlpha(0.75)
-                    Scenery.drawItem(on: bitmap, icon: thumbnail, frame: dragFrame, name: dropped, selected: true)
+                    Scenery.drawItem(on: bitmap, icon: ready.thumbnail, frame: dragFrame, name: fileName(drag), selected: true)
                     bitmap.context.restoreGState()
                 }
                 Scenery.drawCursor(overBadge ? .dragCopy : .arrow, at: pointer, on: bitmap)
                 try sequence.add(bitmap.image)
             }
         }
+    }
+
+    /// What a dragged file is called on the Desktop.
+    private func fileName(_ drag: Drag) -> String {
+        drag.file == "bolt.svg" ? "logo.svg" : drag.file
     }
 
     // MARK: - The buttons on a folder
@@ -217,7 +461,7 @@ extension Studio {
         let wallpaper = Scenery.wallpaper(size: size)
         // Games is the way the window opens it: as a new picture comes.
         let folders = [
-            Self.folder("Code"), Folder(name: "Recipes", picture: "ramen.jpg", look: .front),
+            Folder(name: "Code", picture: "robot.jpg", look: .corner), Folder(name: "Recipes", picture: "ramen.jpg", look: .front),
             Folder(name: "Games", picture: "gamepad.jpg"), Self.folder("Taxes"),
         ]
         let frames = row(count: 4, side: 96, top: 120, spacing: 140, width: size.width)
