@@ -121,11 +121,11 @@ public struct IconSnapping: Sendable {
     /// to stick to it.
     public static let turnThreshold = 4.0
 
-    /// A turn of `degrees`, snapped: within `turnThreshold` of upright or a quarter turn, it is
+    /// A turn of `degrees`, snapped: within `threshold` of upright or a quarter turn, it is
     /// that. Also says whether it stuck.
-    public static func turn(_ degrees: Double) -> (degrees: Double, snapped: Bool) {
+    public static func turn(_ degrees: Double, within threshold: Double = turnThreshold) -> (degrees: Double, snapped: Bool) {
         let quarter = (degrees / 90).rounded() * 90
-        guard abs(degrees - quarter) <= turnThreshold else { return (degrees, false) }
+        guard abs(degrees - quarter) <= threshold else { return (degrees, false) }
         return (quarter, true)
     }
 

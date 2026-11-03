@@ -567,6 +567,11 @@ import Testing
         #expect(IconSnapping.turn(-178) == (-180, true))
         #expect(IconSnapping.turn(10) == (10, false))
         #expect(IconSnapping.turn(45) == (45, false))
+        // A finer control asks for a narrower reach.
+        #expect(IconSnapping.turn(1.5, within: 1.5) == (0, true))
+        #expect(IconSnapping.turn(88, within: 1.5) == (88, false))
+        #expect(IconSnapping.turn(-91, within: 1.5) == (-90, true))
+        #expect(IconSnapping.turn(3, within: 0) == (3, false))
     }
 
     @Test func anEdgeDraggedToTheFoldersTopStaysOnIt() {

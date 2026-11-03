@@ -140,6 +140,7 @@ private struct EditorView: View {
     @Bindable var model: EditorModel
     @Environment(\.undoManager) private var undoManager
     @State private var isDropTargeted = false
+    @State private var turnLink = TurnLink()
 
     private let editorSide = StyleEditor.side
 
@@ -168,9 +169,14 @@ private struct EditorView: View {
                 .padding(.horizontal, 22)
                 .padding(.top, 10)
 
+            turnBar
+                .padding(.horizontal, 22)
+                .padding(.top, 10)
+
             tools
                 .padding(.horizontal, 22)
-                .padding(.vertical, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
 
             if model.progress.isRunning {
                 ProgressView(value: Double(model.progress.done), total: Double(model.progress.total))
@@ -212,7 +218,8 @@ private struct EditorView: View {
                 placesPicture: model.placesPicture,
                 side: editorSide,
                 onBegin: { model.beginChange(holding: $0) },
-                onCommit: { model.commit() }
+                onCommit: { model.commit() },
+                turnLink: turnLink
             )
             if model.isEditingFolders && !model.hasPicture {
                 addButton
@@ -249,6 +256,26 @@ private struct EditorView: View {
         .accessibilityLabel(Text("Choose a Picture"))
     }
 
+    // MARK: - Turning
+
+    /// The dial that turns the picture to any angle, between quarter turns either way. Only a
+    /// folder's own picture turns: the default look keeps it upright.
+    private var turnBar: some View {
+        let canTurn = model.placesPicture && !model.isHolding
+        return HStack(spacing: 6) {
+            QuarterTurnButton(symbol: "rotate.left", help: "Rotate Left 90° (⌘L)", label: "Rotate Left") {
+                model.rotatePicture(clockwise: false)
+            }
+            .disabled(!canTurn)
+            TurnDial(degrees: model.placement.rotation, isEnabled: model.placesPicture, link: turnLink)
+                .frame(height: TurnDialView.height)
+            QuarterTurnButton(symbol: "rotate.right", help: "Rotate Right 90° (⌘R)", label: "Rotate Right") {
+                model.rotatePicture(clockwise: true)
+            }
+            .disabled(!canTurn)
+        }
+    }
+
     // MARK: - Tools
 
     private var tools: some View {
@@ -258,13 +285,6 @@ private struct EditorView: View {
                 help: model.isEditingFolders ? "Choose a Picture…" : "Preview with Another Picture…"
             ) { model.choosePicture() }
 
-            if model.isEditingFolders {
-                // Like Preview's: a quarter turn to the left, or with Option to the right.
-                ToolButton(symbol: "rotate.left", help: "Rotate Left (⌘L). ⌥-click to rotate right (⌘R).", label: "Rotate Left") {
-                    model.rotatePicture(clockwise: NSEvent.modifierFlags.contains(.option))
-                }
-                .disabled(!model.hasPicture || model.isHolding)
-            }
 
             Spacer(minLength: 8)
             Picker("Scaling", selection: Binding(get: { model.style.mode }, set: { model.setMode($0) })) {
@@ -307,6 +327,29 @@ private struct EditorView: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
+    }
+}
+
+/// A quarter turn, beside the dial: lighter than the tools, as part of it.
+private struct QuarterTurnButton: View {
+    let symbol: String
+    let help: LocalizedStringKey
+    let label: LocalizedStringKey
+    let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .regular))
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .opacity(isEnabled ? 1 : 0.4)
+        .help(help)
+        .accessibilityLabel(Text(label))
     }
 }
 

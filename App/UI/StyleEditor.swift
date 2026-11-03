@@ -5,8 +5,8 @@ import SwiftUI
 /// The folder icon, big, with the picture on it to place by hand: drag the rectangle to move
 /// it, its handles to resize it, and pinch or scroll to make it bigger or smaller, well past
 /// the folder; drag with the right button (or Control, or after a double-click) to move the
-/// picture inside it, and turn the picture by twisting on the trackpad or dragging just outside
-/// a corner. The arrow keys nudge the rectangle (the picture with ⌥), ⌘+ and ⌘− make it bigger
+/// picture inside it, and turn the picture to any angle with the dial below it (`TurnDial`), by
+/// twisting on the trackpad or by dragging just outside a corner. The arrow keys nudge the rectangle (the picture with ⌥), ⌘+ and ⌘− make it bigger
 /// or smaller, and ⌘L and ⌘R turn the picture. The picture is always as big as Fill or Fit
 /// makes it in the rectangle, turned as it is.
 ///
@@ -34,6 +34,8 @@ struct StyleEditor: NSViewRepresentable {
     var onBegin: (_ holding: Bool) -> Void = { _ in }
     /// The change is finished: a drag or a pinch ended, a burst settled.
     var onCommit: () -> Void = {}
+    /// Lets the dial below the folder turn the picture through the editor.
+    var turnLink: TurnLink?
 
     /// How big the window shows the folder, in points.
     static let side: CGFloat = 300
@@ -55,6 +57,7 @@ struct StyleEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ view: StyleEditorView, context: Context) {
+        turnLink?.editor = view
         view.actions = StyleEditorView.Actions(
             current: { (style, placement) },
             change: { style = $0; placement = $1 },
@@ -150,6 +153,11 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     private var gestureStart: (style: IconStyle, placement: PicturePlacement)?
     private var pinching: (startRect: CGRect, magnification: CGFloat)?
     private var twisting: (startRotation: Double, center: CGPoint, rotation: Double)?
+    /// The dial being dragged, which turns the picture around this middle (unit coordinates).
+    private var dialing: CGPoint?
+    /// Keys or scrolling on the dial, in a burst: the turn asked for so far, and the middle
+    /// the picture turns around.
+    private var burstTurn: (rotation: Double, center: CGPoint)?
     /// The turn, shown by the rectangle while the picture is being turned.
     private var turnShown: Double?
     /// Whether the turn going on has stuck to upright or a quarter turn.
@@ -215,10 +223,12 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
                 burstEnd.cancel()
                 self.burstEnd = nil
                 requestedRect = nil
+                burstTurn = nil
                 // What showed while it went on goes with it, once SwiftUI is done updating.
                 Task { [weak self] in
                     guard let self, self.burstEnd == nil, !self.isGesturing, self.dragged == nil else { return }
                     showGuides([])
+                    showTurn(nil)
                     setAdjusting(false)
                     refreshFrame()
                 }
@@ -270,7 +280,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     /// Whether there is a picture to move and turn inside its rectangle.
     private var canPlacePicture: Bool { placesPicture && picture != nil }
 
-    private var isGesturing: Bool { pinching != nil || twisting != nil }
+    private var isGesturing: Bool { pinching != nil || twisting != nil || dialing != nil }
 
     /// What pressing at `point` would do.
     func part(at point: CGPoint) -> Part {
@@ -475,7 +485,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         case .handle:
             String(localized: "Drag to resize. ⌥ resizes around the middle.")
         case .frame where canPlacePicture:
-            String(localized: "Drag to move the frame; pinch or scroll to make it bigger or smaller. Drag with the right button, or double-click and drag, to move the picture inside it. Twist on the trackpad to turn the picture.")
+            String(localized: "Drag to move the frame; pinch or scroll to make it bigger or smaller. Drag with the right button, or double-click and drag, to move the picture inside it. Turn the picture with the dial below, or twist on the trackpad.")
         case .frame:
             String(localized: "Drag to move the frame; pinch or scroll to make it bigger or smaller.")
         case .turn:
@@ -653,15 +663,18 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     }
 
     /// Turns the picture to `degrees`, its middle at `center` as far as its new size lets it:
-    /// in steps of 15° with Shift, sticking to upright and quarter turns unless Command is held.
-    private func turnPicture(to degrees: Double, keeping center: CGPoint, modifiers: NSEvent.ModifierFlags) {
+    /// in steps of 15° with Shift, sticking to upright and quarter turns within `reach` unless
+    /// Command is held.
+    private func turnPicture(
+        to degrees: Double, keeping center: CGPoint, modifiers: NSEvent.ModifierFlags, reach: Double = IconSnapping.turnThreshold
+    ) {
         guard let picture else { return }
         var degrees = degrees
         var stuck = false
         if modifiers.contains(.shift) {
             degrees = (degrees / Self.turnStep).rounded() * Self.turnStep
         } else if !modifiers.contains(.command) {
-            (degrees, stuck) = IconSnapping.turn(degrees)
+            (degrees, stuck) = IconSnapping.turn(degrees, within: reach)
         }
         if stuck, !turnIsStuck {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
@@ -760,6 +773,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         if restoring { set(start.style, start.placement) }
         pinching = nil
         twisting = nil
+        dialing = nil
         finishGestures()
     }
 
@@ -802,6 +816,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     /// changes right before and after it.
     private func zoom(by factor: CGFloat, snaps: Bool) {
         guard isEnabled, dragged == nil, !isGesturing else { return }
+        if burstTurn != nil { finishBurst() }
         burst(adjusting: true) {
             // From the size asked for so far: sticking to an edge doesn't hold it back.
             let requested = IconGeometry.scaled(requestedRect ?? style.rect, by: factor)
@@ -833,6 +848,66 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         guard canPlacePicture, let picture else { return }
         let turned = StyleEditor.placement(placement, turnedBy: counterclockwise ? 90 : -90, imageSize: picture.size, style: style)
         change { set(style, turned) }
+    }
+
+    // MARK: - The dial
+
+    /// How far the picture is turned, as the editor has it now.
+    var turn: Double { placement.rotation }
+
+    /// Whether the picture can be turned now, from the dial.
+    var canTurn: Bool { isEnabled && canPlacePicture && dragged == nil && !isGesturing }
+
+    /// The dial is taken hold of: one change, as for a twist, until it is let go. `false` when
+    /// the picture can't be turned now.
+    func beginDialTurn() -> Bool {
+        guard dialing == nil, canTurn, beginGesture() else { return false }
+        dialing = pictureCenter()
+        turnIsStuck = false
+        refreshFrame()
+        return true
+    }
+
+    /// The dial dragged to `degrees`: sticking to upright and quarter turns within `reach`.
+    func dialTurn(to degrees: Double, modifiers: NSEvent.ModifierFlags, reach: Double) {
+        guard isEnabled, let center = dialing else { return }
+        turnPicture(to: degrees, keeping: center, modifiers: modifiers, reach: reach)
+    }
+
+    /// The dial let go, or put back with Escape.
+    func endDialTurn(restoring: Bool) {
+        guard dialing != nil else { return }
+        guard !restoring else { return endGestures(restoring: true) }
+        dialing = nil
+        showTurn(nil)
+        endGestureIfDone()
+    }
+
+    /// Keys or scrolling on the dial: `degrees` further, as one burst with the turns right
+    /// before and after. With `steps`, to the next multiple of 15° that way instead.
+    func dialTurn(by degrees: Double, steps: Bool = false) {
+        guard canTurn, degrees != 0 else { return }
+        // Moving or resizing in a burst of its own: the picture's middle has moved since.
+        if burstEnd != nil, burstTurn == nil { finishBurst() }
+        burst(adjusting: true) {
+            var current = burstTurn ?? (placement.rotation, pictureCenter())
+            // Whole degrees, as the dial reads; scrolling adds up fractions until they count.
+            let shown = current.rotation.rounded()
+            current.rotation = !steps ? current.rotation + degrees
+                : degrees > 0 ? ((shown / Self.turnStep).rounded(.down) + 1) * Self.turnStep
+                : ((shown / Self.turnStep).rounded(.up) - 1) * Self.turnStep
+            burstTurn = current
+            turnPicture(to: current.rotation.rounded(), keeping: current.center, modifiers: .command)
+        }
+    }
+
+    /// The picture upright again, where it is.
+    func turnUpright() {
+        guard canTurn, placement.rotation != 0, let picture else { return }
+        let upright = IconGeometry.placement(
+            near: pictureCenter(), rotation: 0, imageSize: picture.size, style: style, canvas: side, folder: Self.folderEdges
+        )
+        change { set(style, upright) }
     }
 
     // MARK: - Changes made at once
@@ -883,6 +958,8 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         guard isEnabled, dragged == nil, !isGesturing, let offset, modifiers.isDisjoint(with: [.command, .control]) else {
             return super.keyDown(with: event)
         }
+        // Turning from the dial is a burst of its own.
+        if burstTurn != nil { finishBurst() }
         if modifiers.contains(.option) {
             guard let moved = picture(movedBy: offset) else { return }
             burst { set(style, moved) }
@@ -923,6 +1000,8 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         burstEnd.cancel()
         self.burstEnd = nil
         requestedRect = nil
+        burstTurn = nil
+        showTurn(nil)
         showGuides([])
         setAdjusting(false)
         actions.commit()
