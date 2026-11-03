@@ -93,9 +93,10 @@ public enum ImageLoaderError: LocalizedError, Equatable {
 /// GIF, TIFF, BMP, ICNS, PSD, RAW, JPEG XL, PDF, SVG and anything Quick Look can preview.
 public enum ImageLoader {
     /// Bitmaps are downsampled so their shorter side is at most this many pixels. The
-    /// largest icon is 1024 px, so this keeps full quality even for a picture that
-    /// fills the whole canvas, while a 100-megapixel photo never sits in memory.
-    public static let maxShortSide = 1024
+    /// largest icon is 1024 px, so this keeps full quality for a picture made twice as big as
+    /// the whole canvas, and at the sizes Finder mostly shows, for one made several times as
+    /// big, while a 100-megapixel photo never sits in memory.
+    public static let maxShortSide = 2048
     /// Caps panoramas and other extreme aspect ratios.
     public static let maxLongSide = 4096
 

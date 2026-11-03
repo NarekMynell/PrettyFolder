@@ -71,24 +71,84 @@ public enum FolderArtwork {
         return shape.isPlausible ? shape : nil
     }
 
-    /// What the folder in `icon` gives a picture drawn on it at `side` × `side` pixels: its
-    /// outline, and its light and shade. `shape` says where the folder's front is.
+    /// What the folder in `icon` gives a picture drawn on it at `side` × `side` pixels: the
+    /// folder itself apart from its shadow, and its light and shade. `shape` says where the
+    /// folder's front is.
     public static func surface(of icon: NSImage, side: Int, shape: FolderShape) -> FolderSurface? {
-        guard let pixels = pixels(of: icon, side: side), let silhouette = silhouette(from: pixels, side: side) else {
-            return nil
+        guard let pixels = pixels(of: icon, side: side) else { return nil }
+        let coverage = coverage(of: pixels, side: side)
+        var body = [UInt8](repeating: 0, count: side * side * 4)
+        var shadow = [UInt8](repeating: 0, count: side * side * 2)
+        for index in coverage.indices {
+            let covered = coverage[index]
+            // The folder keeps its colours; its shadow is black, so all colour is the folder's.
+            body[index * 4] = pixels[index * 4]
+            body[index * 4 + 1] = pixels[index * 4 + 1]
+            body[index * 4 + 2] = pixels[index * 4 + 2]
+            body[index * 4 + 3] = covered
+            shadow[index * 2 + 1] = pixels[index * 4 + 3] - covered
         }
-        return FolderSurface(silhouette: silhouette, shading: shading(from: pixels, side: side, shape: shape))
+        guard let silhouette = image(from: coverage, side: side, bytesPerPixel: 1, alpha: .none),
+              let bodyImage = image(from: body, side: side, bytesPerPixel: 4, alpha: .premultipliedLast),
+              let shadowImage = image(from: shadow, side: side, bytesPerPixel: 2, alpha: .premultipliedLast)
+        else { return nil }
+        // How far the folder's pixels go.
+        var left = side, right = -1, top = side, bottom = -1
+        for row in 0..<side {
+            for column in 0..<side where coverage[row * side + column] > 0 {
+                left = min(left, column)
+                right = max(right, column)
+                top = min(top, row)
+                bottom = max(bottom, row)
+            }
+        }
+        let unit = CGFloat(side)
+        let extent = right < 0 ? shape.bounds
+            : CGRect(x: CGFloat(left) / unit, y: CGFloat(top) / unit, width: CGFloat(right - left + 1) / unit, height: CGFloat(bottom - top + 1) / unit)
+        return FolderSurface(
+            silhouette: silhouette, body: bodyImage, shadow: shadowImage,
+            shading: shading(from: pixels, side: side, shape: shape),
+            edges: FolderEdges(bounds: shape.bounds, extent: extent)
+        )
     }
 
-    /// The folder's outline (see `FolderSurface.silhouette`) from the icon's pixels.
-    private static func silhouette(from pixels: [UInt8], side: Int) -> CGImage? {
-        var mask = [UInt8](repeating: 0, count: side * side)
-        for index in mask.indices {
-            // The shadow never gets denser than about 100; the folder itself is opaque.
-            let alpha = Int(pixels[index * 4 + 3])
-            mask[index] = UInt8(clamping: (alpha - 110) * 255 / 140)
+    /// How much of each pixel the folder itself covers, from 0 to 255, its shadow left out.
+    ///
+    /// The folder is opaque and its shadow is black. A pixel along the folder's outline, which
+    /// the two share, is as much folder as it has the folder's colour: its colour over that of
+    /// the folder right next to it. That is never less than its brightest channel (the shadow
+    /// adds no colour) nor more than its alpha.
+    static func coverage(of pixels: [UInt8], side: Int) -> [UInt8] {
+        var coverage = [UInt8](repeating: 0, count: side * side)
+        for row in 0..<side {
+            for column in 0..<side {
+                let index = row * side + column, pixel = index * 4
+                let alpha = Int(pixels[pixel + 3])
+                if alpha == 255 {
+                    coverage[index] = 255
+                    continue
+                }
+                let red = Int(pixels[pixel]), green = Int(pixels[pixel + 1]), blue = Int(pixels[pixel + 2])
+                let brightest = max(red, green, blue)
+                // Shadow alone, or nothing at all.
+                guard brightest > 0 else { continue }
+                // The brightest opaque pixel next to it, or a pixel further: the folder's colour here.
+                var reference = 0
+                for reach in 1...2 where reference == 0 {
+                    for y in max(row - reach, 0)...min(row + reach, side - 1) {
+                        for x in max(column - reach, 0)...min(column + reach, side - 1) {
+                            let other = (y * side + x) * 4
+                            guard pixels[other + 3] == 255 else { continue }
+                            reference = max(reference, Int(pixels[other]) + Int(pixels[other + 1]) + Int(pixels[other + 2]))
+                        }
+                    }
+                }
+                // Without one, by how much denser it is than the shadow ever gets (about 110).
+                let estimate = reference > 0 ? (red + green + blue) * 255 / reference : (alpha - 110) * 255 / 140
+                coverage[index] = UInt8(min(max(estimate, brightest), alpha))
+            }
         }
-        return image(from: mask, side: side, bytesPerPixel: 1, alpha: .none)
+        return coverage
     }
 
     /// The folder's light and shade (see `FolderSurface.shading`) from the icon's pixels.
@@ -167,12 +227,15 @@ public enum FolderArtwork {
         return (0..<3).map { b[$0] / a[$0 * 3 + $0] }
     }
 
-    /// A gray image (with alpha when `bytesPerPixel` is 2) from bytes with the top row first.
+    /// An image from bytes with the top row first: gray (with alpha when `bytesPerPixel` is 2),
+    /// or sRGB with alpha when it is 4, like the icon's own pixels.
     private static func image(from bytes: [UInt8], side: Int, bytesPerPixel: Int, alpha: CGImageAlphaInfo) -> CGImage? {
-        guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData),
+              let space = bytesPerPixel == 4 ? CGColorSpace(name: CGColorSpace.sRGB) : CGColorSpaceCreateDeviceGray()
+        else { return nil }
         return CGImage(
             width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 8 * bytesPerPixel, bytesPerRow: side * bytesPerPixel,
-            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: alpha.rawValue),
+            space: space, bitmapInfo: CGBitmapInfo(rawValue: alpha.rawValue),
             provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
         )
     }
@@ -199,12 +262,21 @@ public enum FolderArtwork {
     }
 }
 
-/// What the folder's artwork gives a picture drawn on it, at one pixel size. Both images
-/// have the icon's size and its top row first, like the icon.
+/// What the folder's artwork gives a picture drawn on it, at one pixel size. Every image has
+/// the icon's size and its top row first, like the icon.
+///
+/// The icon is the folder over its soft shadow, and `body` and `shadow` are the two apart:
+/// added together they make the icon again, pixel for pixel. A picture is painted on the body
+/// alone, so along the folder's outline it takes the folder's place in each pixel instead of
+/// being laid over it, and no rim of the folder shows around it.
 public struct FolderSurface: @unchecked Sendable {
-    /// The folder's outline: white where the folder is, black around it. A picture is clipped
-    /// to it, so it ends exactly where the folder does, without the soft shadow around it.
+    /// The folder's outline: white where the folder is, black around it, and along its edge
+    /// as much white as the folder covers of each pixel.
     public let silhouette: CGImage
+    /// The folder itself, without its shadow: its own colours, as opaque as it covers each pixel.
+    public let body: CGImage
+    /// The folder's shadow alone: black, as dense as it shows in each pixel.
+    public let shadow: CGImage
     /// The folder's light and shade, for a picture on it to catch the way the folder does:
     /// the back darker than the front, and the light along the front's top edge, so a
     /// picture across both shows the same depth. Black where the folder is darker than the
@@ -212,6 +284,8 @@ public struct FolderSurface: @unchecked Sendable {
     /// that middle, so a picture there keeps its colors. Draw it over the picture alone.
     /// `nil` when the artwork has no front to measure the light by.
     public let shading: CGImage?
+    /// The folder's edges: as measured, and how far its pixels go at this size.
+    public let edges: FolderEdges
 }
 
 /// Where the parts of the folder sit on the icon, in unit coordinates with a top-left

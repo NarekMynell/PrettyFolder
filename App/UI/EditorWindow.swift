@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 
 /// PrettyFolder's one window: the picture on a folder, where it sits and how it is
 /// scaled, the default look, and the few settings there are (behind the gear).
-final class EditorWindowController: NSWindowController, NSWindowDelegate {
+final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
     let model: EditorModel
     /// The newest icon shown in the title bar; an older one that comes in later is ignored.
     private var titleIconSequence = Int.min
@@ -111,6 +111,25 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         model.windowClosed()
     }
 
+    // ⌘L and ⌘R turn the picture wherever the keyboard's focus is in the window; the editor
+    // takes them first when it has it.
+    @objc func rotateLeft(_ sender: Any?) {
+        model.rotatePicture(clockwise: false)
+    }
+
+    @objc func rotateRight(_ sender: Any?) {
+        model.rotatePicture(clockwise: true)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(rotateLeft(_:)), #selector(rotateRight(_:)):
+            return model.placesPicture && !model.isHolding
+        default:
+            return true
+        }
+    }
+
     /// Back from Finder: the folders may have been renamed, or their pictures changed there.
     func windowDidBecomeKey(_ notification: Notification) {
         if model.hasFolders { model.reload() }
@@ -122,7 +141,7 @@ private struct EditorView: View {
     @Environment(\.undoManager) private var undoManager
     @State private var isDropTargeted = false
 
-    private let editorSide: CGFloat = 300
+    private let editorSide = StyleEditor.side
 
     var body: some View {
         VStack(spacing: 0) {
@@ -192,7 +211,7 @@ private struct EditorView: View {
                 isEnabled: model.canEdit,
                 placesPicture: model.placesPicture,
                 side: editorSide,
-                onBegin: { model.beginChange() },
+                onBegin: { model.beginChange(holding: $0) },
                 onCommit: { model.commit() }
             )
             if model.isEditingFolders && !model.hasPicture {
@@ -212,9 +231,10 @@ private struct EditorView: View {
         } isTargeted: { isDropTargeted = $0 }
     }
 
-    /// A folder without a picture: a big button where the picture will go.
+    /// A folder without a picture: a big button where the picture will go, on the folder.
     private var addButton: some View {
-        let target = IconGeometry.targetRect(for: model.style, canvas: editorSide, flipped: true)
+        let canvas = CGRect(x: 0, y: 0, width: editorSide, height: editorSide)
+        let target = IconGeometry.targetRect(for: model.style, canvas: editorSide, flipped: true).intersection(canvas)
         return Button { model.choosePicture() } label: {
             Image(systemName: "photo.badge.plus")
                 .font(.system(size: 30, weight: .medium))
@@ -237,6 +257,14 @@ private struct EditorView: View {
                 symbol: "photo.badge.plus",
                 help: model.isEditingFolders ? "Choose a Picture…" : "Preview with Another Picture…"
             ) { model.choosePicture() }
+
+            if model.isEditingFolders {
+                // Like Preview's: a quarter turn to the left, or with Option to the right.
+                ToolButton(symbol: "rotate.left", help: "Rotate Left (⌘L). ⌥-click to rotate right (⌘R).", label: "Rotate Left") {
+                    model.rotatePicture(clockwise: NSEvent.modifierFlags.contains(.option))
+                }
+                .disabled(!model.hasPicture || model.isHolding)
+            }
 
             Spacer(minLength: 8)
             Picker("Scaling", selection: Binding(get: { model.style.mode }, set: { model.setMode($0) })) {
@@ -285,6 +313,8 @@ private struct EditorView: View {
 private struct ToolButton: View {
     let symbol: String
     let help: LocalizedStringKey
+    /// What VoiceOver says; the help, unless that tells more than the button's name.
+    var label: LocalizedStringKey?
     let action: () -> Void
 
     var body: some View {
@@ -297,7 +327,7 @@ private struct ToolButton: View {
         .buttonBorderShape(.circle)
         .controlSize(.large)
         .help(help)
-        .accessibilityLabel(Text(help))
+        .accessibilityLabel(Text(label ?? help))
     }
 }
 

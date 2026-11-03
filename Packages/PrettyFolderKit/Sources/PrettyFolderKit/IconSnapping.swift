@@ -13,11 +13,16 @@ public struct SnapGuide: Hashable, Sendable {
     public let position: Double
     /// Where the line runs along its axis; `nil` for all the way across the icon.
     public let extent: ClosedRange<Double>?
+    /// How far the line is turned counterclockwise, in radians, around the middle of its
+    /// extent: the middle of a picture turned by something other than quarter turns moves
+    /// along turned lines.
+    public let tilt: Double
 
-    public init(_ axis: Axis, at position: Double, along extent: ClosedRange<Double>? = nil) {
+    public init(_ axis: Axis, at position: Double, along extent: ClosedRange<Double>? = nil, tilt: Double = 0) {
         self.axis = axis
         self.position = position
         self.extent = extent
+        self.tilt = tilt
     }
 }
 
@@ -64,9 +69,9 @@ public struct IconSnapping: Sendable {
         var result = rect
         result.origin.x += offset(of: [rect.minX, rect.midX, rect.maxX], to: columns) ?? 0
         result.origin.y += offset(of: [rect.minY, rect.midY, rect.maxY], to: rows) ?? 0
-        // Inside the canvas, the way IconStyle keeps it.
-        result.origin.x = min(max(result.origin.x, 0), 1 - result.width)
-        result.origin.y = min(max(result.origin.y, 0), 1 - result.height)
+        // Where IconStyle lets it be.
+        result.origin.x = result.origin.x.clamped(to: IconStyle.origins(forSide: result.width))
+        result.origin.y = result.origin.y.clamped(to: IconStyle.origins(forSide: result.height))
         return (result, guides(for: result))
     }
 
@@ -79,23 +84,49 @@ public struct IconSnapping: Sendable {
         let (minY, maxY) = snap(rect.minY, rect.maxY, movingLow: edges.contains(.top), movingHigh: edges.contains(.bottom),
                                 symmetric: symmetric, lines: rows, center: centerY)
         let result = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        // Sticking would take it where a style can't be (bigger than the canvas without
+        // covering it, say): it stays as it is.
+        guard IconStyle.allows(result) || !IconStyle.allows(rect) else { return (rect, guides(for: rect)) }
         return (result, guides(for: result))
     }
 
-    /// A picture moved inside its rectangle `rect`, snapped: on each axis it can move along,
-    /// it sticks to the middle once its own middle comes close. The guides run across `rect`.
+    /// A picture moved inside the frame of `style`, snapped: on each axis it can move along,
+    /// it sticks to the middle once its own middle comes close. The guides run across the
+    /// frame, turned with the axes the picture moves along (see `IconGeometry.layout`).
+    /// `side` is the canvas the picture is laid out on, as in `IconGeometry.layout`.
     public func pan(
-        _ placement: PicturePlacement, imageSize: CGSize, in rect: CGRect, mode: FitMode
+        _ placement: PicturePlacement, imageSize: CGSize, style: IconStyle,
+        canvas side: CGFloat, folder: FolderEdges? = .standard
     ) -> (placement: PicturePlacement, guides: [SnapGuide]) {
-        let room = IconGeometry.room(imageSize: imageSize, in: rect, mode: mode)
-        let movesX = room.width > 1e-9, movesY = room.height > 1e-9
-        // The picture's middle is `room × (position − ½)` away from the rectangle's.
-        let x = movesX && abs(room.width * (placement.x - 0.5)) <= threshold ? 0.5 : placement.x
-        let y = movesY && abs(room.height * (placement.y - 0.5)) <= threshold ? 0.5 : placement.y
+        let (frame, _) = IconGeometry.frame(for: style, canvas: side, folder: folder)
+        guard let travel = IconGeometry.travel(imageSize: imageSize, in: frame, mode: style.mode, rotation: placement.rotation) else {
+            return (placement, [])
+        }
+        let movesX = abs(travel.slack.width) > 1e-9, movesY = abs(travel.slack.height) > 1e-9
+        // The picture's middle is `slack × (position − ½)` away from the frame's along each axis.
+        let x = movesX && abs(travel.slack.width * (placement.x - 0.5)) <= threshold ? 0.5 : placement.x
+        let y = movesY && abs(travel.slack.height * (placement.y - 0.5)) <= threshold ? 0.5 : placement.y
+        let rect = style.rect, tilt = Double(travel.tilt)
         var guides: [SnapGuide] = []
-        if movesX, x == 0.5 { guides.append(SnapGuide(.vertical, at: rect.midX, along: rect.minY...rect.maxY)) }
-        if movesY, y == 0.5 { guides.append(SnapGuide(.horizontal, at: rect.midY, along: rect.minX...rect.maxX)) }
-        return (PicturePlacement(x: x, y: y), guides)
+        if movesX, x == 0.5 {
+            guides.append(SnapGuide(.vertical, at: travel.frameCenter.x, along: rect.minY...rect.maxY, tilt: tilt))
+        }
+        if movesY, y == 0.5 {
+            guides.append(SnapGuide(.horizontal, at: travel.frameCenter.y, along: rect.minX...rect.maxX, tilt: tilt))
+        }
+        return (PicturePlacement(x: x, y: y, rotation: placement.rotation), guides)
+    }
+
+    /// How close, in degrees, a picture being turned has to come to upright or a quarter turn
+    /// to stick to it.
+    public static let turnThreshold = 4.0
+
+    /// A turn of `degrees`, snapped: within `turnThreshold` of upright or a quarter turn, it is
+    /// that. Also says whether it stuck.
+    public static func turn(_ degrees: Double) -> (degrees: Double, snapped: Bool) {
+        let quarter = (degrees / 90).rounded() * 90
+        guard abs(degrees - quarter) <= turnThreshold else { return (degrees, false) }
+        return (quarter, true)
     }
 
     /// A rectangle made bigger or smaller around its middle, snapped: once one of its edges
@@ -113,10 +144,8 @@ public struct IconSnapping: Sendable {
             else { return }
             let factor = abs(line - center) / half
             let width = rect.width * factor, height = rect.height * factor
-            // Not below the smallest size, and inside the canvas where it is.
-            guard min(width, height) >= IconStyle.minimumSide - 1e-9,
-                  middle.x - width / 2 >= -1e-9, middle.x + width / 2 <= 1 + 1e-9,
-                  middle.y - height / 2 >= -1e-9, middle.y + height / 2 <= 1 + 1e-9
+            // A size a style can have, where it is.
+            guard IconStyle.allows(CGRect(x: middle.x - width / 2, y: middle.y - height / 2, width: width, height: height))
             else { return }
             best = (distance, factor)
         }
@@ -194,15 +223,23 @@ public struct IconSnapping: Sendable {
 
         if movingHigh {
             // The mirror of the fixed edge around the center leaves the span centered.
-            guard let target = nearest(to: high, among: lines + [2 * center - low]),
-                  target - low >= minimum, target <= 1
+            guard let target = nearest(to: high, among: lines + mirror(of: low, around: center, apartFrom: lines)),
+                  target - low >= minimum
             else { return (low, high) }
             return (low, target)
         }
-        guard let target = nearest(to: low, among: lines + [2 * center - high]),
-              high - target >= minimum, target >= 0
+        guard let target = nearest(to: low, among: lines + mirror(of: high, around: center, apartFrom: lines)),
+              high - target >= minimum
         else { return (low, high) }
         return (target, high)
+    }
+
+    /// Where an edge leaves a span from `edge` centered on `center`, unless that is close to
+    /// one of `lines`: an edge that ends up a hair from the folder's own edge, which it was
+    /// surely meant to be on, leaves a sliver of the folder showing.
+    private func mirror(of edge: Double, around center: Double, apartFrom lines: [Double]) -> [Double] {
+        let mirror = 2 * center - edge
+        return lines.contains { abs($0 - mirror) <= threshold } ? [] : [mirror]
     }
 
     private func nearest(to value: Double, among targets: [Double]) -> Double? {

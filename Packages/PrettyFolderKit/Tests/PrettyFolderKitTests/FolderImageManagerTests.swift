@@ -89,7 +89,7 @@ import UniformTypeIdentifiers
         let folder = try lived(in: "Elsewhere")
         let before = FolderSnapshot(folder)
         _ = await manager.apply(imageAt: picture, to: [folder])
-        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.8, height: 0.8, mode: .fit), placement: .centered, for: folder)
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.8, height: 0.8, mode: .fit), placement: .natural, for: folder)
 
         // Finder's Get Info takes the icon off; the next tidy-up notices.
         #expect(NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: []))
@@ -173,7 +173,7 @@ import UniformTypeIdentifiers
     @Test func forgettingAFolderClearsTheCountUnderSomeoneElsesIcon() async throws {
         let folder = try temp.folder("Counted")
         _ = await manager.apply(imageAt: picture, to: [folder])
-        try await manager.setStyle(IconStyle(x: 0.1, y: 0.2, width: 0.6, height: 0.5, mode: .fit), placement: .centered, for: folder)
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.2, width: 0.6, height: 0.5, mode: .fit), placement: .natural, for: folder)
         #expect(Self.changeCount(folder) == 1)
         let foreign = NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
             NSColor.systemPink.setFill()
@@ -224,9 +224,9 @@ import UniformTypeIdentifiers
         try await manager.setStyle(own, for: folder)
         var look = try #require(await manager.look(for: folder))
         #expect(look.style == own && look.placement == low, "a new look keeps the picture where it was")
-        try await manager.setPlacement(.centered, for: folder)
+        try await manager.setPlacement(.natural, for: folder)
         look = try #require(await manager.look(for: folder))
-        #expect(look.style == own && look.placement == .centered, "moving the picture keeps the look")
+        #expect(look.style == own && look.placement == .natural, "moving the picture keeps the look")
     }
 
     @Test func onlyItsOwnIconCountsAsAPicture() async throws {
@@ -289,7 +289,7 @@ import UniformTypeIdentifiers
         let before = try #require(FolderInspector.iconResource(of: folder))
 
         let custom = IconStyle(x: 0.05, y: 0.05, width: 0.5, height: 0.5, mode: .fit)
-        try await manager.setStyle(custom, placement: .centered, for: folder)
+        try await manager.setStyle(custom, placement: .natural, for: folder)
         let look = try #require(await manager.look(for: folder))
         #expect(look.style == custom && !look.followsDefault)
         #expect(FolderInspector.iconResource(of: folder) != before)
@@ -301,7 +301,7 @@ import UniformTypeIdentifiers
         #expect(await manager.look(for: folder)?.style == custom)
         #expect(storedPictures().count == 1, "the replaced picture is cleaned up")
 
-        try await manager.setStyle(nil, placement: .centered, for: folder)
+        try await manager.setStyle(nil, placement: .natural, for: folder)
         #expect(await manager.look(for: folder)?.followsDefault == true)
     }
 
@@ -320,7 +320,7 @@ import UniformTypeIdentifiers
         _ = await manager.apply(imageAt: picture, to: [folder])
         #expect(Self.changeCount(folder) == 0, "a first icon shows by itself")
 
-        try await manager.setStyle(IconStyle(x: 0.1, y: 0.2, width: 0.6, height: 0.5, mode: .fit), placement: .centered, for: folder)
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.2, width: 0.6, height: 0.5, mode: .fit), placement: .natural, for: folder)
         #expect(Self.changeCount(folder) == 1)
         let other = temp.file("other.png")
         TestImages.write(TestImages.solid(width: 300, height: 200, red: 0, green: 0.5, blue: 1), to: other, type: .png)
@@ -352,7 +352,7 @@ import UniformTypeIdentifiers
             }
         }
         _ = await manager.apply(imageAt: picture, to: [folder])
-        try await manager.setStyle(IconStyle(x: 0, y: 0, width: 1, height: 1, mode: .fill), placement: .centered, for: folder)
+        try await manager.setStyle(IconStyle(x: 0, y: 0, width: 1, height: 1, mode: .fill), placement: .natural, for: folder)
         #expect(Self.changeCount(folder) == 1)
         _ = await manager.removeImage(from: [folder])
 
@@ -371,7 +371,7 @@ import UniformTypeIdentifiers
         await manager.onIconChange { url, change in
             if case .written = change { _ = await manager.removeImage(from: [url]) }
         }
-        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.5, height: 0.5, mode: .fill), placement: .centered, for: folder)
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.5, height: 0.5, mode: .fill), placement: .natural, for: folder)
         #expect(!FolderInspector.hasCustomIcon(folder))
         #expect(Self.changeCount(folder) == 0)
         #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
@@ -390,7 +390,7 @@ import UniformTypeIdentifiers
     @Test func aPictureRemovedElsewhereLeavesNothingBehind() async throws {
         let folder = try temp.folder("Elsewhere")
         _ = await manager.apply(imageAt: picture, to: [folder])
-        try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), placement: .centered, for: folder)
+        try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), placement: .natural, for: folder)
         #expect(Self.changeCount(folder) == 1)
         // As Get Info does it.
         NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: [])
@@ -407,7 +407,7 @@ import UniformTypeIdentifiers
 
         _ = await manager.apply(imageAt: picture, to: [folder])
         #expect(modificationDate(folder) == past)
-        try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), placement: .centered, for: folder)
+        try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), placement: .natural, for: folder)
         #expect(modificationDate(folder) == past)
         _ = await manager.removeImage(from: [folder])
         #expect(modificationDate(folder) == past)
@@ -448,7 +448,7 @@ import UniformTypeIdentifiers
         let pinned = try temp.folder("Pinned")
         _ = await manager.apply(imageAt: picture, to: [follower, pinned])
         let pinnedStyle = IconStyle(x: 0, y: 0, width: 0.3, height: 0.3, mode: .fill)
-        try await manager.setStyle(pinnedStyle, placement: .centered, for: pinned)
+        try await manager.setStyle(pinnedStyle, placement: .natural, for: pinned)
         let pinnedIcon = FolderInspector.iconResource(of: pinned)
         let followerIcon = FolderInspector.iconResource(of: follower)
 
@@ -515,7 +515,7 @@ import UniformTypeIdentifiers
         let renamed = temp.url.appendingPathComponent("After", isDirectory: true)
         try FileManager.default.moveItem(at: folder, to: renamed)
 
-        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.4, height: 0.4, mode: .fill), placement: .centered, for: renamed)
+        try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.4, height: 0.4, mode: .fill), placement: .natural, for: renamed)
         await manager.prune()
         #expect(await manager.managedFolderCount() == 1)
         // The new path sticks; it isn't overwritten by the copy of the record setStyle worked on.
@@ -529,7 +529,7 @@ import UniformTypeIdentifiers
         try FileManager.default.copyItem(at: original, to: copy)
 
         let style = IconStyle(x: 0.3, y: 0.3, width: 0.3, height: 0.3, mode: .fit)
-        try await manager.setStyle(style, placement: .centered, for: copy)
+        try await manager.setStyle(style, placement: .natural, for: copy)
         #expect(await manager.managedFolderCount() == 2)
         #expect(await manager.look(for: original)?.followsDefault == true)
         #expect(await manager.look(for: copy)?.style == style)
@@ -559,7 +559,7 @@ import UniformTypeIdentifiers
         let original = try temp.folder("Moving")
         let style = IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fit)
         _ = await manager.apply(imageAt: picture, to: [original])
-        try await manager.setStyle(style, placement: .centered, for: original)
+        try await manager.setStyle(style, placement: .natural, for: original)
         // Finder moves across disks by copying and then deleting the original.
         let moved = temp.url.appendingPathComponent("Moved", isDirectory: true)
         try FileManager.default.copyItem(at: original, to: moved)
@@ -695,7 +695,42 @@ import UniformTypeIdentifiers
         try await manager.setStyle(own, placement: low, for: folder)
         _ = await manager.apply(imageAt: picture, to: [folder])
         look = try #require(await manager.look(for: folder))
-        #expect(look.placement == .centered && look.style == own)
+        #expect(look.placement == .natural && look.style == own)
+    }
+
+    @Test func iconsDrawnBeforeTheDrawingChangedAreDrawnAgainOnce() async throws {
+        let old = try temp.folder("Old")
+        let current = try temp.folder("Current")
+        _ = await manager.apply(imageAt: picture, to: [old, current])
+        // Make one look as if an earlier version drew it: no revision in its record.
+        let index = libraryDirectory.appendingPathComponent("Library.json")
+        func records() throws -> [[String: Any]] {
+            let json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: index)) as? [String: Any])
+            #expect(json["version"] as? Int == 2, "the list is saved as version 2")
+            return try #require(json["records"] as? [[String: Any]])
+        }
+        #expect(try records().allSatisfy { $0["revision"] as? Int == IconRenderer.revision })
+        let earlier = try records().map { record in
+            var record = record
+            if (record["lastKnownPath"] as? String)?.hasSuffix("/Old") == true { record.removeValue(forKey: "revision") }
+            return record
+        }
+        try JSONSerialization.data(withJSONObject: ["version": 1, "records": earlier]).write(to: index)
+
+        let reopened = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard)
+        let written = Folders()
+        await reopened.onIconChange { folder, change in
+            if case .written = change { written.add(folder) }
+        }
+        let outcomes = await reopened.redrawOutdated()
+        #expect(outcomes.map(\.folder.lastPathComponent) == ["Old"] && outcomes.allSatisfy(\.succeeded))
+        #expect(written.all.map(\.lastPathComponent) == ["Old"], "only the old one is drawn again")
+        #expect(try records().allSatisfy { $0["revision"] as? Int == IconRenderer.revision }, "and remembered as drawn now")
+        let oldIsOurs = await reopened.showsOwnPicture(old), currentIsOurs = await reopened.showsOwnPicture(current)
+        #expect(oldIsOurs && currentIsOurs)
+        // Once is enough.
+        #expect(await reopened.redrawOutdated().isEmpty)
+        #expect(await FolderImageManager(directory: libraryDirectory, defaultStyle: .standard).redrawOutdated().isEmpty)
     }
 
     @Test func aReplacedIconIsNeverHalfWritten() async throws {
@@ -814,5 +849,19 @@ private final class IconWatcher: @unchecked Sendable {
             running = false
             return (looks, gaps)
         }
+    }
+}
+
+/// Folders handed to a callback from another thread.
+private final class Folders: @unchecked Sendable {
+    private let lock = NSLock()
+    private var folders: [URL] = []
+
+    func add(_ folder: URL) {
+        lock.withLock { folders.append(folder) }
+    }
+
+    var all: [URL] {
+        lock.withLock { folders }
     }
 }

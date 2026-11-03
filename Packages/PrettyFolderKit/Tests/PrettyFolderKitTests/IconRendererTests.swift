@@ -68,6 +68,125 @@ import Testing
         }
     }
 
+    @Test func noRimOfTheFolderShowsAroundAPictureThatCoversIt() throws {
+        // A pure red picture over a black shadow leaves no green or blue anywhere: whatever
+        // there is of either comes from the folder showing through. Light and shade left out.
+        let red = SourceImage(bitmap: TestImages.solid(width: 300, height: 200, red: 1, green: 0, blue: 0))
+        let bounds = FolderArtwork.shape.bounds
+        let covering = [
+            IconStyle(x: 0, y: 0, width: 1, height: 1, mode: .fill),
+            IconStyle(rect: bounds, mode: .fill),
+            IconStyle(x: -0.6, y: -0.4, width: 2.3, height: 1.9, mode: .fill),
+        ]
+        // Fitted in a frame on the folder's edges, a wide picture spans the folder from side to
+        // side, its top and bottom inside: the rows it covers show no folder either.
+        let fitted = IconStyle(rect: bounds, mode: .fit)
+        for side in IconRenderer.pixelSizes {
+            let surface = try #require(renderer.surface(pixelSize: side))
+            let unshaded = FolderSurface(silhouette: surface.silhouette, body: surface.body, shadow: surface.shadow, shading: nil, edges: surface.edges)
+            for style in covering + [fitted] {
+                let icon = TestImages.bytes(try draw(red, style: style, placement: .natural, side: side, on: unshaded))
+                var rows = 0..<side
+                if style.mode == .fit {
+                    let band = IconGeometry.layout(
+                        imageSize: red.size, style: style, placement: .natural, canvas: CGFloat(side), flipped: true, folder: surface.edges
+                    ).bounds
+                    rows = Int(band.minY.rounded(.up))..<Int(band.maxY.rounded(.down))
+                }
+                var showing = 0
+                for y in rows {
+                    for x in 0..<side where icon[(y * side + x) * 4 + 1] > 0 || icon[(y * side + x) * 4 + 2] > 0 {
+                        showing += 1
+                    }
+                }
+                #expect(showing == 0, "\(style.rect) \(style.mode) at \(side) px: \(showing) pixels show the folder")
+            }
+        }
+    }
+
+    private func draw(_ picture: SourceImage, style: IconStyle, placement: PicturePlacement, side: Int, on surface: FolderSurface) throws -> CGImage {
+        let context = try #require(CGContext(
+            data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.interpolationQuality = .high
+        IconRenderer.draw(picture, style: style, placement: placement, canvas: CGFloat(side), on: surface, in: context)
+        return try #require(context.makeImage())
+    }
+
+    @Test func theFolderAndItsShadowMakeTheIconAgain() throws {
+        // A see-through picture over all of it changes nothing, at any size, anywhere.
+        let clear = SourceImage(bitmap: TestImages.solid(width: 40, height: 40, red: 1, green: 1, blue: 1, alpha: 0))
+        let everywhere = IconStyle(x: 0, y: 0, width: 1, height: 1, mode: .fill)
+        for side in IconRenderer.pixelSizes {
+            let icon = try #require(renderer.render(clear, style: everywhere, pixelSize: side))
+            let plain = try #require(renderer.render(nil, style: .standard, pixelSize: side))
+            #expect(TestImages.bytes(icon) == TestImages.bytes(plain), "size \(side)")
+        }
+    }
+
+    @Test func outsideTheFolderNothingChanges() throws {
+        let red = SourceImage(bitmap: TestImages.solid(width: 100, height: 100, red: 1, green: 0, blue: 0))
+        let everywhere = IconStyle(x: -1, y: -1, width: 3, height: 3, mode: .fill)
+        for side in [32, 128, 512] {
+            let icon = TestImages.bytes(try #require(renderer.render(red, style: everywhere, pixelSize: side)))
+            let plain = TestImages.bytes(try #require(renderer.render(nil, style: .standard, pixelSize: side)))
+            let outline = TestImages.bytes(try #require(renderer.surface(pixelSize: side)?.silhouette))
+            var changed = 0
+            for index in 0..<(side * side) {
+                // Every pixel keeps its alpha: the icon's shape and shadow stay the folder's.
+                if icon[index * 4 + 3] != plain[index * 4 + 3] { changed += 1 }
+                // Where none of the folder is, nothing else changes either.
+                if outline[index * 4] == 0, icon[index * 4..<index * 4 + 4] != plain[index * 4..<index * 4 + 4] { changed += 1 }
+            }
+            #expect(changed == 0, "size \(side)")
+        }
+    }
+
+    @Test func aTurnedPictureIsDrawnTurned() throws {
+        // Red on the left half, blue on the right; a quarter turn counterclockwise puts red at
+        // the bottom and blue at the top.
+        let picture = try halves()
+        let style = IconStyle(x: 0.3, y: 0.4, width: 0.4, height: 0.4, mode: .fit)
+        let turned = try #require(renderer.render(picture, style: style, placement: PicturePlacement(x: 0.5, y: 0.5, rotation: 90), pixelSize: 256))
+        // The frame runs from 77 to 179 across and 102 to 205 down; turned, the picture is a
+        // band 51 wide down the middle.
+        #expect(isBlue(TestImages.pixel(turned, x: 128, y: 120)))
+        #expect(isRed(TestImages.pixel(turned, x: 128, y: 185)))
+        #expect(!isRed(TestImages.pixel(turned, x: 85, y: 185)) && !isBlue(TestImages.pixel(turned, x: 170, y: 120)))
+        let clockwise = try #require(renderer.render(picture, style: style, placement: PicturePlacement(x: 0.5, y: 0.5, rotation: -90), pixelSize: 256))
+        #expect(isRed(TestImages.pixel(clockwise, x: 128, y: 120)) && isBlue(TestImages.pixel(clockwise, x: 128, y: 185)))
+    }
+
+    @Test func aTiltedFittedPictureKeepsItsCorners() throws {
+        let red = SourceImage(bitmap: TestImages.solid(width: 400, height: 300, red: 1, green: 0, blue: 0))
+        let style = IconStyle(x: 0.2, y: 0.3, width: 0.6, height: 0.5, mode: .fit)
+        for rotation in [15.0, 30, 45, 60, -20] {
+            let placement = PicturePlacement(x: 0.5, y: 0.5, rotation: rotation)
+            let icon = try #require(renderer.render(red, style: style, placement: placement, pixelSize: 256))
+            let edges = try #require(renderer.surface(pixelSize: 256)).edges
+            let layout = IconGeometry.layout(imageSize: red.size, style: style, placement: placement, canvas: 256, flipped: true, folder: edges)
+            let inner = layout.uprightRect.insetBy(dx: 12, dy: 12)
+            for corner in [CGPoint(x: inner.minX, y: inner.minY), CGPoint(x: inner.maxX, y: inner.minY),
+                           CGPoint(x: inner.minX, y: inner.maxY), CGPoint(x: inner.maxX, y: inner.maxY)] {
+                let point = corner.applying(layout.transform)
+                #expect(isRed(TestImages.pixel(icon, x: Int(point.x), y: Int(point.y))), "\(rotation)° at \(point)")
+            }
+        }
+    }
+
+    @Test func aTiltedFilledPictureLeavesNoCornerBare() throws {
+        let red = SourceImage(bitmap: TestImages.solid(width: 300, height: 200, red: 1, green: 0, blue: 0))
+        let style = IconStyle(x: 0.2, y: 0.35, width: 0.6, height: 0.4, mode: .fill)
+        for rotation in [10.0, -33, 45, 120] {
+            let icon = try #require(renderer.render(red, style: style, placement: PicturePlacement(x: 0, y: 1, rotation: rotation), pixelSize: 256))
+            // Just inside the frame's corners, past their rounding.
+            for (x, y) in [(55, 93), (200, 93), (55, 188), (200, 188), (128, 140)] {
+                #expect(isRed(TestImages.pixel(icon, x: x, y: y)), "\(rotation)° at \(x), \(y)")
+            }
+        }
+    }
+
     @Test func plainRenderIsTheFolder() throws {
         let icon = try #require(renderer.render(nil, style: .standard, pixelSize: 64))
         // Transparent corners, opaque body.

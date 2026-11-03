@@ -85,11 +85,14 @@ enum MainMenu {
         main.addItem(submenu: edit, title: edit.title)
 
         // Makes the picture's frame in the window bigger or smaller. ⌘= as well as ⌘+, which
-        // needs Shift on many keyboards.
+        // needs Shift on many keyboards. And turns the picture, with Preview's keys.
         let view = NSMenu(title: String(localized: "View"))
         view.addItem(withTitle: String(localized: "Zoom In"), action: #selector(StyleEditorView.zoomIn(_:)), keyEquivalent: "+")
         view.addItem(withTitle: String(localized: "Zoom In"), action: #selector(StyleEditorView.zoomIn(_:)), keyEquivalent: "=")
         view.addItem(withTitle: String(localized: "Zoom Out"), action: #selector(StyleEditorView.zoomOut(_:)), keyEquivalent: "-")
+        view.addItem(.separator())
+        view.addItem(withTitle: String(localized: "Rotate Left"), action: #selector(StyleEditorView.rotateLeft(_:)), keyEquivalent: "l")
+        view.addItem(withTitle: String(localized: "Rotate Right"), action: #selector(StyleEditorView.rotateRight(_:)), keyEquivalent: "r")
         main.addItem(submenu: view, title: view.title)
 
         let window = NSMenu(title: String(localized: "Window"))

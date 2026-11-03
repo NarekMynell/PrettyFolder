@@ -258,6 +258,29 @@ enum Scenery {
         }
     }
 
+    /// Two fingertips on either side of the pointer, turned `degrees` counterclockwise around
+    /// it: a twist.
+    static func drawTwist(around point: CGPoint, degrees: Double, alpha: Double, on bitmap: Bitmap) {
+        guard alpha > 0 else { return }
+        let distance: CGFloat = 22
+        // They start a little off the diagonal, the way two fingers rest on a trackpad.
+        let angle = CGFloat((-35 + degrees) * .pi / 180)
+        bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.35 * alpha), blur: 3, offset: CGSize(width: 0, height: 1)) {
+            bitmap.appKit {
+                for direction: CGFloat in [-1, 1] {
+                    // Counterclockwise on screen, with the y axis pointing down.
+                    let center = CGPoint(x: point.x + direction * distance * cos(angle), y: point.y - 8 - direction * distance * sin(angle))
+                    let tip = NSBezierPath(ovalIn: NSRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16))
+                    NSColor.white.withAlphaComponent(0.55 * alpha).setFill()
+                    tip.fill()
+                    NSColor.white.withAlphaComponent(0.9 * alpha).setStroke()
+                    tip.lineWidth = 1.5
+                    tip.stroke()
+                }
+            }
+        }
+    }
+
     /// A small mouse beside the pointer with its right button held down, shown as much as
     /// `alpha` says: a drag with the right button.
     static func drawRightButton(beside point: CGPoint, alpha: Double, on bitmap: Bitmap) {

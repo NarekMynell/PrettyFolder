@@ -184,7 +184,7 @@ extension Studio {
         let window = controller.window!
         controller.model.show([folder])
         park(window)
-        await settle(window, milliseconds: 700)
+        try await settleUntilShown(controller.model, in: window)
         let windowImage = snapshot(window)
         let windowSize = window.frame.size
         window.close()
@@ -252,8 +252,10 @@ extension Studio {
 
     // MARK: - The window
 
-    /// Making the frame in the window bigger, moving and stretching it, and moving the picture
-    /// inside it, with the folder on the Desktop following every change.
+    /// Pointing at the folder in the window, which brings up the frame; pinching it bigger than
+    /// the folder; turning the picture with two fingers until the rocket flies straight up;
+    /// moving the picture with the right button; leaving, which leaves the folder alone to look
+    /// at; Fit; and back to the default look. The folder on the Desktop follows every change.
     func renderWindow() async throws {
         let size = CGSize(width: 780, height: 540)
         let wallpaper = Scenery.wallpaper(size: size)
@@ -264,17 +266,17 @@ extension Studio {
         let window = controller.window!
         model.show([folder])
         park(window)
-        await settle(window, milliseconds: 700)
+        try await settleUntilShown(model, in: window)
 
         let windowSize = window.frame.size
         let windowOrigin = CGPoint(x: size.width - windowSize.width - 46, y: (size.height - windowSize.height) / 2 - 6)
-        guard let controls = controls(of: window), controls.buttons.count == 4 else {
+        guard let controls = controls(of: window), controls.buttons.count == 5 else {
             throw MediaError("Couldn't find the window's controls")
         }
         let editor = controls.editor, scaling = controls.scaling, editorView = controls.editorView
 
-        // Choose, reset, remove.
-        let reset = controls.buttons[1]
+        // Choose, rotate, reset, remove, Done.
+        let reset = controls.buttons[2]
         let side = editor.width
         func onStage(_ point: CGPoint) -> CGPoint {
             CGPoint(x: windowOrigin.x + point.x, y: windowOrigin.y + point.y)
@@ -289,6 +291,12 @@ extension Studio {
         func editorPoint(_ local: CGPoint) -> CGPoint {
             editorView.convert(NSPoint(x: local.x, y: windowSize.height - local.y), from: nil)
         }
+        func pointerEvent(_ local: CGPoint) -> NSEvent {
+            NSEvent.mouseEvent(
+                with: .mouseMoved, location: NSPoint(x: local.x, y: windowSize.height - local.y), modifierFlags: [],
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0
+            )!
+        }
 
         // The folder on the Desktop, big enough to see it change.
         let folderFrame = CGRect(x: 92, y: 168, width: 150, height: 150)
@@ -297,112 +305,99 @@ extension Studio {
         var currentIcon = icon(rocket, style: desktop.style, placement: desktop.placement, side: folderFrame.width)
         var iconChangedAt = -10.0
 
-        // Where the pointer goes: pinch the frame bigger until its sides stick to the folder's;
-        // take hold of it and move it until it snaps to the folder's front; pull its top-left
-        // corner over the folder's tab, where it takes the folder's shape; slide the picture
-        // inside it with the right button; switch to Fit; and back to the default look.
-        let snapping = StyleEditor.snapping(side: side)
         let start = model.style
-        let pinchPoint = onStage(CGPoint(x: pictureRect(start).minX + pictureRect(start).width * 0.62, y: pictureRect(start).minY + pictureRect(start).height * 0.45))
-        let pinchScale = 1.15
-        // Where the pinch, the move and the stretch will end, worked out the way they do it below.
-        let pinched = IconStyle(rect: snapping.scale(IconGeometry.scaled(start.rect, by: pinchScale)).rect, mode: start.mode)
-        let lift = (pinched.y - FolderArtwork.shape.front.minY) * side
-        let moveFree = CGPoint(x: pinchPoint.x - 46, y: pinchPoint.y + 16)
-        let moveSnapped = CGPoint(x: pinchPoint.x + 1, y: pinchPoint.y - lift - 2)
-        let moved = IconStyle(rect: pinched.rect.offsetBy(dx: 0, dy: FolderArtwork.shape.front.minY - pinched.y), mode: start.mode)
-        let corner = onStage(CGPoint(x: pictureRect(moved).minX, y: pictureRect(moved).minY))
-        let stretched = onStage(CGPoint(x: editor.minX + 3, y: editor.minY + 3))
-        let stretchedRect = snapping.resize(
-            ResizeHandle.topLeft.resize(moved.rect, dx: (stretched.x - corner.x) / side, dy: (stretched.y - corner.y) / side, keepRatio: false, fromCenter: false),
-            moving: ResizeHandle.topLeft.edges, symmetric: false
-        ).rect
-        let stretchedFrame = pictureRect(IconStyle(rect: stretchedRect, mode: start.mode))
-        let hold = onStage(CGPoint(x: stretchedFrame.midX + 24, y: stretchedFrame.midY + 18))
-        let slid = CGPoint(x: hold.x - 34, y: hold.y + 2)
+        let over = onStage(CGPoint(x: pictureRect(start).midX + 18, y: pictureRect(start).midY + 6))
+        let hold = CGPoint(x: over.x + 6, y: over.y + 10)
+        let slid = CGPoint(x: hold.x - 26, y: hold.y + 22)
         let fit = onStage(CGPoint(x: scaling.maxX - scaling.width / 4, y: scaling.midY))
         let resetPoint = onStage(CGPoint(x: reset.midX, y: reset.midY))
 
         var path = PointerPath(start: CGPoint(x: 300, y: 470))
-        path.move(to: pinchPoint, from: 0.4, to: 1.2)
-        path.move(to: moveFree, from: 3.3, to: 4.0, arc: 0.08)
-        path.move(to: moveSnapped, from: 4.1, to: 4.8, arc: -0.06)
-        path.move(to: corner, from: 5.4, to: 6.0)
-        path.move(to: stretched, from: 6.2, to: 7.3, arc: 0)
-        path.move(to: hold, from: 7.9, to: 8.5)
-        path.move(to: slid, from: 9.0, to: 9.9, arc: 0.04)
-        path.move(to: fit, from: 10.8, to: 11.4)
-        path.move(to: resetPoint, from: 12.1, to: 12.7)
-        path.move(to: CGPoint(x: 300, y: 470), from: 13.5, to: 14.3)
+        path.move(to: over, from: 0.4, to: 1.2)
+        path.move(to: hold, from: 5.4, to: 5.7, arc: 0)
+        path.move(to: slid, from: 6.0, to: 7.0, arc: 0.04)
+        path.move(to: fit, from: 7.8, to: 8.5)
+        path.move(to: resetPoint, from: 9.9, to: 10.5)
+        path.move(to: CGPoint(x: 300, y: 470), from: 11.6, to: 12.4)
 
-        // The pinch that makes the frame bigger, and the right button held down on the picture.
-        let pinchTime = (start: 1.5, end: 2.9)
-        let rightButton = (down: 8.8, up: 10.1)
+        // Two fingers spreading, then twisting, then the right button held down on the picture.
+        let pinchTime = (start: 1.6, end: 3.1), growth = log(1.75)
+        let twistTime = (start: 3.6, end: 5.1), turn = 40.0
+        let rightButton = (down: 5.9, up: 7.2)
 
-        // The editor's drags and pinch, the way it handles them: the same moving, resizing,
-        // scaling and snapping code, the same model. (A window off screen gets no events.)
-        enum Grip { case none, frame, corner, picture, pinch }
+        // The pinch and the twist go through the editor's own gesture code, step by step; the
+        // right-button drag through the same moving and snapping code it uses. (A window off
+        // screen gets no events.)
+        enum Grip { case none, pinch, twist, picture }
         var grip = Grip.none
         var gripStart = (style: start, placement: model.placement, pointer: CGPoint.zero)
+        var pinched = 0.0, twisted = 0.0
+        var pointerInEditor = false
+        let snapping = StyleEditor.snapping(side: side)
         let sequence = try frameSequence("window")
-        for index in 0..<frameCount(15.1) {
+        for index in 0..<frameCount(13.4) {
             let t = Double(index) / Stage.framesPerSecond
             let pointer = path.position(at: t)
             let local = inWindow(pointer)
 
             let wanted: Grip = switch t {
             case pinchTime.start..<pinchTime.end: .pinch
-            case 3.2..<5.0: .frame
-            case 6.1..<7.5: .corner
+            case twistTime.start..<twistTime.end: .twist
             case rightButton.down..<rightButton.up: .picture
             default: .none
             }
             if wanted != grip {
-                if grip != .none {
+                switch grip {
+                case .pinch: editorView.pinch(.ended, by: 0, modifiers: [])
+                case .twist: editorView.twist(.ended, by: 0, modifiers: [])
+                case .picture:
                     model.guides = []
                     model.isAdjusting = false
                     model.commit()
+                case .none: break
                 }
                 grip = wanted
-                if grip != .none {
+                switch grip {
+                case .pinch: editorView.pinch(.began, by: 0, modifiers: [])
+                case .twist: editorView.twist(.began, by: 0, modifiers: [])
+                case .picture:
                     gripStart = (model.style, model.placement, pointer)
-                    model.beginChange()
+                    model.beginChange(holding: true)
                     model.isAdjusting = true
+                case .none: break
                 }
             }
-            let dx = pointer.x - gripStart.pointer.x, dy = pointer.y - gripStart.pointer.y
-            let target = IconGeometry.targetRect(for: model.style, canvas: side, flipped: true)
             switch grip {
             case .pinch:
-                let spread = ease(progress(t, pinchTime.start, pinchTime.end - 0.2))
-                let snapped = snapping.scale(IconGeometry.scaled(gripStart.style.rect, by: 1 + (pinchScale - 1) * spread))
-                model.style = IconStyle(rect: snapped.rect, mode: model.style.mode)
-                model.guides = snapped.guides
-            case .frame:
-                let snapped = snapping.move(gripStart.style.rect.offsetBy(dx: dx / side, dy: dy / side))
-                model.style = IconStyle(rect: snapped.rect, mode: model.style.mode)
-                model.guides = snapped.guides
-            case .corner:
-                let snapped = snapping.resize(
-                    ResizeHandle.topLeft.resize(gripStart.style.rect, dx: dx / side, dy: dy / side, keepRatio: false, fromCenter: false),
-                    moving: ResizeHandle.topLeft.edges, symmetric: false
-                )
-                model.style = IconStyle(rect: snapped.rect, mode: model.style.mode)
-                model.guides = snapped.guides
+                let spread = growth * ease(progress(t, pinchTime.start, pinchTime.end - 0.15))
+                editorView.pinch(.changed, by: spread - pinched, modifiers: [])
+                pinched = spread
+            case .twist:
+                let angle = turn * ease(progress(t, twistTime.start, twistTime.end - 0.15))
+                editorView.twist(.changed, by: angle - twisted, modifiers: [])
+                twisted = angle
             case .picture:
-                let slid = IconGeometry.placement(gripStart.placement, movedBy: CGSize(width: dx, height: dy), imageSize: rocket.size, in: target, mode: model.style.mode)
-                let snapped = snapping.pan(slid, imageSize: rocket.size, in: model.style.rect, mode: model.style.mode)
+                let dx = pointer.x - gripStart.pointer.x, dy = pointer.y - gripStart.pointer.y
+                let slid = IconGeometry.placement(
+                    gripStart.placement, movedBy: CGSize(width: dx, height: dy), imageSize: rocket.size, style: model.style,
+                    canvas: side, folder: StyleEditorView.folderEdges
+                )
+                let snapped = snapping.pan(slid, imageSize: rocket.size, style: model.style, canvas: side, folder: StyleEditorView.folderEdges)
                 model.placement = snapped.placement
                 model.guides = snapped.guides
             case .none:
-                // Pointing, not holding: the editor shows what is under the pointer.
-                editorView.mouseMoved(with: NSEvent.mouseEvent(
-                    with: .mouseMoved, location: NSPoint(x: local.x, y: windowSize.height - local.y), modifierFlags: [],
-                    timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0
-                )!)
+                // Pointing, not holding: the editor shows what is under the pointer, and its
+                // frame only while the pointer is over it.
+                let inEditor = editorView.bounds.contains(editorPoint(local))
+                if inEditor {
+                    editorView.mouseMoved(with: pointerEvent(local))
+                } else if pointerInEditor {
+                    editorView.mouseExited(with: pointerEvent(local))
+                }
+                pointerInEditor = inEditor
             }
-            if index == frameCount(11.5) { model.setMode(.fit) }
-            if index == frameCount(12.8) { model.reset() }
+            if index == frameCount(8.8) { model.setMode(.fit) }
+            if index == frameCount(10.8) { model.reset() }
             await settle(window, milliseconds: 15)
 
             // The folder on the Desktop shows each change once it's written.
@@ -430,15 +425,18 @@ extension Studio {
                 Scenery.drawRightButton(beside: pointer, alpha: shown, on: bitmap)
             }
             if t >= pinchTime.start - 0.15, t < pinchTime.end + 0.15 {
-                let spread = ease(progress(t, pinchTime.start, pinchTime.end - 0.2))
+                let spread = ease(progress(t, pinchTime.start, pinchTime.end - 0.15))
                 let shown = min(progress(t, pinchTime.start - 0.15, pinchTime.start + 0.05), 1 - progress(t, pinchTime.end - 0.05, pinchTime.end + 0.15))
                 Scenery.drawPinch(around: pointer, spread: spread, alpha: shown, on: bitmap)
             }
+            if t >= twistTime.start - 0.15, t < twistTime.end + 0.15 {
+                let angle = turn * ease(progress(t, twistTime.start, twistTime.end - 0.15))
+                let shown = min(progress(t, twistTime.start - 0.15, twistTime.start + 0.05), 1 - progress(t, twistTime.end - 0.05, twistTime.end + 0.15))
+                Scenery.drawTwist(around: pointer, degrees: angle, alpha: shown, on: bitmap)
+            }
             let cursor: NSCursor = switch grip {
-            case .frame: editorView.cursor(for: StyleEditorView.Drag.frame)
             case .picture: editorView.cursor(for: StyleEditorView.Drag.picture)
-            case .corner: editorView.cursor(for: StyleEditorView.Drag.handle(.topLeft))
-            case .pinch, .none: editorView.cursor(for: editorView.part(at: editorPoint(local)))
+            case .pinch, .twist, .none: editorView.cursor(for: editorView.part(at: editorPoint(local)))
             }
             Scenery.drawCursor(cursor, at: pointer, on: bitmap)
             try sequence.add(bitmap.image)

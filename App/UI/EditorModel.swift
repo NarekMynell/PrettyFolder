@@ -38,12 +38,12 @@ final class EditorModel {
     private(set) var folderPicture: SourceImage?
     /// The look the editor shows for them: the first one's.
     private(set) var folderStyle: IconStyle
-    /// Where their picture sits in that look: the first one's.
-    private(set) var folderPlacement = PicturePlacement.centered
+    /// Where their picture sits in that look and how it is turned: the first one's.
+    private(set) var folderPlacement = PicturePlacement.natural
     /// Whether all of them follow the default look.
     private(set) var followsDefault = true
-    /// Whether all of their pictures sit in the middle of their rectangle.
-    private(set) var isPictureCentered = true
+    /// Whether all of their pictures sit in the middle of their rectangle, upright.
+    private(set) var isPictureNatural = true
     /// Whether any of them has a custom icon at all, from PrettyFolder or not.
     private(set) var hasCustomIcon = false
 
@@ -56,19 +56,22 @@ final class EditorModel {
     var guides: [SnapGuide] = []
     /// `true` while the picture is being moved or resized in the editor.
     var isAdjusting = false
+    /// `true` while a drag or a gesture in the editor goes on: changes from elsewhere in the
+    /// window (Fill or Fit, a quarter turn, reset) wait for it to end.
+    private(set) var isHolding = false
     var isAskingAboutExistingFolders = false
     private(set) var followerCount = 0
     /// Work on many folders at once, shown at the bottom of the window.
     let progress = BatchProgress()
 
-    /// A folder's own look (`nil` when it follows the default look) and where its picture sits
-    /// in it.
+    /// A folder's own look (`nil` when it follows the default look), and where its picture sits
+    /// in it and how it is turned.
     private struct Look: Equatable {
         var style: IconStyle?
         var placement: PicturePlacement
 
-        /// The default look, picture in the middle: what a folder has to begin with.
-        static let followingDefault = Look(style: nil, placement: .centered)
+        /// The default look, picture in the middle and upright: what a folder has to begin with.
+        static let followingDefault = Look(style: nil, placement: .natural)
     }
 
     /// Which parts of the looks a change writes, so that it never writes over the other part
@@ -132,10 +135,10 @@ final class EditorModel {
         }
     }
 
-    /// Where the picture sits in the look. Only the folders' own picture moves: the default
-    /// look always has it in the middle.
+    /// Where the picture sits in the look and how it is turned. Only the folders' own picture
+    /// moves and turns: the default look always has it in the middle, upright.
     var placement: PicturePlacement {
-        get { isEditingFolders ? folderPlacement : .centered }
+        get { isEditingFolders ? folderPlacement : .natural }
         set {
             if isEditingFolders { folderPlacement = newValue }
         }
@@ -144,7 +147,7 @@ final class EditorModel {
     var canEdit: Bool { isEditingFolders ? hasPicture : true }
     var placesPicture: Bool { isEditingFolders && hasPicture }
     var canReset: Bool {
-        isEditingFolders ? hasPicture && !(followsDefault && isPictureCentered) : defaultDraft != IconStyle.standard
+        isEditingFolders ? hasPicture && !(followsDefault && isPictureNatural) : defaultDraft != IconStyle.standard
     }
 
     private var layout: Layout { (style, placement) }
@@ -163,9 +166,9 @@ final class EditorModel {
             folderPictureURL = nil
             hasCustomIcon = false
             followsDefault = true
-            isPictureCentered = true
+            isPictureNatural = true
             folderStyle = settings.defaultStyle
-            folderPlacement = .centered
+            folderPlacement = .natural
         }
         scope = folders.isEmpty ? .defaultLook : .folders
         reload()
@@ -250,9 +253,9 @@ final class EditorModel {
                     uniquingKeysWith: { first, _ in first }
                 )
                 folderStyle = found.first?.look.style ?? settings.defaultStyle
-                folderPlacement = found.first?.look.placement ?? .centered
+                folderPlacement = found.first?.look.placement ?? .natural
                 followsDefault = found.allSatisfy(\.look.followsDefault)
-                isPictureCentered = found.allSatisfy { $0.look.placement == .centered }
+                isPictureNatural = found.allSatisfy { $0.look.placement == .natural }
             } else {
                 reloadIsDue = true
             }
@@ -276,13 +279,16 @@ final class EditorModel {
     // MARK: - Editing
 
     /// The editor started a change: a drag, a pinch, a burst of arrow keys or of scrolling.
-    func beginChange() {
+    /// `holding` for a drag or a gesture, which holds on until it ends.
+    func beginChange(holding: Bool = false) {
         guard pendingChange == nil else { return }
         pendingChange = (scope, folders, layout)
+        isHolding = holding
     }
 
     /// The editor finished its change.
     func commit() {
+        isHolding = false
         // Already finished, because the scope or the folders changed under it.
         guard let pending = pendingChange else { return }
         pendingChange = nil
@@ -293,22 +299,40 @@ final class EditorModel {
     }
 
     /// Finishes a change that is still going on, in what it was made in, as an undo step of
-    /// its own: whatever comes next in the same moment (Fit, reset) is undone separately.
+    /// its own: whatever comes next in the same moment (Fit, reset) is undone separately (see
+    /// `beginUndoStep`).
     private func finishPendingChange() {
+        isHolding = false
         guard let pending = pendingChange else { return }
         pendingChange = nil
         if pending.folders == folders {
             record(from: pending.start, in: pending.scope)
-            if let undoManager, undoManager.groupingLevel > 0, !undoManager.isUndoing, !undoManager.isRedoing {
-                undoManager.endUndoGrouping()
-                undoManager.beginUndoGrouping()
-            }
         }
         if reloadIsDue { reload() }
     }
 
+    /// Whether a change was registered for undo in this turn of the run loop.
+    @ObservationIgnored private var registeredUndoThisTurn = false
+
+    /// Every change is undone on its own. The undo manager puts everything registered in one
+    /// event into one step, so a change registered in the same event as another (a burst of
+    /// arrow keys finished by ⌘L, or by Fit) starts a step of its own. Only then: a step left
+    /// empty would make ⌘Z do nothing once.
+    private func beginUndoStep() {
+        guard let undoManager, !undoManager.isUndoing, !undoManager.isRedoing else { return }
+        if registeredUndoThisTurn {
+            if undoManager.groupingLevel > 0 {
+                undoManager.endUndoGrouping()
+                undoManager.beginUndoGrouping()
+            }
+        } else {
+            registeredUndoThisTurn = true
+            DispatchQueue.main.async { [weak self] in self?.registeredUndoThisTurn = false }
+        }
+    }
+
     /// Keeps a finished change: writes it to the folders, or keeps it in the draft, and
-    /// lets it be undone. A moved picture doesn't give the folders a look of their own.
+    /// lets it be undone. A moved or turned picture doesn't give the folders a look of their own.
     private func record(from previous: Layout, in scope: Scope) {
         switch scope {
         case .folders:
@@ -325,9 +349,21 @@ final class EditorModel {
         }
     }
 
+    /// Turns the folders' picture a quarter turn, counterclockwise or `clockwise`. It stays
+    /// where it is as far as its new size lets it.
+    func rotatePicture(clockwise: Bool) {
+        guard !isHolding else { return }
+        finishPendingChange()
+        guard placesPicture, let picture else { return }
+        let previous = layout
+        placement = StyleEditor.placement(placement, turnedBy: clockwise ? -90 : 90, imageSize: picture.size, style: style)
+        record(from: previous, in: scope)
+    }
+
     /// Fill or Fit. The picture stays put as far as the new mode lets it: against the same
     /// edges, or in the middle.
     func setMode(_ mode: FitMode) {
+        guard !isHolding else { return }
         finishPendingChange()
         guard style.mode != mode else { return }
         let previous = layout
@@ -338,6 +374,7 @@ final class EditorModel {
     /// Back to the default look for the folders, picture in the middle; back to the standard
     /// look for the default.
     func reset() {
+        guard !isHolding else { return }
         finishPendingChange()
         if isEditingFolders {
             guard canReset else { return }
@@ -370,9 +407,9 @@ final class EditorModel {
         looks = newLooks
         let first = managedFolders.first.flatMap { newLooks[$0] }
         folderStyle = first?.style ?? settings.defaultStyle
-        folderPlacement = first?.placement ?? .centered
+        folderPlacement = first?.placement ?? .natural
         followsDefault = newLooks.values.allSatisfy { $0.style == nil }
-        isPictureCentered = newLooks.values.allSatisfy { $0.placement == .centered }
+        isPictureNatural = newLooks.values.allSatisfy { $0.placement == .natural }
         writeGeneration += 1
         let manager = actions.manager
         let previous = writing
@@ -400,6 +437,7 @@ final class EditorModel {
     /// Undo puts every folder back to its own look from before.
     private func registerUndo(restoring looks: [URL: Look]) {
         guard let undoManager else { return }
+        beginUndoStep()
         let folders = self.folders
         undoManager.registerUndo(withTarget: self) { model in
             guard model.folders == folders else { return }
@@ -414,6 +452,7 @@ final class EditorModel {
 
     private func registerUndo(restoringDraft draft: IconStyle) {
         guard let undoManager else { return }
+        beginUndoStep()
         undoManager.registerUndo(withTarget: self) { model in
             model.dropPendingChange()
             let current = model.defaultDraft
@@ -428,6 +467,7 @@ final class EditorModel {
     /// among the redo steps. (The editor finishes its arrow keys before it undoes.)
     private func dropPendingChange() {
         pendingChange = nil
+        isHolding = false
     }
 
     // MARK: - Pictures

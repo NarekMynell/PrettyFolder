@@ -189,7 +189,7 @@ public actor FolderImageManager {
                 let stale = existing == nil ? staleRecord(of: folder) : nil
                 let bookmark = try folder.bookmarkData()
                 let style = existing?.style ?? defaultStyle
-                let image = try drawn[style] ?? draw(picture, style: style, placement: .centered)
+                let image = try drawn[style] ?? draw(picture, style: style, placement: .natural)
                 drawn[style] = image
                 let icon = try writeIcon(image, to: folder)
                 let now = Date()
@@ -281,7 +281,7 @@ public actor FolderImageManager {
             folder: folder,
             pictureURL: library.pictureURL(named: record.pictureName),
             style: record.style ?? defaultStyle,
-            placement: record.placement ?? .centered,
+            placement: record.placement ?? .natural,
             followsDefault: record.style == nil
         )
     }
@@ -291,7 +291,7 @@ public actor FolderImageManager {
     public func setStyle(_ style: IconStyle?, placement: PicturePlacement, for folder: URL) async throws {
         try await change(folder) { record in
             record.style = style
-            record.placement = placement == .centered ? nil : placement
+            record.placement = placement == .natural ? nil : placement
         }
     }
 
@@ -303,7 +303,7 @@ public actor FolderImageManager {
 
     /// Moves one folder's picture inside its look, which stays as it is.
     public func setPlacement(_ placement: PicturePlacement, for folder: URL) async throws {
-        try await change(folder) { $0.placement = placement == .centered ? nil : placement }
+        try await change(folder) { $0.placement = placement == .natural ? nil : placement }
     }
 
     /// Changes a folder's record with `edit`, as it is when the change comes in, and redraws it.
@@ -313,8 +313,9 @@ public actor FolderImageManager {
         }
         let picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
         edit(&record)
-        let icon = try writeIcon(draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .centered), to: folder)
+        let icon = try writeIcon(draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .natural), to: folder)
         record.iconDigest = icon.digest
+        record.revision = IconRenderer.revision
         record.updated = Date()
         library.upsert(record)
         persist()
@@ -368,6 +369,14 @@ public actor FolderImageManager {
     public func redrawAll(progress: (@Sendable (Int, Int) -> Void)? = nil) async -> [FolderOutcome] {
         renderer = IconRenderer()
         return await redraw(Array(library.records.values), progress: progress)
+    }
+
+    /// Redraws the folders whose icon an earlier version drew differently (see
+    /// `IconRenderer.revision`). Folders that can't be reached now keep theirs until next time.
+    public func redrawOutdated() async -> [FolderOutcome] {
+        let outdated = library.records.values.filter { ($0.revision ?? 1) < IconRenderer.revision }
+        guard !outdated.isEmpty else { return [] }
+        return await redraw(outdated, progress: nil)
     }
 
     /// Takes every PrettyFolder picture off and forgets about them, before uninstalling. A
@@ -469,9 +478,10 @@ public actor FolderImageManager {
                         picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
                         open = (record.pictureName, picture)
                     }
-                    let image = try draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .centered)
+                    let image = try draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .natural)
                     let icon = try writeIcon(image, to: folder)
                     record.iconDigest = icon.digest
+                    record.revision = IconRenderer.revision
                     record.updated = Date()
                     library.upsert(record)
                     // Saved before the app is told: if it quits meanwhile, the library still
@@ -578,7 +588,8 @@ public actor FolderImageManager {
             record = FolderRecord(
                 id: UUID(), bookmark: bookmark, lastKnownPath: FolderInspector.canonicalPath(folder.path),
                 pictureName: record.pictureName,
-                style: record.style, placement: record.placement, iconDigest: record.iconDigest, created: now, updated: now
+                style: record.style, placement: record.placement, iconDigest: record.iconDigest, revision: record.revision,
+                created: now, updated: now
             )
             ExtendedAttributes.set(Data(record.id.uuidString.utf8), named: Self.markerAttribute, at: folder)
         } else {

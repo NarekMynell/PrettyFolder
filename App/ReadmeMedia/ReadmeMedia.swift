@@ -150,7 +150,7 @@ final class Studio {
     }
 
     /// The icon PrettyFolder makes: the folder with `picture` on it, or the plain folder.
-    func icon(_ picture: SourceImage?, style: IconStyle = .standard, placement: PicturePlacement = .centered, side: CGFloat) -> CGImage {
+    func icon(_ picture: SourceImage?, style: IconStyle = .standard, placement: PicturePlacement = .natural, side: CGFloat) -> CGImage {
         renderer.render(picture, style: style, placement: placement, pixelSize: Int((side * Stage.scale).rounded()))!
     }
 
@@ -161,6 +161,16 @@ final class Studio {
         try? await Task.sleep(for: .milliseconds(milliseconds))
         window?.contentView?.layoutSubtreeIfNeeded()
         window?.displayIfNeeded()
+    }
+
+    /// Waits until the window shows what it was opened for: the folder's picture and look, which
+    /// it reads off the main thread. A debug build takes its time over the folder's artwork.
+    func settleUntilShown(_ model: EditorModel, in window: NSWindow) async throws {
+        for _ in 0..<200 where !model.hasPicture {
+            await settle(window, milliseconds: 50)
+        }
+        guard model.hasPicture else { throw MediaError("The window never showed the folder's picture") }
+        await settle(window, milliseconds: 300)
     }
 
     /// Puts a window where no screen shows it, ready to be drawn. It becomes this app's key
@@ -221,7 +231,7 @@ final class Studio {
         var editor: CGRect
         /// The Fill / Fit switch.
         var scaling: CGRect
-        /// The buttons below the folder, left to right: choose, reset, remove, Done.
+        /// The buttons below the folder, left to right: choose, rotate, reset, remove, Done.
         var buttons: [CGRect]
     }
 

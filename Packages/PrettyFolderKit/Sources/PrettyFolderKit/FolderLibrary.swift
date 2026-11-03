@@ -18,6 +18,9 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
     /// SHA-256 of the icon resource PrettyFolder wrote. If the folder's icon no longer
     /// matches, somebody else changed it and PrettyFolder keeps its hands off.
     var iconDigest: String
+    /// The `IconRenderer.revision` the icon was drawn with; `nil` for icons from before there
+    /// was one. An older icon is drawn again once its folder can be reached.
+    var revision: Int?
     var created: Date
     var updated: Date
     /// Set while the folder can't be found; the record is dropped after a grace period.
@@ -25,7 +28,8 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
 
     init(
         id: UUID, bookmark: Data, lastKnownPath: String, pictureName: String, style: IconStyle?,
-        placement: PicturePlacement? = nil, iconDigest: String, created: Date, updated: Date, missingSince: Date? = nil
+        placement: PicturePlacement? = nil, iconDigest: String, revision: Int? = IconRenderer.revision,
+        created: Date, updated: Date, missingSince: Date? = nil
     ) {
         self.id = id
         self.bookmark = bookmark
@@ -34,6 +38,7 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
         self.style = style
         self.placement = placement
         self.iconDigest = iconDigest
+        self.revision = revision
         self.created = created
         self.updated = updated
         self.missingSince = missingSince
@@ -54,6 +59,7 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
         placement = try container.decodeIfPresent(PicturePlacement.self, forKey: .placement)
             ?? decoder.container(keyedBy: EarlierKeys.self).decodeIfPresent(PicturePlacement.self, forKey: .alignment)
         iconDigest = try container.decode(String.self, forKey: .iconDigest)
+        revision = try container.decodeIfPresent(Int.self, forKey: .revision)
         created = try container.decode(Date.self, forKey: .created)
         updated = try container.decode(Date.self, forKey: .updated)
         missingSince = try container.decodeIfPresent(Date.self, forKey: .missingSince)
@@ -66,7 +72,9 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
 /// Pictures are stored by content hash, so the same picture on many folders is kept once.
 struct FolderLibrary {
     private struct Snapshot: Codable {
-        static let currentVersion = 1
+        /// 2: frames can be bigger than the icon and pictures can be turned, which version 1
+        /// would squeeze back and drop if it saved the list again.
+        static let currentVersion = 2
         var version = currentVersion
         var records: [FolderRecord]
     }
