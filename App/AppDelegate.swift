@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isReady = false
     private var queuedCommands: [(FolderCommand, fromOurExtension: Bool)] = []
     private var mountObserver: NSObjectProtocol?
+    /// Quitting was asked for and is waiting for an answer, or for the last writes.
+    private var isQuitting = false
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "App")
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -121,12 +123,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// last change to be written, and lets the folder being written finish: nothing is cut off
     /// halfway. Long runs (Redraw All, Remove All) stop at the next folder.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        isQuitting = true
         let asking = actions.confirmQuit { [weak self] proceed in
-            guard proceed else { return NSApp.reply(toApplicationShouldTerminate: false) }
+            guard proceed else {
+                self?.isQuitting = false
+                return NSApp.reply(toApplicationShouldTerminate: false)
+            }
             self?.finishWriting()
         }
         if !asking { finishWriting() }
         return .terminateLater
+    }
+
+    /// Quits, for the buttons and menu items that do. Unless it is on its way already: asked again
+    /// meanwhile, AppKit quits on the spot, whatever is being asked or written.
+    static func quit() {
+        guard (NSApp.delegate as? AppDelegate)?.isQuitting != true else { return }
+        NSApp.terminate(nil)
     }
 
     private func finishWriting() {

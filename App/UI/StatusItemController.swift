@@ -59,7 +59,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(MenuActionItem.make(title: String(localized: "Settings…"), keyEquivalent: ",") { [weak self] in self?.actions.showEditor() })
         menu.addItem(.separator())
-        menu.addItem(MenuActionItem.make(title: String(localized: "Quit PrettyFolder"), keyEquivalent: "q") { NSApp.terminate(nil) })
+        menu.addItem(MenuActionItem.make(title: String(localized: "Quit PrettyFolder"), keyEquivalent: "q") { AppDelegate.quit() })
     }
 }
 

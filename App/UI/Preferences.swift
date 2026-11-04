@@ -79,7 +79,7 @@ private struct PreferencesView: View {
                 Link("PrettyFolder \(Self.version)", destination: URL(string: "https://github.com/NarekMynell/PrettyFolder")!)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Quit") { NSApp.terminate(nil) }
+                Button("Quit") { AppDelegate.quit() }
             }
             .font(.callout)
             .controlSize(.small)
