@@ -7,7 +7,7 @@ import SwiftUI
 
 /// Renders the README's pictures and animations from the app's own views and icons:
 ///
-///     PrettyFolder --readme-media <output folder> --pictures <folder> [--only <scene>] [--scale 2] [--fps 25]
+///     PrettyFolder --readme-media <output folder> --pictures <folder> [--only <scene>] [--scale 2] [--fps 25] [--pointer 1]
 ///
 /// writes a folder of numbered PNG frames for each animation, and single PNGs, then quits.
 /// `wallpaper.jpg` among the pictures, if there is one, is the desktop the scenes are on.
@@ -23,6 +23,7 @@ enum ReadmeMedia {
         let only = value(after: "--only", in: arguments)
         if let scale = value(after: "--scale", in: arguments).flatMap(Double.init) { Stage.scale = CGFloat(scale) }
         if let rate = value(after: "--fps", in: arguments).flatMap(Double.init) { Stage.framesPerSecond = rate }
+        if let pointer = value(after: "--pointer", in: arguments).flatMap(Double.init) { Stage.pointerScale = CGFloat(pointer) }
 
         MainActor.assumeIsolated {
             NSApplication.shared.setActivationPolicy(.accessory)
@@ -68,6 +69,11 @@ private enum StagedLook {
         }
         let yesForButton: @convention(block) (AnyObject, Int) -> Bool = { _, _ in true }
         replace(NSWindow.self, "_hasActiveAppearanceForStandardWindowButton:", with: imp_implementationWithBlock(yesForButton))
+        // Nor does it give that up when another app comes forward: that would end a pinch halfway.
+        let stays: @convention(block) (AnyObject) -> Void = { _ in }
+        for name in ["resignKeyWindow", "resignMainWindow"] {
+            replace(NSWindow.self, name, with: imp_implementationWithBlock(stays))
+        }
         let unconstrained: @convention(block) (AnyObject, NSRect, NSScreen?) -> NSRect = { _, rect, _ in rect }
         replace(NSWindow.self, "constrainFrameRect:toScreen:", with: imp_implementationWithBlock(unconstrained))
         if let method = class_getClassMethod(FIFinderSyncController.self, NSSelectorFromString("isExtensionEnabled")) {
@@ -124,6 +130,7 @@ final class Studio {
             ("zoom", renderZoom),
             ("turn", renderTurn),
             ("fit", renderFit),
+            ("cover", renderCover),
         ]
         for scene in scenes where only == nil || only == scene.name {
             print("Rendering \(scene.name)…")
@@ -227,7 +234,12 @@ final class Studio {
         view.frame = CGRect(origin: .zero, size: size)
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
-        let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+        // At the stage's scale, whatever the screen's: a video zooms in on these.
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int((size.width * Stage.scale).rounded()), pixelsHigh: Int((size.height * Stage.scale).rounded()),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        )!
+        rep.size = size
         view.cacheDisplay(in: view.bounds, to: rep)
         return rep.cgImage!
     }

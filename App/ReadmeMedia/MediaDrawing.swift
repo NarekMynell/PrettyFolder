@@ -7,6 +7,8 @@ enum Stage {
     /// Pixels per point in the frames: 2 for the README, more for a video that zooms in.
     nonisolated(unsafe) static var scale: CGFloat = 2
     nonisolated(unsafe) static var framesPerSecond = 25.0
+    /// How big the pointer and the fingers are drawn: more for a video seen on a phone.
+    nonisolated(unsafe) static var pointerScale: CGFloat = 1
 
     /// Where the stage would be on screen, in Accessibility coordinates. The app's own
     /// layout code works in screen coordinates, so scenes hand it these.
@@ -267,7 +269,8 @@ enum Scenery {
     /// The pointer, its hot spot at `point`.
     static func drawCursor(_ cursor: NSCursor, at point: CGPoint, on bitmap: Bitmap) {
         let image = cursor.image
-        let rect = CGRect(x: point.x - cursor.hotSpot.x, y: point.y - cursor.hotSpot.y, width: image.size.width, height: image.size.height)
+        let scale = Stage.pointerScale
+        let rect = CGRect(x: point.x - cursor.hotSpot.x * scale, y: point.y - cursor.hotSpot.y * scale, width: image.size.width * scale, height: image.size.height * scale)
         bitmap.appKit {
             image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
@@ -276,12 +279,12 @@ enum Scenery {
     /// A click, as a ring that grows and fades around the pointer while `amount` goes from 0 to 1.
     static func drawClick(at point: CGPoint, amount: Double, on bitmap: Bitmap) {
         guard amount > 0, amount < 1 else { return }
-        let radius = 6 + 16 * CGFloat(ease(amount))
+        let radius = (6 + 16 * CGFloat(ease(amount))) * Stage.pointerScale
         let alpha = CGFloat(1 - amount)
         bitmap.appKit {
             let ring = NSBezierPath(ovalIn: NSRect(x: point.x - radius, y: point.y - radius, width: 2 * radius, height: 2 * radius))
             NSColor.white.withAlphaComponent(0.85 * alpha).setStroke()
-            ring.lineWidth = 2
+            ring.lineWidth = 2 * Stage.pointerScale
             ring.stroke()
             NSColor.white.withAlphaComponent(0.18 * alpha).setFill()
             ring.fill()
@@ -291,16 +294,18 @@ enum Scenery {
     /// Two fingertips around the pointer, moving apart as `spread` goes from 0 to 1: a pinch.
     static func drawPinch(around point: CGPoint, spread: Double, alpha: Double, on bitmap: Bitmap) {
         guard alpha > 0 else { return }
-        let distance = 12 + 16 * CGFloat(spread)
+        let scale = Stage.pointerScale
+        let distance = (12 + 16 * CGFloat(spread)) * scale
+        let radius = 8 * scale
         bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.35 * alpha), blur: 3, offset: CGSize(width: 0, height: 1)) {
             bitmap.appKit {
                 for direction: CGFloat in [-1, 1] {
-                    let center = CGPoint(x: point.x + direction * distance * 0.7, y: point.y - 8 + direction * distance * 0.7)
-                    let tip = NSBezierPath(ovalIn: NSRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16))
+                    let center = CGPoint(x: point.x + direction * distance * 0.7, y: point.y - radius + direction * distance * 0.7)
+                    let tip = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: 2 * radius, height: 2 * radius))
                     NSColor.white.withAlphaComponent(0.55 * alpha).setFill()
                     tip.fill()
                     NSColor.white.withAlphaComponent(0.9 * alpha).setStroke()
-                    tip.lineWidth = 1.5
+                    tip.lineWidth = 1.5 * scale
                     tip.stroke()
                 }
             }
@@ -311,19 +316,21 @@ enum Scenery {
     /// it: a twist.
     static func drawTwist(around point: CGPoint, degrees: Double, alpha: Double, on bitmap: Bitmap) {
         guard alpha > 0 else { return }
-        let distance: CGFloat = 22
+        let scale = Stage.pointerScale
+        let distance = 22 * scale
+        let radius = 8 * scale
         // They start a little off the diagonal, the way two fingers rest on a trackpad.
         let angle = CGFloat((-35 + degrees) * .pi / 180)
         bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.35 * alpha), blur: 3, offset: CGSize(width: 0, height: 1)) {
             bitmap.appKit {
                 for direction: CGFloat in [-1, 1] {
                     // Counterclockwise on screen, with the y axis pointing down.
-                    let center = CGPoint(x: point.x + direction * distance * cos(angle), y: point.y - 8 - direction * distance * sin(angle))
-                    let tip = NSBezierPath(ovalIn: NSRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16))
+                    let center = CGPoint(x: point.x + direction * distance * cos(angle), y: point.y - radius - direction * distance * sin(angle))
+                    let tip = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: 2 * radius, height: 2 * radius))
                     NSColor.white.withAlphaComponent(0.55 * alpha).setFill()
                     tip.fill()
                     NSColor.white.withAlphaComponent(0.9 * alpha).setStroke()
-                    tip.lineWidth = 1.5
+                    tip.lineWidth = 1.5 * scale
                     tip.stroke()
                 }
             }
@@ -335,11 +342,12 @@ enum Scenery {
     static func drawRightButton(beside point: CGPoint, alpha: Double, on bitmap: Bitmap) {
         guard alpha > 0 else { return }
         let alpha = CGFloat(alpha)
-        let body = CGRect(x: point.x + 15, y: point.y + 17, width: 18, height: 26)
+        let scale = Stage.pointerScale
+        let body = CGRect(x: point.x + 15 * scale, y: point.y + 17 * scale, width: 18 * scale, height: 26 * scale)
         let split = body.minY + body.height * 0.42
         bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.35 * alpha), blur: 3, offset: CGSize(width: 0, height: 1)) {
             bitmap.appKit {
-                let shape = NSBezierPath(roundedRect: body, xRadius: 9, yRadius: 9)
+                let shape = NSBezierPath(roundedRect: body, xRadius: 9 * scale, yRadius: 9 * scale)
                 NSColor.white.withAlphaComponent(0.95 * alpha).setFill()
                 shape.fill()
                 // The right button, pressed.
@@ -360,6 +368,83 @@ enum Scenery {
                 shape.stroke()
             }
         }
+    }
+
+    /// The panel the Choose button opens: pictures to pick from, and Open.
+    struct OpenPanel {
+        let frame: CGRect
+        let thumbnails: [(image: CGImage, name: String, frame: CGRect)]
+        let open: CGRect
+        let cancel: CGRect
+
+        init(frame: CGRect, pictures: [(image: CGImage, name: String)]) {
+            self.frame = frame
+            let inset: CGFloat = 14, gap: CGFloat = 10, top: CGFloat = 34, columns = 3
+            let width = (frame.width - 2 * inset - gap * CGFloat(columns - 1)) / CGFloat(columns)
+            let height = width * 0.72
+            thumbnails = pictures.enumerated().map { index, picture in
+                let x = frame.minX + inset + CGFloat(index % columns) * (width + gap)
+                let y = frame.minY + top + CGFloat(index / columns) * (height + 22)
+                return (picture.image, picture.name, CGRect(x: x, y: y, width: width, height: height))
+            }
+            open = CGRect(x: frame.maxX - inset - 58, y: frame.maxY - 32, width: 58, height: 22)
+            cancel = CGRect(x: open.minX - 66, y: open.minY, width: 58, height: 22)
+        }
+    }
+
+    static func drawOpenPanel(_ panel: OpenPanel, selected: Int?, pressingOpen: Bool, alpha: CGFloat, on bitmap: Bitmap) {
+        guard alpha > 0 else { return }
+        func label(_ text: String, size: CGFloat, weight: NSFont.Weight, color: NSColor, centerX: CGFloat, midY: CGFloat) {
+            let string = NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color])
+            let measured = string.size()
+            string.draw(at: CGPoint(x: centerX - measured.width / 2, y: midY - measured.height / 2))
+        }
+        bitmap.context.saveGState()
+        bitmap.context.setAlpha(alpha)
+        bitmap.context.beginTransparencyLayer(auxiliaryInfo: nil)
+        bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.5), blur: 24, offset: CGSize(width: 0, height: 10)) {
+            bitmap.context.addPath(CGPath(roundedRect: panel.frame, cornerWidth: 14, cornerHeight: 14, transform: nil))
+            bitmap.context.setFillColor(CGColor.hex(0x2A2A2D))
+            bitmap.context.fillPath()
+        }
+        bitmap.appKit {
+            label("Choose a Picture", size: 12, weight: .semibold, color: .white, centerX: panel.frame.midX, midY: panel.frame.minY + 17)
+        }
+        for (index, thumbnail) in panel.thumbnails.enumerated() {
+            let isSelected = index == selected
+            if isSelected {
+                bitmap.context.addPath(CGPath(roundedRect: thumbnail.frame.insetBy(dx: -4, dy: -4), cornerWidth: 8, cornerHeight: 8, transform: nil))
+                bitmap.context.setFillColor(CGColor(gray: 1, alpha: 0.18))
+                bitmap.context.fillPath()
+            }
+            bitmap.context.saveGState()
+            bitmap.context.addPath(CGPath(roundedRect: thumbnail.frame, cornerWidth: 5, cornerHeight: 5, transform: nil))
+            bitmap.context.clip()
+            let aspect = CGFloat(thumbnail.image.width) / CGFloat(thumbnail.image.height)
+            let side = max(thumbnail.frame.width, thumbnail.frame.height * aspect)
+            bitmap.draw(thumbnail.image, in: CGRect(x: thumbnail.frame.midX - side / 2, y: thumbnail.frame.midY - side / aspect / 2, width: side, height: side / aspect))
+            bitmap.context.restoreGState()
+            let nameY = thumbnail.frame.maxY + 10
+            bitmap.appKit {
+                if isSelected {
+                    let font = NSFont.systemFont(ofSize: 9.5, weight: .medium)
+                    let width = NSAttributedString(string: thumbnail.name, attributes: [.font: font]).size().width
+                    NSColor.systemBlue.setFill()
+                    NSBezierPath(roundedRect: CGRect(x: thumbnail.frame.midX - width / 2 - 5, y: nameY - 7, width: width + 10, height: 14), xRadius: 4, yRadius: 4).fill()
+                }
+                label(thumbnail.name, size: 9.5, weight: .medium, color: .white, centerX: thumbnail.frame.midX, midY: nameY)
+            }
+        }
+        bitmap.appKit {
+            NSColor(white: 1, alpha: 0.16).setFill()
+            NSBezierPath(roundedRect: panel.cancel, xRadius: 6, yRadius: 6).fill()
+            label("Cancel", size: 11, weight: .medium, color: .white, centerX: panel.cancel.midX, midY: panel.cancel.midY)
+            (selected == nil ? NSColor(white: 1, alpha: 0.16) : pressingOpen ? NSColor.systemBlue.blended(withFraction: 0.25, of: .black)! : NSColor.systemBlue).setFill()
+            NSBezierPath(roundedRect: panel.open, xRadius: 6, yRadius: 6).fill()
+            label("Open", size: 11, weight: .semibold, color: selected == nil ? NSColor(white: 1, alpha: 0.5) : .white, centerX: panel.open.midX, midY: panel.open.midY)
+        }
+        bitmap.context.endTransparencyLayer()
+        bitmap.context.restoreGState()
     }
 
     /// A window with the soft shadow macOS gives it.

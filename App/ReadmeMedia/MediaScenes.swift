@@ -67,8 +67,8 @@ extension Studio {
         let bitmap = Bitmap(size: size)
         bitmap.draw(Scenery.wallpaper(size: size), in: CGRect(origin: .zero, size: size))
         let materials = [
-            ("Summer", "silk.jpg"), ("Studio", "chrome.jpg"), ("Dreams", "holo.jpg"), ("Art", "paint.jpg"),
-            ("Design", "ribbons.jpg"), ("Weekend", "clouds.jpg"), ("Vacation", "wave.jpg"), ("Ideas", "gradient.jpg"),
+            ("Recipes", "dragonfruit.jpg"), ("Wildlife", "frog.jpg"), ("Norway", "aurora.jpg"), ("Summer", "oranges.jpg"),
+            ("Diving", "turtle.jpg"), ("Garden", "peony.jpg"), ("Design", "pineapple.jpg"), ("Vacation", "beach.jpg"),
         ]
         let frames = row(count: 4, side: 120, top: 32, spacing: 172, width: size.width)
             + row(count: 4, side: 120, top: 212, spacing: 172, width: size.width)
@@ -81,18 +81,16 @@ extension Studio {
 
     // MARK: - Drag and drop
 
-    /// A picture dragged from the Desktop onto a folder's Set as Icon badge.
+    /// A picture dragged from the Desktop onto a folder's Set as Icon badge. One picture and one
+    /// folder, both big, so what the hand does is all there is to see.
     func renderDrop() async throws {
         try await renderDrags(
             "drop",
-            folders: [
-                Folder(name: "Music", picture: "headphones.jpg", look: .standard),
-                Folder(name: "Ideas", picture: "bulb.jpg", look: .front),
-                Folder(name: "Pets", picture: nil),
-                Folder(name: "Plants", picture: "leaf.jpg", look: .cover),
-            ],
-            drags: [Drag(file: "axolotl.jpg", target: 2, look: .standard, start: 0, at: CGPoint(x: 172, y: 272))],
-            seconds: 6.6, pointerStart: CGPoint(x: 560, y: 380), pointerEnd: CGPoint(x: 520, y: 330)
+            folders: [Folder(name: "Pets", picture: nil)],
+            frames: [CGRect(x: 385, y: 72, width: 195, height: 195)],
+            // Held by its top-right corner, so it hangs down and to the left of the pointer and the badge stays in sight.
+            drags: [Drag(file: "axolotl.jpg", target: 0, look: .standard, start: 0, at: CGPoint(x: 170, y: 106), side: 120, grab: CGPoint(x: 108, y: 8))],
+            seconds: 6.6, pointerStart: CGPoint(x: 330, y: 372), pointerEnd: CGPoint(x: 545, y: 345)
         )
     }
 
@@ -107,6 +105,7 @@ extension Studio {
                 Folder(name: "Startup", picture: nil),
                 Folder(name: "Cats", picture: "cat.png", look: .sticker),
             ],
+            frames: row(count: 4, side: 96, top: 88, spacing: 140, width: 720),
             drags: [
                 Drag(file: "rocket.png", target: 0, look: .sticker, start: 0, at: CGPoint(x: 172, y: 272), clear: true),
                 Drag(file: "bolt.svg", target: 2, look: .sticker, start: 3.7, at: CGPoint(x: 452, y: 272), clear: true),
@@ -126,14 +125,18 @@ extension Studio {
         let at: CGPoint
         /// It has nothing around it: shown on a checkerboard.
         var clear = false
+        /// How big it is on the Desktop.
+        var side: CGFloat = 96
+        /// Where on the file the pointer holds it.
+        /// By its bottom-right corner, it rides up and to the left of the pointer.
+        var grab = CGPoint(x: 86, y: 74)
     }
 
-    private func renderDrags(_ scene: String, folders: [Folder], drags: [Drag], seconds: Double, pointerStart: CGPoint, pointerEnd: CGPoint) async throws {
+    private func renderDrags(_ scene: String, folders: [Folder], frames: [CGRect], drags: [Drag], seconds: Double, pointerStart: CGPoint, pointerEnd: CGPoint) async throws {
         let size = CGSize(width: 720, height: 420)
         let wallpaper = Scenery.wallpaper(size: size)
         let names = folders.map(\.name)
-        let frames = row(count: folders.count, side: 96, top: 88, spacing: 140, width: size.width)
-        var icons = try folders.map { try icon($0, side: 96) }
+        var icons = try zip(folders, frames).map { try icon($0, side: $1.width) }
 
         struct Prepared {
             let dropped: CGImage
@@ -149,17 +152,15 @@ extension Studio {
         var path = PointerPath(start: pointerStart)
         for drag in drags {
             let target = drag.target
-            let droppedIcon = icon(try picture(drag.file), style: drag.look.style, placement: drag.look.placement, side: 96)
+            let droppedIcon = icon(try picture(drag.file), style: drag.look.style, placement: drag.look.placement, side: frames[target].width)
 
             // The picture file, as Finder shows it on the Desktop.
             let file = NSImage(contentsOf: pictureURL(drag.file))!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
-            let fileFrame = CGRect(origin: drag.at, size: CGSize(width: 96, height: 96))
-            let thumbnail = drag.clear ? Scenery.clearThumbnail(of: file, fitting: 96) : Scenery.thumbnail(of: file, fitting: 96)
+            let fileFrame = CGRect(origin: drag.at, size: CGSize(width: drag.side, height: drag.side))
+            let thumbnail = drag.clear ? Scenery.clearThumbnail(of: file, fitting: drag.side) : Scenery.thumbnail(of: file, fitting: drag.side)
 
             // The badge, in each of its looks, where the app puts it for this folder.
-            // Grabbed by its bottom-right corner, so what's dragged rides up and to the left of
-            // the pointer and the badge's title stays in sight.
-            let pressPoint = CGPoint(x: fileFrame.minX + 86, y: fileFrame.minY + 74)
+            let pressPoint = CGPoint(x: fileFrame.minX + drag.grab.x, y: fileFrame.minY + drag.grab.y)
             let overFolder = CGPoint(x: frames[target].midX - 4, y: frames[target].midY + 8)
             let item = FinderItem(
                 url: URL(fileURLWithPath: "/\(names[target])/"), layout: .icon,
@@ -178,8 +179,16 @@ extension Studio {
                 _ = sprite(of: host, size: badgeFrame.size)
                 await settle(milliseconds: 450)
                 badges[state] = sprite(of: host, size: badgeFrame.size)
+                // Sharper when it can be: the spinner only draws in a window.
+                if state != .working {
+                    let renderer = ImageRenderer(content: DropBadgeContent(model: badgeModel).frame(width: badgeFrame.width, height: badgeFrame.height))
+                    renderer.scale = Stage.scale
+                    badges[state] = renderer.cgImage ?? badges[state]
+                }
             }
-            let onBadge = CGPoint(x: badgeFrame.minX + DropBadgeController.shadowMargin + 18, y: badgeFrame.midY + 1)
+            // On its symbol, low down: what's dragged hangs below it or off to the side, and the
+            // title stays in sight.
+            let onBadge = CGPoint(x: badgeFrame.minX + DropBadgeController.shadowMargin + 18, y: drag.grab.y < 20 ? badgeFrame.maxY - DropBadgeController.shadowMargin - 5 : badgeFrame.midY + 1)
 
             path.move(to: pressPoint, from: drag.start + 0.4, to: drag.start + 1.2)
             path.move(to: overFolder, from: drag.start + 1.45, to: drag.start + 2.55, arc: -0.12)
@@ -210,7 +219,11 @@ extension Studio {
                 bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
                 for (position, frame) in frames.enumerated() {
                     let targeted = dragging && position == drag.target && frame.contains(pointer) && !overBadge
-                    Scenery.drawItem(on: bitmap, icon: icons[position], frame: frame, name: names[position], targeted: targeted)
+                    // The folder takes the picture with a little bounce.
+                    let landed = drags.first { $0.target == position }.map { t - $0.start - doneAt } ?? -1
+                    let bounce = landed >= 0 && landed < 0.32 ? 1 + 0.07 * CGFloat(sin(landed / 0.32 * .pi)) : 1
+                    let shown = frame.insetBy(dx: frame.width * (1 - bounce) / 2, dy: frame.height * (1 - bounce) / 2)
+                    Scenery.drawItem(on: bitmap, icon: icons[position], frame: shown, name: names[position], targeted: targeted)
                 }
                 for (position, (other, file)) in zip(drags, prepared).enumerated() {
                     Scenery.drawItem(on: bitmap, icon: file.thumbnail, frame: file.frame, name: fileName(other),
@@ -237,6 +250,9 @@ extension Studio {
                     Scenery.drawItem(on: bitmap, icon: ready.thumbnail, frame: dragFrame, name: fileName(drag), selected: true)
                     bitmap.context.restoreGState()
                 }
+                // Where the hand presses, and where it lets go.
+                Scenery.drawClick(at: ready.press, amount: progress(local, pressAt - 0.05, pressAt + 0.35), on: bitmap)
+                Scenery.drawClick(at: ready.onBadge, amount: progress(local, releaseAt - 0.05, releaseAt + 0.35), on: bitmap)
                 Scenery.drawCursor(overBadge ? .dragCopy : .arrow, at: pointer, on: bitmap)
                 try sequence.add(bitmap.image)
             }
@@ -250,51 +266,57 @@ extension Studio {
 
     // MARK: - The buttons on a folder
 
-    /// Pointing at folders: their buttons come up; one picture is removed, then the
-    /// window opens for another folder.
+    /// The three buttons on a folder, each used: one takes the picture off, one picks a new one
+    /// from the panel it opens, and one opens the folder in the window.
     func renderHover() async throws {
-        let size = CGSize(width: 720, height: 420)
+        typealias Action = HoverButtonsController.Action
+        let size = CGSize(width: 540, height: 400)
         let wallpaper = Scenery.wallpaper(size: size)
-        // Games is the way the window opens it: as a new picture comes.
-        let folders = [
-            Folder(name: "Code", picture: "robot.jpg", look: .corner), Folder(name: "Recipes", picture: "citrus.jpg", look: .front),
-            Folder(name: "Games", picture: "gamepad.jpg"), Folder(name: "Taxes", picture: "piggy.jpg", look: .card(turned: 7)),
-        ]
-        let frames = row(count: 4, side: 96, top: 120, spacing: 140, width: size.width)
-        var icons = try folders.map { try icon($0, side: 96) }
-        let plainIcon = icon(nil, side: 96)
-        // The picture comes off Taxes; Games opens in the window.
-        let ghost = 3, monkey = 2
+        let name = "Nature", chosen = "frog.jpg"
+        let frame = CGRect(x: 210, y: 130, width: 120, height: 120)
+        let first = try icon(Folder(name: name, picture: "leaf.jpg"), side: frame.width)
+        let plain = icon(nil, side: frame.width)
+        let last = try icon(Folder(name: name, picture: chosen), side: frame.width)
+        let all: [Action] = [.choose, .remove, .settings], withoutRemove: [Action] = [.choose, .settings]
 
-        // The buttons, as the app lays them out on each of the two folders.
-        func bar(on position: Int, highlight: HoverButtonsController.Action?, pressed: Bool) -> (CGImage, CGRect, HoverBarView.Layout) {
-            let iconOnScreen = Stage.appKitRect(frames[position])
-            let layout = HoverBarView.Layout(icon: iconOnScreen, buttonCount: 3)
-            let view = HoverBarView()
-            view.configure(actions: [.choose, .remove, .settings], layout: layout)
-            view.highlight(highlight, pressed: pressed)
-            let image = sprite(of: view, size: layout.barFrame.size)
-            return (image, Stage.stageRect(fromAppKit: layout.barFrame), layout)
+        // The buttons, as the app lays them out on the folder: all three once it has a picture.
+        struct Bar {
+            let image: CGImage
+            let frame: CGRect
         }
-        func button(_ action: HoverButtonsController.Action, in layout: HoverBarView.Layout) -> CGPoint {
-            let index = CGFloat([HoverButtonsController.Action.choose, .remove, .settings].firstIndex(of: action)!)
+        let layouts = [3: HoverBarView.Layout(icon: Stage.appKitRect(frame), buttonCount: 3), 2: HoverBarView.Layout(icon: Stage.appKitRect(frame), buttonCount: 2)]
+        func bar(_ actions: [Action], highlight: Action? = nil, pressed: Bool = false) -> Bar {
+            let layout = layouts[actions.count]!
+            let view = HoverBarView()
+            view.configure(actions: actions, layout: layout)
+            view.highlight(highlight, pressed: pressed)
+            return Bar(image: sprite(of: view, size: layout.barFrame.size), frame: Stage.stageRect(fromAppKit: layout.barFrame))
+        }
+        func button(_ action: Action, in actions: [Action]) -> CGPoint {
+            let layout = layouts[actions.count]!
+            let index = CGFloat(actions.firstIndex(of: action)!)
             let bar = Stage.stageRect(fromAppKit: layout.barFrame)
             return CGPoint(
                 x: bar.minX + layout.padding + index * (layout.buttonSize + layout.spacing) + layout.buttonSize / 2,
                 y: bar.minY + layout.padding + layout.buttonSize / 2
             )
         }
-        let (ghostBar, ghostBarFrame, ghostLayout) = bar(on: ghost, highlight: nil, pressed: false)
-        let (ghostTrash, _, _) = bar(on: ghost, highlight: .remove, pressed: false)
-        let (ghostTrashPressed, _, _) = bar(on: ghost, highlight: .remove, pressed: true)
-        let (monkeyBar, monkeyBarFrame, monkeyLayout) = bar(on: monkey, highlight: nil, pressed: false)
-        let (monkeySettings, _, _) = bar(on: monkey, highlight: .settings, pressed: false)
-        let (monkeySettingsPressed, _, _) = bar(on: monkey, highlight: .settings, pressed: true)
-        let trash = button(.remove, in: ghostLayout)
-        let settingsButton = button(.settings, in: monkeyLayout)
+        let bars: (rest: Bar, trash: Bar, trashPressed: Bar) = (bar(all), bar(all, highlight: .remove), bar(all, highlight: .remove, pressed: true))
+        let plainBars: (rest: Bar, choose: Bar, choosePressed: Bar) = (bar(withoutRemove), bar(withoutRemove, highlight: .choose), bar(withoutRemove, highlight: .choose, pressed: true))
+        let lastBars: (rest: Bar, settings: Bar, settingsPressed: Bar) = (bar(all), bar(all, highlight: .settings), bar(all, highlight: .settings, pressed: true))
+
+        // The panel Choose opens.
+        let files = ["turtle.jpg", chosen, "oranges.jpg", "peony.jpg", "aurora.jpg", "dragonfruit.jpg"]
+        let panel = Scenery.OpenPanel(
+            frame: CGRect(x: 135, y: 92, width: 270, height: 218),
+            pictures: try files.map { file in
+                (try picture(file).bitmap(maxSide: 512)!, file)
+            }
+        )
+        let pick = files.firstIndex(of: chosen)!
 
         // The window it opens.
-        let folder = try await makeFolder("Games", picture: "gamepad.jpg")
+        let folder = try await makeFolder(name, picture: chosen)
         let controller = EditorWindowController(actions: actions)
         let window = controller.window!
         controller.model.show([folder])
@@ -304,43 +326,61 @@ extension Studio {
         let windowSize = window.frame.size
         window.close()
 
-        var path = PointerPath(start: CGPoint(x: 370, y: 390))
-        path.move(to: CGPoint(x: frames[ghost].midX + 8, y: frames[ghost].midY + 14), from: 0.4, to: 1.2)
-        path.move(to: trash, from: 1.75, to: 2.15, arc: 0.05)
-        path.move(to: CGPoint(x: frames[monkey].midX - 6, y: frames[monkey].midY + 16), from: 3.0, to: 3.7)
-        path.move(to: settingsButton, from: 4.2, to: 4.6, arc: 0.05)
-        path.move(to: CGPoint(x: 360, y: 300), from: 5.6, to: 6.3)
+        // What happens when. Remove:
+        let shown = 1.0, onTrash = 1.6, trashPress = 1.85, trashRelease = 2.0
+        // Choose, on the folder that has no picture now:
+        let shownAgain = 2.2, onChoose = 2.8, choosePress = 3.05, chooseRelease = 3.2
+        let panelShown = 3.25, picked = 4.1, openPress = 4.9, panelGone = 5.0, landed = 5.1
+        // The window:
+        let shownLast = 5.5, onSettings = 6.0, settingsPress = 6.25, settingsRelease = 6.4, windowShown = 6.5
 
-        let ghostShown = 1.3, trashPress = 2.45, trashRelease = 2.6
-        let monkeyShown = 3.8, settingsPress = 4.85, settingsRelease = 5.0
-        let windowShown = 5.15
+        let over = CGPoint(x: frame.midX + 12, y: frame.midY + 24)
+        let thumbnail = panel.thumbnails[pick].frame
+        var path = PointerPath(start: CGPoint(x: 430, y: 372))
+        path.move(to: over, from: 0.2, to: 0.9)
+        path.move(to: button(.remove, in: all), from: 1.25, to: onTrash, arc: 0.05)
+        path.move(to: button(.choose, in: withoutRemove), from: 2.45, to: onChoose, arc: 0.05)
+        path.move(to: CGPoint(x: thumbnail.midX + 6, y: thumbnail.midY + 4), from: 3.5, to: 3.95, arc: 0.05)
+        path.move(to: CGPoint(x: panel.open.midX, y: panel.open.midY), from: 4.3, to: 4.75, arc: 0.05)
+        path.move(to: over, from: 5.05, to: 5.45, arc: 0.05)
+        path.move(to: button(.settings, in: all), from: 5.65, to: onSettings, arc: 0.05)
+        path.move(to: CGPoint(x: 448, y: 360), from: 7.0, to: 7.6)
+
         let windowScale: CGFloat = 0.72
         let windowOrigin = CGPoint(x: (size.width - windowSize.width) / 2, y: (size.height - windowSize.height) / 2)
         let sequence = try frameSequence("hover")
-        for index in 0..<frameCount(7.8) {
+        for index in 0..<frameCount(8.2) {
             // A frame's images go once it's written, not when the whole scene is done.
             try autoreleasepool {
                 let t = Double(index) / Stage.framesPerSecond
                 let pointer = path.position(at: t)
-                if t >= trashRelease + 0.12 { icons[ghost] = plainIcon }
 
                 let bitmap = Bitmap(size: size)
                 bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
-                for (position, frame) in frames.enumerated() {
-                    Scenery.drawItem(on: bitmap, icon: icons[position], frame: frame, name: folders[position].name)
-                }
+                let bounce = t >= landed && t < landed + 0.32 ? 1 + 0.07 * CGFloat(sin((t - landed) / 0.32 * .pi)) : 1
+                let folderFrame = frame.insetBy(dx: frame.width * (1 - bounce) / 2, dy: frame.height * (1 - bounce) / 2)
+                let image = t >= landed ? last : t >= trashRelease + 0.05 ? plain : first
+                Scenery.drawItem(on: bitmap, icon: image, frame: folderFrame, name: name)
+
                 var cursor = NSCursor.arrow
-                if t >= ghostShown && t < trashRelease {
-                    let onTrash = t >= 2.15
-                    let image = t >= trashPress ? ghostTrashPressed : onTrash ? ghostTrash : ghostBar
-                    drawBar(image, in: ghostBarFrame, alpha: CGFloat(progress(t, ghostShown, ghostShown + 0.12)), on: bitmap)
-                    if onTrash { cursor = .pointingHand }
+                if t >= shown && t < trashRelease {
+                    let item = t >= trashPress ? bars.trashPressed : t >= onTrash ? bars.trash : bars.rest
+                    drawBar(item.image, in: item.frame, alpha: CGFloat(progress(t, shown, shown + 0.12)), on: bitmap)
+                    if t >= onTrash { cursor = .pointingHand }
                 }
-                if t >= monkeyShown && t < settingsRelease {
-                    let onSettings = t >= 4.6
-                    let image = t >= settingsPress ? monkeySettingsPressed : onSettings ? monkeySettings : monkeyBar
-                    drawBar(image, in: monkeyBarFrame, alpha: CGFloat(progress(t, monkeyShown, monkeyShown + 0.12)), on: bitmap)
-                    if onSettings { cursor = .pointingHand }
+                if t >= shownAgain && t < chooseRelease {
+                    let item = t >= choosePress ? plainBars.choosePressed : t >= onChoose ? plainBars.choose : plainBars.rest
+                    drawBar(item.image, in: item.frame, alpha: CGFloat(progress(t, shownAgain, shownAgain + 0.12)), on: bitmap)
+                    if t >= onChoose { cursor = .pointingHand }
+                }
+                if t >= shownLast && t < settingsRelease {
+                    let item = t >= settingsPress ? lastBars.settingsPressed : t >= onSettings ? lastBars.settings : lastBars.rest
+                    drawBar(item.image, in: item.frame, alpha: CGFloat(progress(t, shownLast, shownLast + 0.12)), on: bitmap)
+                    if t >= onSettings { cursor = .pointingHand }
+                }
+                if t >= panelShown && t < panelGone + 0.15 {
+                    let alpha = min(progress(t, panelShown, panelShown + 0.15), 1 - progress(t, panelGone, panelGone + 0.15))
+                    Scenery.drawOpenPanel(panel, selected: t >= picked ? pick : nil, pressingOpen: t >= openPress, alpha: CGFloat(alpha), on: bitmap)
                 }
                 if t >= windowShown {
                     let appear = ease(progress(t, windowShown, windowShown + 0.25))
@@ -348,6 +388,10 @@ extension Studio {
                         windowImage, at: windowOrigin, size: windowSize, on: bitmap,
                         alpha: CGFloat(appear), scale: windowScale * (0.94 + 0.06 * CGFloat(appear))
                     )
+                }
+                // Each click where the pointer is.
+                for press in [trashPress, choosePress, picked, openPress, settingsPress] {
+                    Scenery.drawClick(at: path.position(at: press), amount: progress(t, press - 0.05, press + 0.35), on: bitmap)
                 }
                 Scenery.drawCursor(cursor, at: pointer, on: bitmap)
                 try sequence.add(bitmap.image)
@@ -705,6 +749,18 @@ extension Studio {
             )
         }
     }
+
+    /// The whole folder: a pinch makes the frame bigger than the folder, and the picture takes
+    /// over its tab and all, in the folder's own light and shade.
+    func renderCover() async throws {
+        try await shootWindow("cover", folder: "Garden", picture: "peony.jpg") { shot, model in
+            let frame = shot.pictureFrame(model.style)
+            var path = PointerPath(start: shot.rest)
+            path.move(to: CGPoint(x: frame.midX + 10, y: frame.midY + 6), from: 0.3, to: 1.0)
+            path.move(to: shot.rest, from: 3.3, to: 4.0)
+            return WindowScript(duration: 5.0, pointer: path, holds: [Hold(grip: .pinch(growth: log(ReadmeTuning.coverGrowth)), start: 1.2, end: 3.0)])
+        }
+    }
 }
 
 /// Numbers that depend on the pictures: how far to zoom, slide and turn.
@@ -721,6 +777,8 @@ enum ReadmeTuning {
     static let turnOver = 24.0
     /// From the flamingo's middle up to its head.
     static let tallSlide: CGFloat = 100
+    /// Past the folder's edges all around.
+    static let coverGrowth = 2.45
 }
 
 extension Stage {

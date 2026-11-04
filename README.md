@@ -7,7 +7,7 @@
 <p align="center">Put any picture on a folder icon on your Mac.</p>
 
 <p align="center">
-  <img src="docs/hero.gif" width="480" alt="The real app on a coral background. A picture of a smiling pink axolotl is dragged onto a folder and dropped on the Set as Icon badge: Drag. Drop. Done. Then one big folder wears everything in turn on bright colors: headphones, citrus, a kitten and a candy planet, a robot that shrinks into a corner and grows past the edges, and a leaf spinning to any angle.">
+  <img src="docs/hero.gif" width="480" alt="The real app on a violet background. A picture of a smiling pink axolotl is picked up from the Desktop, dragged across to a plain folder and dropped on the Set as Icon badge: Drag. Drop. Done. Then one big folder wears everything in turn on bright colors: headphones, blood oranges and dragon fruit, a kitten, a tree frog, a robot that shrinks into a corner and grows past the edges, and oranges spinning to any angle.">
 </p>
 
 ## Install
@@ -27,13 +27,13 @@ PrettyFolder starts with your Mac and lives in the menu bar. Needs macOS 14 Sono
 
 ### 1. Drop a picture on a folder
 
-<img src="docs/drop.gif" width="720" alt="A picture of a pink axolotl is dragged over the Pets folder on the Desktop. A Set as Icon badge appears beside the folder, the picture is dropped on it, and the folder shows the axolotl.">
+<img src="docs/drop.gif" width="720" alt="A picture of a pink axolotl is picked up from the Desktop and dragged across to the Pets folder. A Set as Icon badge appears on top of the folder, the picture is dropped on it, the badge says Done, and the folder shows the axolotl.">
 
 Drag a picture over a folder and drop it on **Set as Icon**. Dropping it on the folder itself works as always.
 
 ### 2. Point at a folder
 
-<img src="docs/hover.gif" width="720" alt="The pointer rests on a folder and three buttons appear on top of it. The piggy bank picture on the Taxes folder is removed, then the Games folder opens in PrettyFolder's window.">
+<img src="docs/hover.gif" width="720" alt="The pointer rests on a folder with a leaf on it and three buttons appear on top. The trash button takes the leaf off. The picture button opens a panel, a photo of a tree frog is picked, and the folder shows the frog. The third button opens the folder in PrettyFolder's window.">
 
 Buttons appear on top of the folder: choose a picture, remove it, or open the folder in PrettyFolder's window. This works in Finder's icon view and on the Desktop. You can also right-click one folder or several and choose **Folder Picture…**.
 
@@ -69,7 +69,9 @@ Drag the dial under the folder and the picture turns with it, to any angle. The 
 
 ### 8. Make the whole folder a picture
 
-<img src="docs/depth.png" width="760" alt="Eight folders covered completely by a picture: flowing red silk, liquid chrome in magenta and cyan, pearly holographic foil, swirling paint, glass ribbons, pink clouds, a turquoise wave and a soft color gradient. Each keeps the folder's tab, light and shade.">
+<img src="docs/cover.gif" width="760" alt="In PrettyFolder's window, two fingers pinch the frame around a photo of a peony until it is bigger than the folder, and the photo takes over the whole folder, tab and all. The Garden folder on the Desktop changes along with it.">
+
+<img src="docs/depth.png" width="760" alt="Eight folders covered completely by a photo: blood oranges and dragon fruit on pink, a tree frog, the northern lights, oranges in their leaves, a sea turtle, a magenta peony, a pineapple on lilac and a turquoise beach from the air. Each keeps the folder's tab, light and shade.">
 
 Stretch the frame over the whole folder and the picture covers it right up to its outline, back and front, with the folder's own light and shade.
 
