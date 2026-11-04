@@ -286,6 +286,22 @@ public struct FolderSurface: @unchecked Sendable {
     public let shading: CGImage?
     /// The folder's edges: as measured, and how far its pixels go at this size.
     public let edges: FolderEdges
+
+    /// The same surface at exactly `side` pixels and in plain sRGB, for drawing it over and over
+    /// at that size, as the editor does: nothing has to be resampled or converted each time.
+    public func prepared(forPixelSize side: Int) -> FolderSurface? {
+        func redrawn(_ image: CGImage) -> CGImage? {
+            guard let context = CGContext(
+                data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return nil }
+            context.interpolationQuality = .high
+            context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return context.makeImage()
+        }
+        guard let body = redrawn(body), let shadow = redrawn(shadow) else { return nil }
+        return FolderSurface(silhouette: silhouette, body: body, shadow: shadow, shading: shading.flatMap(redrawn), edges: edges)
+    }
 }
 
 /// Where the parts of the folder sit on the icon, in unit coordinates with a top-left

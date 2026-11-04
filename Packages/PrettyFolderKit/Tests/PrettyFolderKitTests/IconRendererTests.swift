@@ -194,6 +194,63 @@ import Testing
         #expect(TestImages.pixel(icon, x: 32, y: 40).a == 255)
     }
 
+    /// What the editor draws from: the same folder, ready for one size.
+    @Test func aPreparedSurfaceDrawsTheSameAsTheFullSizeOne() throws {
+        let renderer = IconRenderer()
+        let full = try #require(renderer.surface(pixelSize: 1024))
+        let prepared = try #require(full.prepared(forPixelSize: 600))
+        #expect(prepared.body.width == 600 && prepared.shadow.height == 600 && prepared.shading?.width == 600)
+        #expect(prepared.edges == full.edges)
+
+        let picture = SourceImage(bitmap: TestImages.solid(width: 300, height: 200, red: 0.2, green: 0.7, blue: 0.4))
+        func drawn(on surface: FolderSurface) -> [UInt8] {
+            let context = CGContext(
+                data: nil, width: 600, height: 600, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            context.interpolationQuality = .high
+            IconRenderer.draw(picture, style: .standard, canvas: 600, on: surface, in: context)
+            return TestImages.bytes(context.makeImage()!)
+        }
+        let difference = zip(drawn(on: full), drawn(on: prepared)).map { abs(Int($0) - Int($1)) }
+        #expect((difference.max() ?? 0) <= 2, "at most a level or two of rounding")
+    }
+
+    /// Drawn big, a picture that keeps smaller copies is the picture itself; drawn small, it comes
+    /// from a copy that has at least as many pixels as it lands on, and looks the same.
+    @Test func smallerCopiesDontChangeHowAPictureLooks() throws {
+        let width = 1024, height = 768
+        let source = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        )!
+        source.drawLinearGradient(
+            CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!, colors: [CGColor(srgbRed: 1, green: 0.2, blue: 0, alpha: 1), CGColor(srgbRed: 0, green: 0.4, blue: 1, alpha: 1)] as CFArray, locations: [0, 1])!,
+            start: .zero, end: CGPoint(x: width, y: height), options: []
+        )
+        let image = source.makeImage()!
+        let plain = SourceImage(bitmap: image)
+        let keeping = SourceImage(bitmap: image, keepingSmallerCopies: true)
+        #expect(keeping.size == plain.size)
+
+        func drawn(_ picture: SourceImage, side: Int, turned: CGFloat = 0) -> [UInt8] {
+            let context = CGContext(
+                data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            context.interpolationQuality = .high
+            context.translateBy(x: CGFloat(side) / 2, y: CGFloat(side) / 2)
+            context.rotate(by: turned)
+            picture.draw(in: CGRect(x: -CGFloat(side) / 2, y: -CGFloat(side) / 2, width: CGFloat(side), height: CGFloat(side)), context: context)
+            return TestImages.bytes(context.makeImage()!)
+        }
+        #expect(drawn(keeping, side: 900) == drawn(plain, side: 900), "too big for any copy")
+        for (side, turned) in [(200, CGFloat(0)), (300, 0.5), (500, 1.2)] {
+            let difference = zip(drawn(keeping, side: side, turned: turned), drawn(plain, side: side, turned: turned)).map { abs(Int($0) - Int($1)) }
+            #expect((difference.max() ?? 0) <= 6, "drawn at \(side), turned \(turned)")
+        }
+    }
+
     @Test func makesEveryIconSize() throws {
         let picture = SourceImage(bitmap: TestImages.solid(width: 100, height: 100, red: 0, green: 1, blue: 0))
         let icon = try #require(renderer.makeIcon(with: picture, style: .standard))

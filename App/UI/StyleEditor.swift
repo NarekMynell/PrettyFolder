@@ -174,24 +174,39 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     /// The rectangle and its handles, in a view of their own over the folder, so they can
     /// fade in and out by themselves.
     private let frameView = FrameView()
+    /// The lines the picture is lined up with, in a view of their own over the folder.
+    private let guidesView = GuidesView()
     /// Whether the rectangle is meant to show, as last asked of `frameView`.
     private var frameIsShown: Bool?
 
     /// The plain folder, rendered once at full size so it stays sharp at any editor size.
     private static let renderer = IconRenderer()
     private static let folderImage = renderer.render(nil, style: .standard, pixelSize: 1024)
-    private static let surface = renderer.surface(pixelSize: 1024)
+    private static let fullSizeSurface = renderer.surface(pixelSize: 1024)
     /// Where the folder's edges are, as the editor draws it.
-    static var folderEdges: FolderEdges { surface?.edges ?? .standard }
+    static var folderEdges: FolderEdges { fullSizeSurface?.edges ?? .standard }
+    /// The surface for each size the folder has been drawn at, ready to go: there is one for each
+    /// kind of display the window has been on.
+    private static var surfaces: [Int: FolderSurface] = [:]
+
+    private static func surface(pixelSize: Int) -> FolderSurface? {
+        if let surface = surfaces[pixelSize] { return surface }
+        let surface = fullSizeSurface?.prepared(forPixelSize: pixelSize) ?? fullSizeSurface
+        surfaces[pixelSize] = surface
+        return surface
+    }
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 320))
         wantsLayer = true
         setBoundsOrigin(NSPoint(x: -Self.margin, y: -Self.margin))
-        frameView.frame = bounds
-        frameView.autoresizingMask = [.width, .height]
+        for overlay in [guidesView, frameView] {
+            overlay.frame = bounds
+            overlay.autoresizingMask = [.width, .height]
+            addSubview(overlay)
+        }
+        guidesView.isHidden = true
         frameView.alphaValue = 0
-        addSubview(frameView)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(String(localized: "Picture position"))
@@ -202,10 +217,17 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
 
     override var isFlipped: Bool { true }
 
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        needsDisplay = true
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         setBoundsOrigin(NSPoint(x: -Self.margin, y: -Self.margin))
-        frameView.setBoundsOrigin(NSPoint(x: -Self.margin, y: -Self.margin))
+        for overlay in [guidesView, frameView] {
+            overlay.setBoundsOrigin(NSPoint(x: -Self.margin, y: -Self.margin))
+        }
         updateToolTips()
     }
 
@@ -267,9 +289,10 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         setAccessibilityValue(accessibilityDescription)
     }
 
-    /// Draws the folder again, and the rectangle over it.
+    /// Draws the folder again, and what goes over it.
     private func redraw() {
         needsDisplay = true
+        refreshGuides()
         refreshFrame()
     }
 
@@ -1133,7 +1156,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
         guides = newGuides
-        needsDisplay = true
+        refreshGuides()
         actions.showGuides(newGuides)
     }
 
@@ -1178,6 +1201,12 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         return pointerIsInside || dragged != nil || isGesturing || burstEnd != nil || focused
     }
 
+    /// Tells the guides' view what to show.
+    private func refreshGuides() {
+        guidesView.isHidden = guides.isEmpty
+        guidesView.look = GuidesView.Look(guides: guides, side: side, frame: target)
+    }
+
     /// Tells the rectangle's view what to show, and fades it in or out.
     private func refreshFrame() {
         frameView.look = FrameView.Look(
@@ -1200,28 +1229,79 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
 
     // MARK: - Drawing
 
+    /// The folder goes straight to the layer, and the window's compositor puts it on screen:
+    /// drawn into the view, it would be blended pixel by pixel into the window's deep backing
+    /// store on the main thread, which takes longer than a frame.
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.contents = renderedIcon(pixelsPerPoint: window?.backingScaleFactor ?? 2)
+    }
+
+    /// For anything that asks the view to draw itself into a context of its own.
     override func draw(_ dirtyRect: NSRect) {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-        let canvas = side
+        guard let context = NSGraphicsContext.current?.cgContext,
+              let icon = renderedIcon(pixelsPerPoint: abs(context.userSpaceToDeviceSpaceTransform.a))
+        else { return }
         context.saveGState()
-        // The renderer's drawing assumes a bottom-left origin.
-        context.translateBy(x: 0, y: canvas)
+        // A bitmap's first row is its top one, which a flipped view would turn upside down.
+        context.translateBy(x: 0, y: bounds.minY + bounds.maxY)
         context.scaleBy(x: 1, y: -1)
-        context.interpolationQuality = .high
-        drawIcon(in: context, canvas: canvas)
+        context.interpolationQuality = .none
+        context.draw(icon, in: bounds)
         context.restoreGState()
-        drawGuides()
+    }
+
+    /// The folder with the picture on it, as last rendered, and what that was rendered from.
+    private var rendered: (input: RenderInput, image: CGImage)?
+
+    /// Everything the rendered folder depends on.
+    private struct RenderInput: Equatable {
+        let style: IconStyle
+        let placement: PicturePlacement
+        let picture: SourceImage?
+        let isAdjusting: Bool
+        let side: CGFloat
+        let size: CGSize
+
+        static func == (a: RenderInput, b: RenderInput) -> Bool {
+            a.style == b.style && a.placement == b.placement && a.picture === b.picture
+                && a.isAdjusting == b.isAdjusting && a.side == b.side && a.size == b.size
+        }
+    }
+
+    /// The whole view's picture, rendered the way an icon is: into a plain bitmap in sRGB, with
+    /// the renderer's own drawing.
+    private func renderedIcon(pixelsPerPoint scale: CGFloat) -> CGImage? {
+        let width = Int((bounds.width * scale).rounded()), height = Int((bounds.height * scale).rounded())
+        let input = RenderInput(
+            style: style, placement: placement, picture: picture, isAdjusting: isAdjusting, side: side,
+            size: CGSize(width: width, height: height)
+        )
+        if let rendered, rendered.input == input { return rendered.image }
+        guard width > 0, height > 0, let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.scaleBy(x: scale, y: scale)
+        // The folder's bottom-left corner is the origin, as for the renderer.
+        context.translateBy(x: -bounds.minX, y: bounds.maxY - side)
+        context.interpolationQuality = .high
+        drawIcon(in: context, canvas: side, surface: Self.surface(pixelSize: Int((side * scale).rounded())))
+        guard let image = context.makeImage() else { return nil }
+        rendered = (input, image)
+        return image
     }
 
     /// The folder with the picture on it, or without one the area it will take, softly.
-    private func drawIcon(in context: CGContext, canvas: CGFloat) {
+    private func drawIcon(in context: CGContext, canvas: CGFloat, surface: FolderSurface?) {
         let bounds = CGRect(x: 0, y: 0, width: canvas, height: canvas)
         guard let picture else {
             if let folder = Self.folderImage { context.draw(folder, in: bounds) }
             let target = IconGeometry.targetRect(for: style, canvas: canvas, flipped: false)
             let radius = IconGeometry.cornerRadius(for: target, canvas: canvas)
             context.saveGState()
-            if let silhouette = Self.surface?.silhouette {
+            if let silhouette = surface?.silhouette {
                 context.clip(to: bounds, mask: silhouette)
             }
             context.addPath(CGPath(roundedRect: target, cornerWidth: radius, cornerHeight: radius, transform: nil))
@@ -1233,7 +1313,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         let layout = IconGeometry.layout(
             imageSize: picture.size, style: style, placement: placement, canvas: canvas, flipped: false, folder: Self.folderEdges
         )
-        if let surface = Self.surface {
+        if let surface {
             IconRenderer.draw(picture, style: style, placement: placement, canvas: canvas, on: surface, in: context)
         } else {
             // The folder's artwork couldn't be measured: the picture goes over it, unshaped.
@@ -1246,10 +1326,12 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         }
         guard isAdjusting else { return }
         // While it moves: faintly, the parts the rectangle or the folder's outline cut off, as
-        // far as the editor goes.
+        // far as the editor goes. These take the most time of all, and nobody looks at their
+        // finest detail.
         let margin = Self.margin
         let everywhere = bounds.insetBy(dx: -margin, dy: -margin)
         context.saveGState()
+        context.interpolationQuality = .low
         context.addRect(everywhere)
         context.addPath(layout.visible)
         context.clip(using: .evenOdd)
@@ -1258,6 +1340,7 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         context.restoreGState()
         // Inside the part that shows, only where the folder's outline cut it off.
         context.saveGState()
+        context.interpolationQuality = .low
         context.addPath(layout.visible)
         context.clip()
         context.setAlpha(0.22)
@@ -1265,16 +1348,35 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         IconRenderer.drawPicture(picture, in: layout, context: context)
         context.restoreGState()
     }
+}
 
-    private func drawGuides() {
-        guard !guides.isEmpty else { return }
+/// The lines the picture is lined up with while something moves, over the folder.
+private final class GuidesView: NSView {
+    struct Look: Equatable {
+        var guides: [SnapGuide]
+        var side: CGFloat
+        /// The rectangle, in the editor's coordinates: turned lines stay inside it.
+        var frame: CGRect
+    }
+
+    var look: Look? {
+        didSet { if look != oldValue { needsDisplay = true } }
+    }
+
+    override var isFlipped: Bool { true }
+
+    /// The editor below takes the mouse.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let look else { return }
         NSColor.systemPink.setStroke()
-        for guide in guides {
+        for guide in look.guides {
             let path = NSBezierPath()
             path.lineWidth = 1
-            let position = guide.position * side
-            let from = (guide.extent?.lowerBound ?? 0) * side
-            let to = (guide.extent?.upperBound ?? 1) * side
+            let position = guide.position * look.side
+            let from = (guide.extent?.lowerBound ?? 0) * look.side
+            let to = (guide.extent?.upperBound ?? 1) * look.side
             guard guide.tilt != 0 else {
                 switch guide.axis {
                 case .vertical:
@@ -1294,11 +1396,11 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
             let tilt = guide.tilt
             let direction = guide.axis == .vertical
                 ? CGVector(dx: sin(tilt), dy: cos(tilt)) : CGVector(dx: cos(tilt), dy: -sin(tilt))
-            let length = hypot(target.width, target.height)
+            let length = hypot(look.frame.width, look.frame.height)
             path.move(to: NSPoint(x: center.x - direction.dx * length, y: center.y - direction.dy * length))
             path.line(to: NSPoint(x: center.x + direction.dx * length, y: center.y + direction.dy * length))
             NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(rect: target).addClip()
+            NSBezierPath(rect: look.frame).addClip()
             path.stroke()
             NSGraphicsContext.restoreGraphicsState()
         }
@@ -1586,7 +1688,7 @@ enum PreviewPicture {
         guard let picture = try? ImageLoader.load(contentsOf: url),
               let bitmap = picture.bitmap(maxSide: maxSide)
         else { return nil }
-        return SourceImage(bitmap: bitmap)
+        return SourceImage(bitmap: bitmap, keepingSmallerCopies: true)
     }
 
     /// A made-up landscape for previewing the default look before any picture is chosen.

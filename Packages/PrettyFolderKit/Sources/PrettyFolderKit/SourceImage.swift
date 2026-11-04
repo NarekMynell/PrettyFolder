@@ -20,14 +20,53 @@ public final class SourceImage: @unchecked Sendable {
     /// Natural size, used for the aspect ratio: pixels for bitmaps, points for vectors.
     public let size: CGSize
 
-    public init(bitmap: CGImage) {
+    /// A bitmap's smaller copies, biggest first, if it keeps any.
+    private let smallerCopies: [CGImage]
+
+    /// - Parameter keepingSmallerCopies: for a picture drawn again and again at changing sizes,
+    ///   mostly much smaller than it is, as in the editor: it keeps copies of half the size and
+    ///   half of that, and is drawn from the smallest that has a pixel for every pixel it lands
+    ///   on. Resampling all of a big picture for each frame takes longer than a frame may.
+    public init(bitmap: CGImage, keepingSmallerCopies: Bool = false) {
         content = .bitmap(bitmap)
         size = CGSize(width: bitmap.width, height: bitmap.height)
+        var copies: [CGImage] = []
+        if keepingSmallerCopies {
+            var last = bitmap
+            while min(last.width, last.height) >= 2 * Self.shortestCopySide, let half = Self.halved(last) {
+                copies.append(half)
+                last = half
+            }
+        }
+        smallerCopies = copies
     }
 
     init(vector: NSImage) {
         content = .vector(vector)
         size = vector.size
+        smallerCopies = []
+    }
+
+    /// No smaller copy has a side shorter than this: below it, one saves next to nothing.
+    private static let shortestCopySide = 128
+
+    private static func halved(_ image: CGImage) -> CGImage? {
+        let width = image.width / 2, height = image.height / 2
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
+    }
+
+    /// The smaller copy to draw into `rect` of `context` as it is transformed now, if one does.
+    private func smallerCopy(for rect: CGRect, in context: CGContext) -> CGImage? {
+        guard !smallerCopies.isEmpty else { return nil }
+        let transform = context.userSpaceToDeviceSpaceTransform
+        let width = rect.width * hypot(transform.a, transform.b), height = rect.height * hypot(transform.c, transform.d)
+        return smallerCopies.last { CGFloat($0.width) >= width && CGFloat($0.height) >= height }
     }
 
     public var hasAlpha: Bool {
@@ -46,7 +85,7 @@ public final class SourceImage: @unchecked Sendable {
     public func draw(in rect: CGRect, context: CGContext) {
         switch content {
         case .bitmap(let image):
-            context.draw(image, in: rect)
+            context.draw(smallerCopy(for: rect, in: context) ?? image, in: rect)
         case .vector(let image):
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
