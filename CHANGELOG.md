@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Moving, resizing, pinching and turning a picture in the window are far smoother: a frame took up to 100 ms on the main thread, and now takes 5 to 25 ms.
+- ⌘+, ⌘− and the arrow keys work as soon as the window opens, without clicking the folder first.
+- Dragging a picture across an empty part of the Desktop no longer puts **Set as Icon** on a folder somewhere else.
+- **Set as Icon** no longer fades when the pointer stops just beside it, no longer runs ahead of the pointer in list view, and no longer goes invisible when a new drag starts right after a drop.
+- The buttons on a folder stay up, and work, when the folder is partly scrolled out of its window or Finder is busy, and come back right after the trash button without leaving the icon.
+- Renaming a folder and making a new one of the old name no longer makes PrettyFolder forget the renamed one. Neither does a disk of the same name, two folders swapping names, or a folder whose permissions were changed.
+- One ⌘Z never takes back two changes, and Undo no longer stays on with nothing to undo after closing the window. It keeps working after a folder is renamed in Finder, and no longer moves a folder to a new default look it was meant to be spared.
+- Keys right after clicking the Fill or Fit already on are no longer lost.
+- With several folders, the trash button or a dropped picture right after a change no longer gives an alert or leaves the new picture turned on some of them.
+- A picture for several folders is no longer lost for the rest if the first one's picture changes while it is on its way.
+- Folders out of reach when a new default look is saved get it once they can be reached.
+- An icon shown over a folder while Finder loads its new one can no longer be left behind on the screen.
+- Choosing Quit a second time while PrettyFolder is asking about the default look, or finishing a write, no longer quits on the spot.
+- Folders inside an app can't be given a picture through a link to the app either.
+- An SVG reached through a link stays sharp at every size.
+
 ## 1.3.0
 
 - Turn the picture to any angle with the new dial below the folder: drag it sideways and the picture turns with it, a degree for every few points. It reads the angle as you go, sticks to upright and quarter turns, and ⇧ turns in steps of 15°. Scrolling on it or its arrow keys turn a degree at a time, and a double-click puts the picture upright. The buttons on either side of it turn a quarter turn left or right, and replace the rotate button.
