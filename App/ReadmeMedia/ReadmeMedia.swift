@@ -126,12 +126,21 @@ final class Studio {
             ("depth", renderDepth),
             ("drop", renderDrop),
             ("hover", renderHover),
+            ("menu", renderMenu),
             ("clear", renderClear),
             ("size", renderSize),
+            ("shape", renderShape),
             ("zoom", renderZoom),
-            ("turn", renderTurn),
-            ("fit", renderFit),
             ("cover", renderCover),
+            ("part", renderPart),
+            ("fit", renderFit),
+            ("turn", renderTurn),
+            ("quarter", renderQuarter),
+            ("keys", renderKeys),
+            ("several", renderSeveral),
+            ("default", renderDefault),
+            ("copies", renderCopies),
+            ("removeall", renderRemoveAll),
         ]
         for scene in scenes where only == nil || only == scene.name {
             print("Rendering \(scene.name)…")

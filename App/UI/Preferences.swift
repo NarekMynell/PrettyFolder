@@ -23,7 +23,7 @@ struct PreferencesButton: View {
     }
 }
 
-private struct PreferencesView: View {
+struct PreferencesView: View {
     @Bindable var settings: AppSettings
     let model: EditorModel
     let dismiss: () -> Void
@@ -101,6 +101,7 @@ private struct PreferencesView: View {
     }
 
     private func countPictures() async {
+        await model.actions.manager.findFolders()
         await model.actions.manager.prune()
         pictureCount = await model.actions.manager.managedFolderCount()
     }

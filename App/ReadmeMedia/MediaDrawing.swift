@@ -450,6 +450,162 @@ enum Scenery {
         bitmap.context.restoreGState()
     }
 
+    /// The menu you get by right-clicking a folder in Finder.
+    struct ContextMenu {
+        static let rowHeight: CGFloat = 22
+        static let separatorHeight: CGFloat = 9
+        /// `nil` is a separator.
+        let items: [String?]
+        let frame: CGRect
+
+        init(items: [String?], at origin: CGPoint) {
+            self.items = items
+            let height = items.reduce(CGFloat(10)) { $0 + ($1 == nil ? Self.separatorHeight : Self.rowHeight) }
+            frame = CGRect(origin: origin, size: CGSize(width: 188, height: height))
+        }
+
+        func row(_ index: Int) -> CGRect {
+            var y = frame.minY + 5
+            for item in items.prefix(index) { y += item == nil ? Self.separatorHeight : Self.rowHeight }
+            return CGRect(x: frame.minX + 5, y: y, width: frame.width - 10, height: Self.rowHeight)
+        }
+    }
+
+    static func drawContextMenu(_ menu: ContextMenu, highlighted: Int?, alpha: CGFloat, on bitmap: Bitmap) {
+        guard alpha > 0 else { return }
+        bitmap.context.saveGState()
+        bitmap.context.setAlpha(alpha)
+        bitmap.context.beginTransparencyLayer(auxiliaryInfo: nil)
+        bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.5), blur: 20, offset: CGSize(width: 0, height: 8)) {
+            bitmap.context.addPath(CGPath(roundedRect: menu.frame, cornerWidth: 11, cornerHeight: 11, transform: nil))
+            bitmap.context.setFillColor(CGColor.hex(0x303033))
+            bitmap.context.fillPath()
+        }
+        bitmap.appKit {
+            for (index, item) in menu.items.enumerated() {
+                let row = menu.row(index)
+                guard let item else {
+                    NSColor(white: 1, alpha: 0.14).setFill()
+                    NSBezierPath(rect: NSRect(x: row.minX + 7, y: row.minY + Self.ContextMenu.separatorHeight / 2, width: row.width - 14, height: 1)).fill()
+                    continue
+                }
+                if index == highlighted {
+                    NSColor.systemBlue.setFill()
+                    NSBezierPath(roundedRect: row, xRadius: 6, yRadius: 6).fill()
+                }
+                let text = NSAttributedString(string: item, attributes: [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: NSColor.white])
+                text.draw(at: CGPoint(x: row.minX + 9, y: row.midY - text.size().height / 2))
+            }
+        }
+        bitmap.context.endTransparencyLayer()
+        bitmap.context.restoreGState()
+    }
+
+    /// A question from the app, its buttons one under another as macOS 26 draws them.
+    struct Question {
+        struct Button {
+            let title: String
+            let frame: CGRect
+            var color: NSColor?
+        }
+
+        let title: String
+        let message: String
+        let frame: CGRect
+        let buttons: [Button]
+        let titleHeight: CGFloat
+        let messageHeight: CGFloat
+
+        static let titleFont = NSFont.systemFont(ofSize: 13, weight: .bold)
+        static let messageFont = NSFont.systemFont(ofSize: 10.5)
+
+        init(title: String, message: String, buttons: [(String, NSColor?)], centeredAt center: CGPoint) {
+            self.title = title
+            self.message = message
+            let width: CGFloat = 272, buttonHeight: CGFloat = 28, gap: CGFloat = 7
+            func height(_ text: String, _ font: NSFont) -> CGFloat {
+                ceil(NSAttributedString(string: text, attributes: [.font: font]).boundingRect(with: NSSize(width: width - 32, height: 200), options: [.usesLineFragmentOrigin]).height)
+            }
+            titleHeight = height(title, Self.titleFont)
+            messageHeight = height(message, Self.messageFont)
+            let top = 14 + titleHeight + 5 + messageHeight + 12
+            let height = top + CGFloat(buttons.count) * (buttonHeight + gap) + 12
+            let frame = CGRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height)
+            self.frame = frame
+            self.buttons = buttons.enumerated().map { index, button in
+                Button(title: button.0, frame: CGRect(x: frame.minX + 16, y: frame.minY + top + CGFloat(index) * (buttonHeight + gap), width: width - 32, height: buttonHeight), color: button.1)
+            }
+        }
+    }
+
+    static func drawQuestion(_ question: Question, pressing: Int?, alpha: CGFloat, on bitmap: Bitmap) {
+        guard alpha > 0 else { return }
+        bitmap.context.saveGState()
+        bitmap.context.setAlpha(alpha)
+        bitmap.context.beginTransparencyLayer(auxiliaryInfo: nil)
+        bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.55), blur: 26, offset: CGSize(width: 0, height: 10)) {
+            bitmap.context.addPath(CGPath(roundedRect: question.frame, cornerWidth: 22, cornerHeight: 22, transform: nil))
+            bitmap.context.setFillColor(CGColor.hex(0x2C2C2F))
+            bitmap.context.fillPath()
+        }
+        bitmap.appKit {
+            let title = NSAttributedString(string: question.title, attributes: [.font: Question.titleFont, .foregroundColor: NSColor.white])
+            title.draw(in: CGRect(x: question.frame.minX + 16, y: question.frame.minY + 14, width: question.frame.width - 32, height: question.titleHeight + 2))
+            let message = NSAttributedString(string: question.message, attributes: [.font: Question.messageFont, .foregroundColor: NSColor(white: 1, alpha: 0.9)])
+            message.draw(in: CGRect(x: question.frame.minX + 16, y: question.frame.minY + 19 + question.titleHeight, width: question.frame.width - 32, height: question.messageHeight + 2))
+            for (index, button) in question.buttons.enumerated() {
+                var fill = button.color ?? NSColor(white: 1, alpha: 0.14)
+                if index == pressing { fill = fill.blended(withFraction: 0.25, of: .black) ?? fill }
+                fill.setFill()
+                NSBezierPath(roundedRect: button.frame, xRadius: 14, yRadius: 14).fill()
+                let text = NSAttributedString(string: button.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.white])
+                let size = text.size()
+                text.draw(at: CGPoint(x: button.frame.midX - size.width / 2, y: button.frame.midY - size.height / 2))
+            }
+        }
+        bitmap.context.endTransparencyLayer()
+        bitmap.context.restoreGState()
+    }
+
+    /// The keys being pressed, big, in the middle at the bottom of the stage.
+    static func drawKeys(_ keys: [String], alpha: Double, on bitmap: Bitmap) {
+        guard alpha > 0 else { return }
+        let height: CGFloat = 44, gap: CGFloat = 6
+        let widths = keys.map { max(height, NSAttributedString(string: $0, attributes: [.font: NSFont.systemFont(ofSize: 21, weight: .semibold)]).size().width + 24) }
+        var x = (bitmap.size.width - widths.reduce(0, +) - gap * CGFloat(keys.count - 1)) / 2
+        let y = bitmap.size.height - height - 92
+        bitmap.context.saveGState()
+        bitmap.context.setAlpha(CGFloat(alpha))
+        bitmap.context.beginTransparencyLayer(auxiliaryInfo: nil)
+        for (key, width) in zip(keys, widths) {
+            let rect = CGRect(x: x, y: y, width: width, height: height)
+            bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.5), blur: 8, offset: CGSize(width: 0, height: 3)) {
+                bitmap.context.addPath(CGPath(roundedRect: rect, cornerWidth: 10, cornerHeight: 10, transform: nil))
+                bitmap.context.setFillColor(CGColor(gray: 0.13, alpha: 0.96))
+                bitmap.context.fillPath()
+            }
+            bitmap.appKit {
+                let text = NSAttributedString(string: key, attributes: [.font: NSFont.systemFont(ofSize: 21, weight: .semibold), .foregroundColor: NSColor.white])
+                let size = text.size()
+                text.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+            }
+            x += width + gap
+        }
+        bitmap.context.endTransparencyLayer()
+        bitmap.context.restoreGState()
+    }
+
+    /// The ring around where a dropped picture would land.
+    static func drawDropRing(around rect: CGRect, alpha: Double, on bitmap: Bitmap) {
+        guard alpha > 0 else { return }
+        bitmap.appKit {
+            let ring = NSBezierPath(roundedRect: rect, xRadius: 15, yRadius: 15)
+            ring.lineWidth = 2.5
+            NSColor.controlAccentColor.withAlphaComponent(CGFloat(alpha)).setStroke()
+            ring.stroke()
+        }
+    }
+
     /// A window with the soft shadow macOS gives it.
     static func drawWindow(_ image: CGImage, at origin: CGPoint, size: CGSize, on bitmap: Bitmap, alpha: CGFloat = 1, scale: CGFloat = 1) {
         let scaled = CGSize(width: size.width * scale, height: size.height * scale)
