@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.2
 
 - A copy of a folder keeps its picture and stays adjustable after the original changes, gets another picture, loses its picture or is deleted. It used to lose its look if the original changed before the copy was first opened. Each folder now carries its own look, so the same goes for a folder moved to another disk or put back from a backup. A copy that had already lost its look needs its picture chosen again.
 - A folder moved elsewhere on its disk stays known even when a new folder, or a copy, takes its old name: a new default look, **Redraw All Pictures** and **Remove All Pictures** still reach it. This needs an APFS or Mac OS Extended disk; on an exFAT or FAT disk a moved folder is found again when it is opened.
