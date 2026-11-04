@@ -43,59 +43,8 @@ extension Studio {
         var look = Look.standard
     }
 
-    /// The folders in the hero's window when each has its own picture, its own way.
-    private static let cast = [
-        Folder(name: "Space", picture: "space-cat.jpg", look: .zoomed(1.5, y: 0.45)),
-        Folder(name: "Code", picture: "code.svg", look: .sticker),
-        Folder(name: "Wins", picture: "trophy.png", look: .sticker),
-        Folder(name: "Travel", picture: "ararat.jpg", look: .front),
-        Folder(name: "Ideas", picture: "lightbulb.jpg"),
-        Folder(name: "Summer", picture: "watermelon.jpg", look: .cover),
-        Folder(name: "Launch", picture: "rocket.png", look: .sticker),
-        Folder(name: "Pets", picture: "corgi.jpg", look: .card(turned: -8)),
-
-        Folder(name: "Lunch", picture: "pizza.jpg", look: .cover),
-        Folder(name: "Work", picture: nil),
-        Folder(name: "Music", picture: "note.svg", look: .sticker),
-        Folder(name: "Recipes", picture: "ramen.jpg"),
-        Folder(name: "Stars", picture: "galaxy.jpg", look: .cover),
-        Folder(name: "Photos", picture: "camera.png", look: .sticker),
-        Folder(name: "Robots", picture: "robot.jpg", look: .corner),
-        Folder(name: "Plants", picture: "monstera.jpg", look: .zoomed(2)),
-
-        Folder(name: "Art", picture: "stained-glass.jpg", look: .cover),
-        Folder(name: "Cats", picture: "cat.png", look: .sticker),
-        Folder(name: "Energy", picture: "bolt.svg", look: .sticker),
-        Folder(name: "Vinyl", picture: "vinyl.jpg", look: .badge),
-        Folder(name: "Taxes", picture: "piggy-bank.jpg", look: .card(turned: 7)),
-        Folder(name: "Games", picture: "gamepad.jpg", look: .cover),
-        Folder(name: "Peaks", picture: "peak.svg", look: .sticker),
-        Folder(name: "Sea", picture: "ocean.jpg", look: .cover),
-
-        Folder(name: "Trips", picture: "hot-air-balloons.jpg", look: .zoomed(1.5)),
-        Folder(name: "Sweets", picture: "donut.png", look: .sticker),
-        Folder(name: "Old Stuff", picture: "moss.jpg", look: .cover),
-        Folder(name: "Love", picture: "heart.svg", look: .sticker),
-        Folder(name: "Deadlines", picture: "lava.jpg", look: .cover),
-        Folder(name: "Happy", picture: "smile.svg", look: .sticker),
-        Folder(name: "Desert", picture: "cactus.png", look: .sticker),
-        Folder(name: "Party", picture: "sprinkles.jpg", look: .cover),
-    ]
-
-    /// The same folders when they're one big picture: the names everyone's folders have.
-    private static let everydayNames = [
-        "Invoices", "Work", "Not Work", "Final", "Final_v2", "Final_v2_REAL", "Screenshots", "Stuff",
-        "More Stuff", "Misc", "Taxes 2023", "Backups", "Receipts", "Do Not Open", "Clients", "Temp",
-        "New Folder", "New Folder 2", "asdf", "Untitled", "Untitled 2", "Side Project", "Side Project 7", "Resume",
-        "Resume_new", "Photos", "Videos", "Drafts", "Archive", "Important", "Later", "Memes",
-    ]
-
     private func icon(_ folder: Folder, side: CGFloat) throws -> CGImage {
         icon(try folder.picture.map(picture), style: folder.look.style, placement: folder.look.placement, side: side)
-    }
-
-    private static func folder(_ name: String) -> Folder {
-        cast.first { $0.name == name }!
     }
 
     /// Folders on the Desktop, in a row.
@@ -108,159 +57,6 @@ extension Studio {
 
     private func frameCount(_ seconds: Double) -> Int {
         Int((seconds * Stage.framesPerSecond).rounded())
-    }
-
-    // MARK: - Hero
-
-    /// A Finder window whose folders together show one huge picture: it winks, then all the
-    /// folders turn over to another one, and at last each to a picture of its own.
-    func renderHero() async throws {
-        enum Wall: Equatable {
-            /// A big picture, and how far down it the window's middle is.
-            case big(String, Double)
-            case own
-        }
-        let size = CGSize(width: 880, height: 480)
-        let window = CGRect(x: 16, y: 14, width: 848, height: 452)
-        let bar: CGFloat = 38
-        let columns = 8, rows = 4
-        let pitch = CGSize(width: 106, height: 102)
-        let side: CGFloat = 115
-        func center(_ column: Int, _ row: Int) -> CGPoint {
-            CGPoint(x: window.minX + (CGFloat(column) + 0.5) * pitch.width, y: window.minY + bar + 45 + CGFloat(row) * pitch.height)
-        }
-
-        let tiger = Wall.big("tiger.jpg", 0.4)
-        let waves: [(start: Double, to: Wall, origin: CGPoint)] = [
-            (1.8, .big("ararat-epic.jpg", 0.42), CGPoint(x: 3.5, y: 1.5)),
-            (3.3, .big("koi.jpg", 0.5), CGPoint(x: 0, y: 0)),
-            (4.8, .own, CGPoint(x: 7, y: 3)),
-            (7.0, tiger, CGPoint(x: 3.5, y: 3)),
-        ]
-        let winks = 0.7...1.05
-        let flip = 0.3, spread = 0.5
-        // The folders the closed eye touches, found by comparing the two pictures.
-        let winkPicture = "tiger-wink.jpg"
-
-        // Every folder's piece of a big picture, as the app draws it.
-        var loaded: [String: CGImage] = [:]
-        var pieces: [String: CGImage] = [:]
-        func piece(_ name: String, down: Double, column: Int, row: Int) throws -> CGImage {
-            let key = "\(name)|\(column)|\(row)"
-            if let cached = pieces[key] { return cached }
-            if loaded[name] == nil {
-                loaded[name] = NSImage(contentsOf: pictureURL(name))!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
-            }
-            let image = loaded[name]!
-            let shown = size.width + 40
-            let scale = CGFloat(image.width) / shown
-            let top = CGFloat(image.height) * CGFloat(down) - size.height / 2 * scale
-            let spot = center(column, row)
-            let crop = CGRect(x: (spot.x - side / 2 + 20) * scale, y: top + (spot.y - side / 2) * scale, width: side * scale, height: side * scale)
-            let made = icon(SourceImage(bitmap: image.cropping(to: crop.integral)!), style: Look.cover.style, side: side)
-            pieces[key] = made
-            return made
-        }
-        // The closed eye only changes the folders it touches.
-        func differs(_ column: Int, _ row: Int) throws -> Bool {
-            guard FileManager.default.fileExists(atPath: pictureURL(winkPicture).path) else { return false }
-            let a = try piece("tiger.jpg", down: 0.4, column: column, row: row), b = try piece(winkPicture, down: 0.4, column: column, row: row)
-            return Self.difference(a, b) > 14
-        }
-        var winking = Set<Int>()
-        for row in 0..<rows {
-            for column in 0..<columns where try differs(column, row) { winking.insert(row * columns + column) }
-        }
-        let own = try Self.cast.map { try icon($0, side: side) }
-
-        let wallpaper = Scenery.wallpaper(size: size)
-        let sequence = try frameSequence("hero")
-        for index in 0..<frameCount(8.0) {
-            try autoreleasepool {
-                let t = Double(index) / Stage.framesPerSecond
-                let bitmap = Bitmap(size: size)
-                let context = bitmap.context
-                bitmap.draw(wallpaper, in: CGRect(origin: .zero, size: size))
-                bitmap.withShadow(color: CGColor(gray: 0, alpha: 0.5), blur: 14, offset: CGSize(width: 0, height: 5)) {
-                    context.addPath(CGPath(roundedRect: window, cornerWidth: 11, cornerHeight: 11, transform: nil))
-                    context.setFillColor(CGColor.hex(0x17171A))
-                    context.fillPath()
-                }
-                context.saveGState()
-                context.addPath(CGPath(roundedRect: window, cornerWidth: 11, cornerHeight: 11, transform: nil))
-                context.clip()
-                context.setFillColor(CGColor.hex(0x2A2A2E))
-                context.fill(CGRect(x: window.minX, y: window.minY, width: window.width, height: bar))
-                context.restoreGState()
-                for (light, color) in [0xFF5F57, 0xFEBC2E, 0x28C840].enumerated() {
-                    context.setFillColor(CGColor.hex(UInt32(color)))
-                    context.fillEllipse(in: CGRect(x: window.minX + 14 + CGFloat(light) * 20, y: window.minY + bar / 2 - 6, width: 12, height: 12))
-                }
-                let title = NSAttributedString(string: "Documents", attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: NSColor.white])
-                bitmap.appKit { title.draw(at: CGPoint(x: size.width / 2 - title.size().width / 2, y: window.minY + bar / 2 - title.size().height / 2)) }
-
-                for row in 0..<rows {
-                    for column in 0..<columns {
-                        var now = tiger, before = tiger
-                        var amount = 1.0
-                        for wave in waves {
-                            let far = [CGPoint(x: 0, y: 0), CGPoint(x: 7, y: 0), CGPoint(x: 0, y: 3), CGPoint(x: 7, y: 3)]
-                                .map { hypot($0.x - wave.origin.x, $0.y - wave.origin.y) }.max()!
-                            let start = wave.start + spread * Double(hypot(CGFloat(column) - wave.origin.x, CGFloat(row) - wave.origin.y) / far)
-                            guard t >= start else { break }
-                            before = now
-                            now = wave.to
-                            amount = min(1, (t - start) / flip)
-                        }
-                        let shown = amount < 0.5 ? before : now
-                        let position = row * columns + column
-                        let image: CGImage
-                        switch shown {
-                        case .big(let name, let down):
-                            let closed = name == "tiger.jpg" && winks.contains(t) && winking.contains(position)
-                            image = try piece(closed ? winkPicture : name, down: down, column: column, row: row)
-                        case .own:
-                            image = own[position]
-                        }
-                        let spot = center(column, row)
-                        context.saveGState()
-                        context.translateBy(x: spot.x, y: spot.y)
-                        if amount < 1 {
-                            let angle = amount * .pi
-                            let lift = 1 + 0.14 * CGFloat(sin(angle))
-                            context.concatenate(CGAffineTransform(a: max(CGFloat(abs(cos(angle))), 0.02) * lift, b: CGFloat(sin(angle)) * 0.15 * (amount < 0.5 ? 1 : -1), c: 0, d: lift, tx: 0, ty: 0))
-                        }
-                        bitmap.draw(image, in: CGRect(x: -side / 2, y: -side / 2, width: side, height: side))
-                        context.restoreGState()
-
-                        let name = shown == .own ? Self.cast[position].name : Self.everydayNames[position]
-                        let label = NSAttributedString(string: name, attributes: [.font: NSFont.systemFont(ofSize: 10.5, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(0.93)])
-                        bitmap.appKit { label.draw(at: CGPoint(x: spot.x - label.size().width / 2, y: spot.y + side * 0.37 - 1)) }
-                    }
-                }
-                try sequence.add(bitmap.image)
-            }
-        }
-    }
-
-    /// How different two icons of the same size are: the biggest difference of a small square
-    /// between them, on a scale of 0 to 255.
-    private static func difference(_ a: CGImage, _ b: CGImage) -> Double {
-        let side = 16
-        func small(_ image: CGImage) -> [UInt8] {
-            var bytes = [UInt8](repeating: 0, count: side * side * 4)
-            let context = CGContext(data: &bytes, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
-                                    space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-            context.interpolationQuality = .medium
-            context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
-            return bytes
-        }
-        let x = small(a), y = small(b)
-        var most = 0.0
-        for k in Swift.stride(from: 0, to: x.count, by: 4) {
-            most = max(most, (0..<3).map { abs(Double(x[k + $0]) - Double(y[k + $0])) }.max()!)
-        }
-        return most
     }
 
     // MARK: - Depth
@@ -462,7 +258,7 @@ extension Studio {
         // Games is the way the window opens it: as a new picture comes.
         let folders = [
             Folder(name: "Code", picture: "robot.jpg", look: .corner), Folder(name: "Recipes", picture: "ramen.jpg", look: .front),
-            Folder(name: "Games", picture: "gamepad.jpg"), Self.folder("Taxes"),
+            Folder(name: "Games", picture: "gamepad.jpg"), Folder(name: "Taxes", picture: "piggy-bank.jpg", look: .card(turned: 7)),
         ]
         let frames = row(count: 4, side: 96, top: 120, spacing: 140, width: size.width)
         var icons = try folders.map { try icon($0, side: 96) }

@@ -116,7 +116,6 @@ final class Studio {
 
     func render(only: String?) async throws {
         let scenes: [(name: String, render: () async throws -> Void)] = [
-            ("hero", renderHero),
             ("depth", renderDepth),
             ("drop", renderDrop),
             ("hover", renderHover),

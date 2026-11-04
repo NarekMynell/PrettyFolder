@@ -5,6 +5,7 @@
 #
 # The app draws every frame with its own views and icons (see App/ReadmeMedia) and
 # ffmpeg turns the frames into GIFs. Needs ffmpeg: brew install ffmpeg
+# docs/hero.gif is cut from the trailer, so it is not made here.
 set -eu
 
 app="$1"
@@ -23,15 +24,12 @@ for picture in depth; do
         -pix_fmt pal8 "$docs/$picture.png"
     echo "Wrote $docs/$picture.png"
 done
-for scene in hero drop hover clear size zoom turn fit; do
+for scene in drop hover clear size zoom turn fit; do
     # One palette for the whole animation keeps still parts still, so only what moves
     # is stored frame to frame. Ordered dithering and 20 frames a second keep photos
     # moving across the screen to a few megabytes.
-    # The hero is big and everything on it moves at once, so it gets fewer pixels and frames.
-    size="fps=20"
-    [ "$scene" = hero ] && size="fps=15,scale=1000:-1:flags=lanczos"
     ffmpeg -loglevel error -y -framerate 25 -i "$frames/$scene/frame-%04d.png" \
-        -vf "$size,format=rgb24,split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" \
+        -vf "fps=20,format=rgb24,split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" \
         "$docs/$scene.gif"
     echo "Wrote $docs/$scene.gif"
 done
