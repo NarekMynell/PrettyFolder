@@ -183,6 +183,9 @@ public actor FolderImageManager {
             if isStopped { break }
             do {
                 try FolderInspector.validate(folder)
+                // The last folder may have lost the picture while the app was told about it, and
+                // the stored copy went with it. It is still needed here.
+                _ = try library.storePicture(stored.data, fileExtension: stored.fileExtension)
                 // Keep the folder's own look when it already had a picture from us. Where the
                 // old picture sat in it, and how big, says nothing about the new one.
                 let existing = ownedRecord(for: folder)

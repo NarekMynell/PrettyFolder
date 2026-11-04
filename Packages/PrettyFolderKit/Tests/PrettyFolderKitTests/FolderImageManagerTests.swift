@@ -378,6 +378,48 @@ import UniformTypeIdentifiers
         #expect(await manager.look(for: folder) == nil)
     }
 
+    /// While the app has the first folder's icon, something takes the picture off that folder.
+    /// The other folders are still to get the picture, and need it for as long as they have it.
+    @Test func aPictureOnItsWayToMoreFoldersStaysWhenTheFirstOneLosesIt() async throws {
+        let first = try temp.folder("First"), second = try temp.folder("Second")
+        let manager = self.manager
+        await manager.onIconChange { url, change in
+            if case .written = change, url.lastPathComponent == "First" {
+                _ = await manager.removeImage(from: [url])
+            }
+        }
+        let outcomes = await manager.apply(imageAt: picture, to: [first, second])
+        #expect(outcomes.allSatisfy { $0.succeeded })
+
+        let look = try #require(await manager.look(for: second))
+        #expect(FileManager.default.fileExists(atPath: look.pictureURL.path), "the second folder's picture is gone")
+        await manager.onIconChange(nil)
+        // The look can still be changed, which needs the picture.
+        try await manager.setStyle(IconStyle(x: 0.2, y: 0.3, width: 0.6, height: 0.4, mode: .fit), placement: .natural, for: second)
+        #expect(storedPictures().count == 1)
+    }
+
+    /// The same when the first folder gets another picture meanwhile.
+    @Test func aPictureOnItsWayToMoreFoldersStaysWhenTheFirstOneGetsAnother() async throws {
+        let first = try temp.folder("First"), second = try temp.folder("Second")
+        let other = temp.file("other.jpg")
+        TestImages.write(TestImages.solid(width: 300, height: 300, red: 0, green: 0, blue: 1), to: other, type: .jpeg)
+        let manager = self.manager
+        let replaced = Checks()
+        await manager.onIconChange { url, change in
+            if case .written = change, url.lastPathComponent == "First", replaced.results.isEmpty {
+                replaced.add(true)
+                _ = await manager.apply(imageAt: other, to: [url])
+            }
+        }
+        _ = await manager.apply(imageAt: picture, to: [first, second])
+        await manager.onIconChange(nil)
+
+        let look = try #require(await manager.look(for: second))
+        #expect(FileManager.default.fileExists(atPath: look.pictureURL.path), "the second folder's picture is gone")
+        #expect(storedPictures().count == 2)
+    }
+
     @Test func redrawingTellsFinderToo() async throws {
         let folder = try temp.folder("Redrawn")
         _ = await manager.apply(imageAt: picture, to: [folder])
