@@ -221,7 +221,7 @@ private struct EditorView: View {
                 onCommit: { model.commit() },
                 turnLink: turnLink
             )
-            if model.isEditingFolders && !model.hasPicture {
+            if model.isEditingFolders && !model.hasPicture && !model.isLoadingPicture {
                 addButton
             }
             if isDropTargeted {

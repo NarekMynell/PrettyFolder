@@ -46,6 +46,8 @@ final class EditorModel {
     private(set) var isPictureNatural = true
     /// Whether any of them has a custom icon at all, from PrettyFolder or not.
     private(set) var hasCustomIcon = false
+    /// Their picture, if they have one, is still being read: when the window opens, say.
+    private(set) var isLoadingPicture = false
 
     /// The default look as it is being edited; `saveDefault()` makes it the default.
     var defaultDraft: IconStyle
@@ -171,6 +173,7 @@ final class EditorModel {
             folderPlacement = .natural
         }
         scope = folders.isEmpty ? .defaultLook : .folders
+        isLoadingPicture = !folders.isEmpty && folderPicture == nil
         reload()
     }
 
@@ -231,13 +234,16 @@ final class EditorModel {
                 if let look = await manager.look(for: folder) { found.append((folder, look)) }
             }
             let pictureURL = found.first?.look.pictureURL
-            let picture: SourceImage? = if let pictureURL, pictureURL != folderPictureURL {
+            let picture: SourceImage? = if pictureURL == folderPictureURL {
+                folderPicture
+            } else if let pictureURL {
                 await Task.detached(priority: .userInitiated) { PreviewPicture.load(pictureURL) }.value
             } else {
-                folderPicture
+                nil
             }
             // Something newer is on its way.
             guard generation == loadGeneration else { return }
+            isLoadingPicture = false
             managedFolders = found.map(\.folder)
             hasCustomIcon = anyCustomIcon
             if pictureURL != folderPictureURL, folderPictureURL != nil {
@@ -530,7 +536,7 @@ final class EditorModel {
     func commitDefault(updateExisting: Bool) {
         let style = defaultDraft
         settings.defaultStyle = style
-        progress.start(total: updateExisting ? followerCount : 0)
+        if updateExisting { progress.start(total: followerCount) }
         let reporter = progress.reporter
         let manager = actions.manager
         let completion = afterSavingDefault
