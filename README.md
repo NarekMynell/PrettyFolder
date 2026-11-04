@@ -7,7 +7,7 @@
 <p align="center">Put any picture on a folder icon on your Mac.</p>
 
 <p align="center">
-  <img src="docs/hero.gif" width="480" alt="The real app on a violet background. A picture of a smiling pink axolotl is picked up from the Desktop, dragged across to a plain folder and dropped on the Set as Icon badge: Drag. Drop. Done. Then one big folder wears everything in turn on bright colors: headphones, blood oranges and dragon fruit, a kitten, a tree frog, a robot that shrinks into a corner and grows past the edges, and oranges spinning to any angle.">
+  <img src="docs/hero.gif" width="480" alt="The real app on a Mac desktop, a mountain lake at sunset, with the menu bar and the Dock. A picture of a smiling pink axolotl is picked up from the Desktop, dragged across to a plain folder and dropped on the Set as Icon badge: Drag. Drop. Done. Then one big folder wears everything in turn: headphones, blood oranges and dragon fruit, a rocket, a tree frog, a robot that shrinks into a corner and grows past the edges, and oranges spinning to any angle.">
 </p>
 
 ## Install
