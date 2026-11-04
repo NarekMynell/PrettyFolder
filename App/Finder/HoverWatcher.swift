@@ -200,7 +200,10 @@ final class HoverWatcher {
     func confirm(_ folder: URL, then action: @escaping () -> Void) {
         guard let shown, shown.item.url == folder else { return }
         Task {
-            if await isStillThere(shown) { action() }
+            guard await isStillThere(shown) else { return }
+            // The buttons went with the click; the next move brings them back, up to date.
+            hovered = nil
+            action()
         }
     }
 
@@ -235,19 +238,29 @@ final class HoverWatcher {
         }
     }
 
-    /// Asks Finder whether the folder is still where it was, looking at a spot on its icon
-    /// below the buttons.
+    /// Asks Finder whether the folder is still where it was, looking at spots on its icon that
+    /// the buttons don't cover, for one that is on show: the icon may be partly scrolled out of
+    /// its window or under another. If Finder is too busy to answer, nothing says it has gone.
     private func isStillThere(_ folder: Hovered) async -> Bool {
-        let probe = NSPoint(x: folder.zone.midX, y: folder.zone.minY + folder.zone.height * 0.3)
-        guard let pid = finder.pid, finder.ownsWindow(at: probe) else { return false }
+        let zone = folder.zone
+        let spots = [
+            NSPoint(x: zone.midX, y: zone.minY + zone.height * 0.3),
+            NSPoint(x: zone.midX, y: zone.minY + zone.height * 0.55),
+            NSPoint(x: zone.minX + zone.width * 0.1, y: zone.minY + zone.height * 0.75),
+        ]
         let accessibility = self.accessibility
-        let item = await withCheckedContinuation { (continuation: CheckedContinuation<FinderItem?, Never>) in
-            accessibility.item(at: ScreenSpace.accessibilityPoint(probe), finderPID: pid) { item in
-                continuation.resume(returning: item)
+        for spot in spots {
+            guard let pid = finder.pid, finder.ownsWindow(at: spot) else { continue }
+            let (item, answered) = await withCheckedContinuation { (continuation: CheckedContinuation<(FinderItem?, Bool), Never>) in
+                accessibility.item(at: ScreenSpace.accessibilityPoint(spot), finderPID: pid) { item, answered in
+                    continuation.resume(returning: (item, answered))
+                }
             }
+            guard answered else { return true }
+            guard let item, item.url == folder.item.url else { continue }
+            let frame = ScreenSpace.appKitRect(item.iconFrame)
+            return abs(frame.minX - zone.minX) < 2 && abs(frame.minY - zone.minY) < 2
         }
-        guard let item, item.url == folder.item.url else { return false }
-        let frame = ScreenSpace.appKitRect(item.iconFrame)
-        return abs(frame.minX - folder.zone.minX) < 2 && abs(frame.minY - folder.zone.minY) < 2
+        return false
     }
 }
