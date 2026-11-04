@@ -41,34 +41,45 @@ nonisolated final class FinderAccessibility: @unchecked Sendable {
         AXUIElementSetMessagingTimeout(systemWide, 0.25)
     }
 
-    func item(at point: CGPoint, finderPID: pid_t, completion: @escaping @Sendable (FinderItem?) -> Void) {
+    /// What Finder shows at `point`, if anything. `answered` is `false` when Finder took too long
+    /// to say, which says nothing about what is there.
+    func item(at point: CGPoint, finderPID: pid_t, completion: @escaping @Sendable (_ item: FinderItem?, _ answered: Bool) -> Void) {
         queue.async { [self] in
-            completion(resolveItem(at: point, finderPID: finderPID))
+            let (item, answered) = resolveItem(at: point, finderPID: finderPID)
+            completion(item, answered)
         }
     }
 
-    private func resolveItem(at point: CGPoint, finderPID: pid_t) -> FinderItem? {
+    /// How far from an icon a hit on what it is wrapped in still counts as being on that icon.
+    private static let iconReach: CGFloat = 12
+
+    private func resolveItem(at point: CGPoint, finderPID: pid_t) -> (item: FinderItem?, answered: Bool) {
         var hit: AXUIElement?
         let status = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit)
         guard status == .success, let hit else {
             log.debug("Hit test at \(point.x, privacy: .public),\(point.y, privacy: .public) failed: \(status.rawValue, privacy: .public)")
-            return nil
+            return (nil, status != .cannotComplete)
         }
         var pid: pid_t = 0
         guard AXUIElementGetPid(hit, &pid) == .success, pid == finderPID else {
             log.debug("Hit belongs to pid \(pid, privacy: .public), not Finder (\(finderPID, privacy: .public))")
-            return nil
+            return (nil, true)
         }
 
         // The hit can be the icon, the name, a table cell or the row; walk up a little.
         var node: AXUIElement? = hit
         for _ in 0..<4 {
             guard let current = node else { break }
-            if let item = item(from: current) { return item }
+            if let item = item(from: current) {
+                // An empty spot on the Desktop is hit as the group of all its icons, which starts
+                // with the first of them, wherever that is.
+                let onIt = item.layout == .row || item.iconFrame.insetBy(dx: -Self.iconReach, dy: -Self.iconReach).contains(point)
+                return (onIt ? item : nil, true)
+            }
             node = parent(of: current)
         }
         log.debug("No item at the pointer (hit \(self.role(of: hit) ?? "?", privacy: .public))")
-        return nil
+        return (nil, true)
     }
 
     private func item(from node: AXUIElement) -> FinderItem? {

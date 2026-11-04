@@ -30,6 +30,9 @@ final class DragWatcher {
     private var queryInFlight = false
     private var pendingPoint: NSPoint?
     private var lastQueryTime: TimeInterval = 0
+    /// Goes up whenever the folder found before is no longer the one, so an answer to a question
+    /// asked before is recognized as out of date.
+    private var generation = 0
     private var retryTask: Task<Void, Never>?
     private var showTask: Task<Void, Never>?
     private var releaseCheckTimer: Timer?
@@ -64,6 +67,7 @@ final class DragWatcher {
     /// What is under the pointer changed without it moving: the drag goes on, the folder
     /// found before is no longer the one.
     private func forgetFolder() {
+        generation += 1
         hovered = nil
         pendingPoint = nil
         showTask?.cancel()
@@ -106,8 +110,9 @@ final class DragWatcher {
     private func track(_ point: NSPoint) {
         if badge.contains(point) {
             // On the badge: it is the drop target now, keep it as it is. Questions asked on the
-            // way here are about where the pointer was.
+            // way here are about where the pointer was, and so is the folder it was on the way to.
             badge.cancelHide()
+            hovered = nil
             showTask?.cancel()
             pendingPoint = nil
             retryTask?.cancel()
@@ -139,15 +144,16 @@ final class DragWatcher {
         }
         queryInFlight = true
         lastQueryTime = ProcessInfo.processInfo.systemUptime
-        accessibility.item(at: ScreenSpace.accessibilityPoint(point), finderPID: pid) { [weak self] item in
-            Task { @MainActor in self?.finishQuery(item, pointer: point) }
+        let generation = self.generation
+        accessibility.item(at: ScreenSpace.accessibilityPoint(point), finderPID: pid) { [weak self] item, _ in
+            Task { @MainActor in self?.finishQuery(item, pointer: point, generation: generation) }
         }
     }
 
-    private func finishQuery(_ item: FinderItem?, pointer: NSPoint) {
+    private func finishQuery(_ item: FinderItem?, pointer: NSPoint, generation: Int) {
         queryInFlight = false
         log.debug("Under the pointer: \(item?.url.lastPathComponent ?? "nothing", privacy: .private)")
-        guard phase == .dragging(hasPicture: true) else { return }
+        guard phase == .dragging(hasPicture: true), generation == self.generation else { return }
         // The pointer went on to the badge while Finder answered.
         guard !badge.contains(NSEvent.mouseLocation) else { return }
         update(item?.isPlainFolder == true ? item : nil, pointer: pointer)

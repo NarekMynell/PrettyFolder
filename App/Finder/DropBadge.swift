@@ -19,6 +19,10 @@ final class DropBadgeController {
 
     /// `true` while a drop is being applied; the badge stays up until it is done.
     private(set) var isBusy = false
+    /// On its way out. Its alpha doesn't say so yet in the first moments.
+    private var isFadingOut = false
+    /// Where the badge goes for its folder as last placed, whatever the pointer was doing.
+    private var placedFrame: NSRect?
 
     init() {
         targetView = DropTargetView(model: model)
@@ -30,9 +34,11 @@ final class DropBadgeController {
     /// Shown and meant for a folder (not fading out after a hide).
     var isVisible: Bool { panel.isVisible && folder != nil }
 
-    /// Whether `point` (AppKit screen coordinates) is over the badge.
+    /// Whether `point` (AppKit screen coordinates) is over the badge. All of its window counts,
+    /// the room for its shadow too: a drop there goes to the badge, and Finder can't be asked
+    /// about what is under it.
     func contains(_ point: NSPoint) -> Bool {
-        isVisible && panel.frame.insetBy(dx: Self.shadowMargin - 2, dy: Self.shadowMargin - 2).contains(point)
+        isVisible && panel.frame.contains(point)
     }
 
     /// Shows the badge for `item`. Returns `false` when it would land under the pointer:
@@ -43,6 +49,7 @@ final class DropBadgeController {
         guard let frame = Self.frame(for: item, avoiding: pointer) else { return false }
         cancelHide()
         folder = item.url
+        placedFrame = Self.frame(for: item, avoiding: nil)
         if model.state != .ready { model.state = .ready }
         let size = Self.fontSize(for: item)
         if model.fontSize != size { model.fontSize = size }
@@ -52,7 +59,8 @@ final class DropBadgeController {
             panel.orderFrontRegardless()
         }
         // Also brings it back if it was in the middle of fading out.
-        if panel.alphaValue < 1 {
+        if panel.alphaValue < 1 || isFadingOut {
+            isFadingOut = false
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.12
                 panel.animator().alphaValue = 1
@@ -62,12 +70,14 @@ final class DropBadgeController {
     }
 
     /// Keeps the badge with its folder when Finder scrolls the folder, and leaves it alone
-    /// otherwise: whatever it shows (the highlight of a drag over it) stays, and it never
-    /// moves away from under the pointer.
+    /// otherwise: whatever it shows (the highlight of a drag over it) stays, and it never moves
+    /// away from the pointer coming for it.
     func follow(_ item: FinderItem, pointer: NSPoint) {
         guard isVisible, folder == item.url, !isBusy, !contains(NSEvent.mouseLocation),
-              let frame = Self.frame(for: item, avoiding: pointer), frame != panel.frame
+              let placed = Self.frame(for: item, avoiding: nil), placed != placedFrame,
+              let frame = Self.frame(for: item, avoiding: pointer)
         else { return }
+        placedFrame = placed
         panel.setFrame(frame, display: true)
     }
 
@@ -80,6 +90,7 @@ final class DropBadgeController {
             panel.orderOut(nil)
             return
         }
+        isFadingOut = true
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.1
             panel.animator().alphaValue = 0
@@ -87,6 +98,7 @@ final class DropBadgeController {
             MainActor.assumeIsolated {
                 // Shown again while fading out? Then stay.
                 guard let self, self.folder == nil else { return }
+                self.isFadingOut = false
                 self.panel.orderOut(nil)
             }
         })
@@ -135,14 +147,14 @@ final class DropBadgeController {
     }
 
     /// Where the badge goes for `item`, shadow margin included; `nil` when it would land
-    /// under the pointer.
-    static func frame(for item: FinderItem, avoiding pointer: NSPoint) -> NSRect? {
+    /// under the pointer. Without a pointer, its place by the folder.
+    static func frame(for item: FinderItem, avoiding pointer: NSPoint?) -> NSRect? {
         let font = fontSize(for: item)
         let height = item.layout == .icon ? min(max(item.iconFrame.height * 0.36, 24), 32) : 22
         let width = DropBadgeContent.width(fontSize: font, height: height)
         let icon = ScreenSpace.appKitRect(item.iconFrame)
         let margin = Self.shadowMargin
-        let keepClear = { (pill: NSRect) in pill.insetBy(dx: -6, dy: -6).contains(pointer) }
+        let keepClear = { (pill: NSRect) in pointer.map(pill.insetBy(dx: -6, dy: -6).contains) ?? false }
 
         var pill: NSRect
         switch item.layout {
@@ -159,7 +171,7 @@ final class DropBadgeController {
             let name = ScreenSpace.appKitRect(item.nameFrame ?? item.iconFrame)
             let row = ScreenSpace.appKitRect(item.rowFrame ?? item.nameFrame ?? item.iconFrame)
             pill = NSRect(x: name.maxX + 8, y: row.midY - height / 2, width: width, height: height)
-            if keepClear(pill) {
+            if keepClear(pill), let pointer {
                 pill.origin.x = pointer.x + 18
             }
         }

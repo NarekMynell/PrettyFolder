@@ -159,7 +159,7 @@ final class HoverWatcher {
         queryInFlight = true
         lastQueryTime = ProcessInfo.processInfo.systemUptime
         let generation = self.generation
-        accessibility.item(at: ScreenSpace.accessibilityPoint(point), finderPID: pid) { [weak self] item in
+        accessibility.item(at: ScreenSpace.accessibilityPoint(point), finderPID: pid) { [weak self] item, _ in
             Task { @MainActor in self?.finishQuery(item, generation: generation) }
         }
     }
