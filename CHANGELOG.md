@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- A copy of a folder keeps its picture and stays adjustable after the original changes, gets another picture, loses its picture or is deleted. It used to lose its look if the original changed before the copy was first opened. Each folder now carries its own look, so the same goes for a folder moved to another disk or put back from a backup. A copy that had already lost its look needs its picture chosen again.
+- A folder moved elsewhere on its disk stays known even when a new folder, or a copy, takes its old name: a new default look, **Redraw All Pictures** and **Remove All Pictures** still reach it. This needs an APFS or Mac OS Extended disk; on an exFAT or FAT disk a moved folder is found again when it is opened.
+- Taking the picture off a renamed or moved folder that wasn't opened first no longer leaves it on the list, where **Remove All Pictures** would report that it can't reach it.
+- A folder moved to another disk catches up with a new default look it missed as soon as it is opened in the window.
+- A copy opened while the original's disk isn't connected no longer takes the original's place on the list.
+- A folder moved into an app or a package isn't written to any more when icons are redrawn.
+- A picture no folder uses any more is kept for 90 days, because a copy PrettyFolder hasn't seen yet may still need it. After that the copy keeps showing it, but needs the picture chosen again to change it. **Remove All Pictures** deletes such pictures right away.
+- Changing a folder in the window after it was deleted or moved to another disk says that it no longer exists, instead of that it has no picture.
+
 ## 1.3.1
 
 - Moving, resizing, pinching and turning a picture in the window are far smoother: a frame took up to 100 ms on the main thread, and now takes 5 to 25 ms.

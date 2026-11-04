@@ -85,6 +85,33 @@ public enum FolderInspector {
         return result.path
     }
 
+    /// Whether `path` is on a disk that isn't connected right now. Disks are mounted in /Volumes.
+    static func isOnDiskThatIsAway(_ path: String) -> Bool {
+        let components = URL(fileURLWithPath: path).pathComponents
+        guard components.count > 2, components[1] == "Volumes" else { return false }
+        return !FileManager.default.fileExists(atPath: "/Volumes/" + components[2])
+    }
+
+    /// The folder's number on its disk, which stays the same when it moves around that disk.
+    static func fileNumber(of folder: URL) -> UInt64? {
+        folder.withUnsafeFileSystemRepresentation { path in
+            var info = stat()
+            guard let path, lstat(path, &info) == 0 else { return nil }
+            return info.st_ino
+        }
+    }
+
+    /// Where the item with a number is on the disk that `neighbor` is on.
+    static func item(numbered number: UInt64, onDiskOf neighbor: URL) -> URL? {
+        neighbor.withUnsafeFileSystemRepresentation { path -> URL? in
+            var disk = statfs()
+            guard let path, statfs(path, &disk) == 0 else { return nil }
+            var found = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            guard fsgetpath(&found, found.count, &disk.f_fsid, number) > 0 else { return nil }
+            return URL(fileURLWithPath: String(cString: found), isDirectory: true)
+        }
+    }
+
     /// The hidden `Icon\r` file that holds a folder's custom icon.
     public static func iconFileURL(for folder: URL) -> URL {
         folder.appendingPathComponent("Icon\r", isDirectory: false)

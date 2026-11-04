@@ -117,8 +117,9 @@ public actor FolderImageManager {
     /// Whether `folder` shows exactly the icon PrettyFolder made for it, and not one somebody
     /// else put there since.
     public func showsOwnPicture(_ folder: URL) -> Bool {
-        guard let id = markerID(of: folder), let record = library.record(id) else { return false }
-        return isStillOurs(record, folder)
+        guard let id = markerID(of: folder) else { return false }
+        if let record = library.record(id) { return isStillOurs(record, folder) }
+        return carriedLook(of: folder) != nil
     }
 
     /// For quitting: lets the folder being written finish, then writes nothing more. Long runs
@@ -176,6 +177,8 @@ public actor FolderImageManager {
 
     private func apply(_ picture: SourceImage, storedAs stored: (data: Data, fileExtension: String), to folders: [URL]) async -> [FolderOutcome] {
         let pictureName: String
+        // One already there may have been kept for copies of a folder that had it.
+        let wasThere = library.hasPicture(stored.data, fileExtension: stored.fileExtension)
         do {
             pictureName = try library.storePicture(stored.data, fileExtension: stored.fileExtension)
         } catch {
@@ -210,14 +213,16 @@ public actor FolderImageManager {
                     style: existing?.style,
                     iconDigest: icon.digest,
                     created: existing?.created ?? now,
-                    updated: now
+                    updated: now,
+                    fileNumber: FolderInspector.fileNumber(of: folder)
                 )
                 ExtendedAttributes.set(Data(record.id.uuidString.utf8), named: Self.markerAttribute, at: folder)
+                carry(record, on: folder)
                 library.upsert(record)
                 // The record from before someone else changed the icon goes now, not at the next tidy-up.
                 if let stale { library.remove(stale.id) }
                 if let oldPicture = existing?.pictureName, oldPicture != pictureName {
-                    library.deletePictureIfUnused(oldPicture)
+                    library.retirePictureIfUnused(oldPicture)
                 }
                 persist()
                 outcomes.append(.ok(folder))
@@ -227,7 +232,7 @@ public actor FolderImageManager {
             }
         }
         // Nothing may have worked; don't keep a picture no folder uses.
-        library.deletePictureIfUnused(pictureName)
+        if !wasThere { library.deletePictureIfUnused(pictureName) }
         persist()
         return outcomes
     }
@@ -250,6 +255,10 @@ public actor FolderImageManager {
                 continue
             }
             let id = markerID(of: folder)
+            // A copied folder carries the original's marker; only drop the record if it is really
+            // this folder's. Asked now: the marker and the icon are how that is told.
+            var isItsRecord = false
+            if let id, var record = library.record(id) { isItsRecord = describes(&record, folder) }
             let hadIcon = FolderInspector.hasCustomIcon(folder)
                 || FileManager.default.fileExists(atPath: FolderInspector.iconFileURL(for: folder).path)
             if hadIcon {
@@ -263,10 +272,8 @@ public actor FolderImageManager {
             }
             FolderMetadata.forgetIconChanges(folder)
             ExtendedAttributes.remove(named: Self.markerAttribute, at: folder)
-            // A copied folder carries the original's marker; only drop the record if it is really this folder's.
-            if let id, var record = library.record(id), describes(&record, folder) {
-                library.remove(id)
-            }
+            CarriedLook.remove(from: folder)
+            if let id, isItsRecord { library.remove(id) }
             outcomes.append(.ok(folder))
             removed.append(folder)
         }
@@ -283,9 +290,15 @@ public actor FolderImageManager {
 
     /// The look of a folder that has a picture from PrettyFolder, or `nil`. A copy of such a
     /// folder, looked at for the first time, gets a record of its own (see `ownedRecord`).
-    public func look(for folder: URL) -> FolderLook? {
-        guard let record = ownedRecord(for: folder) else { return nil }
+    public func look(for folder: URL) async -> FolderLook? {
+        guard var record = ownedRecord(for: folder) else { return nil }
         if hasUnsavedChanges { persist() }
+        // Moved out of reach, a folder may have missed a new default look. Now it's found.
+        if (record.revision ?? 1) < IconRenderer.revision {
+            _ = await redraw([record], progress: nil)
+            guard let redrawn = library.record(record.id) else { return nil }
+            record = redrawn
+        }
         return FolderLook(
             folder: folder,
             pictureURL: library.pictureURL(named: record.pictureName),
@@ -318,6 +331,9 @@ public actor FolderImageManager {
     /// Changes a folder's record with `edit`, as it is when the change comes in, and redraws it.
     private func change(_ folder: URL, _ edit: (inout FolderRecord) -> Void) async throws {
         guard var record = ownedRecord(for: folder) else {
+            guard FileManager.default.fileExists(atPath: folder.path) else {
+                throw FolderInspector.Problem.missing(displayName(folder))
+            }
             throw FolderImageError.notManaged(displayName(folder))
         }
         // Its list can't be saved, and that list would no longer recognize the new icon as ours.
@@ -328,6 +344,7 @@ public actor FolderImageManager {
         record.iconDigest = icon.digest
         record.revision = IconRenderer.revision
         record.updated = Date()
+        carry(record, on: folder)
         library.upsert(record)
         persist()
         await show(icon)
@@ -440,7 +457,8 @@ public actor FolderImageManager {
     }
 
     /// How long a folder that can't be found is remembered. It may be on a disk that
-    /// isn't connected, or moved to another disk and not touched since.
+    /// isn't connected, or moved to another disk and not touched since. A picture no folder
+    /// on the list uses stays as long, for copies the list doesn't know about.
     public static let missingGracePeriod: TimeInterval = 90 * 24 * 60 * 60
 
     /// Forgets folders whose icon was changed by something else, and folders that have
@@ -453,7 +471,7 @@ public actor FolderImageManager {
             guard let folder = resolve(&record) else {
                 if let since = record.missingSince {
                     if now.timeIntervalSince(since) > Self.missingGracePeriod {
-                        library.remove(id)
+                        library.remove(id, at: now)
                         changed = true
                     }
                 } else {
@@ -466,11 +484,15 @@ public actor FolderImageManager {
             if ownership(of: folder, by: record) == .theirs {
                 // Someone replaced or removed the icon; what we left on the folder is stale too.
                 forget(folder, record: record)
-                library.remove(id)
+                library.remove(id, at: now)
                 changed = true
+            } else if record.revision == IconRenderer.revision, record.iconDigest == FolderInspector.iconResource(of: folder)?.sha256,
+                      CarriedLook.read(from: folder)?.iconDigest != record.iconDigest {
+                // From before folders carried their look. Others are about to be redrawn.
+                carry(record, on: folder)
             }
         }
-        library.collectGarbage()
+        library.collectGarbage(retiredBefore: now.addingTimeInterval(-Self.missingGracePeriod))
         if changed || hasUnsavedChanges { persist() }
     }
 
@@ -488,6 +510,8 @@ public actor FolderImageManager {
             if let folder = resolve(&record), isStillOurs(record, folder) {
                 do {
                     guard !library.isReadOnly else { throw FolderImageError.newerList }
+                    // It may have been moved into an app since it got its picture.
+                    try FolderInspector.validate(folder)
                     let picture: SourceImage
                     if let open, open.name == record.pictureName {
                         picture = open.picture
@@ -501,6 +525,7 @@ public actor FolderImageManager {
                     record.iconDigest = icon.digest
                     record.revision = IconRenderer.revision
                     record.updated = Date()
+                    carry(record, on: folder)
                     library.upsert(record)
                     // Saved before the app is told: if it quits meanwhile, the library still
                     // knows the folder's new icon as its own.
@@ -579,11 +604,13 @@ public actor FolderImageManager {
     /// the marker, the count in its Finder info, and our icon file when only the custom icon
     /// flag was turned off and the file was left behind.
     private func forget(_ folder: URL, record: FolderRecord) {
+        let carriedDigest = CarriedLook.read(from: folder)?.iconDigest
         if markerID(of: folder) == record.id {
             ExtendedAttributes.remove(named: Self.markerAttribute, at: folder)
+            CarriedLook.remove(from: folder)
         }
-        if FolderInspector.customIconFlag(folder) == false,
-           FolderInspector.iconResource(of: folder)?.sha256 == record.iconDigest {
+        if FolderInspector.customIconFlag(folder) == false, let digest = FolderInspector.iconResource(of: folder)?.sha256,
+           digest == record.iconDigest || digest == carriedDigest {
             FolderMetadata.keepingModificationDate(of: folder) {
                 try? FileManager.default.removeItem(at: FolderInspector.iconFileURL(for: folder))
             }
@@ -599,35 +626,80 @@ public actor FolderImageManager {
     }
 
     /// The record for `folder` if PrettyFolder made its current icon.
-    /// A copy of a managed folder gets its own record, so it can be edited on its own.
+    ///
+    /// Its marker may lead to the record of the folder it was copied from, however that one has
+    /// changed since, or to none at all. A copy gets a record of its own, so it can be edited on
+    /// its own, from what it says about its icon.
     private func ownedRecord(for folder: URL) -> FolderRecord? {
-        guard let id = markerID(of: folder), var record = library.record(id), isStillOurs(record, folder) else {
-            return nil
+        guard let id = markerID(of: folder) else { return nil }
+        let carried = carriedLook(of: folder)
+        guard var record = library.record(id) else {
+            return carried.flatMap { newRecord(for: folder, showing: $0, id: id) }
         }
+        guard isStillOurs(record, folder) else { return nil }
         let original = resolve(&record)
         if let original, sameItem(original, folder) { return record }
-        guard let bookmark = try? folder.bookmarkData() else { return nil }
-        if original != nil {
-            // A copy of a managed folder: give it a record of its own.
-            let now = Date()
-            record = FolderRecord(
-                id: UUID(), bookmark: bookmark, lastKnownPath: FolderInspector.canonicalPath(folder.path),
-                pictureName: record.pictureName,
-                style: record.style, placement: record.placement, iconDigest: record.iconDigest, revision: record.revision,
-                created: now, updated: now
-            )
-            // One that can't take the marker couldn't find its record again.
-            guard ExtendedAttributes.set(Data(record.id.uuidString.utf8), named: Self.markerAttribute, at: folder) else { return nil }
-        } else {
-            // The original is nowhere to be found: most likely this is it, moved to another
-            // disk (Finder moves across disks by copying, then deleting). Take the record over.
-            record.bookmark = bookmark
-            record.lastKnownPath = FolderInspector.canonicalPath(folder.path)
-            record.missingSince = nil
+        guard original == nil, seemsToHaveMoved(record, to: folder) else {
+            return newRecord(for: folder, showing: carried ?? CarriedLook(of: record, defaultStyle: defaultStyle))
         }
+        guard let bookmark = try? folder.bookmarkData() else { return nil }
+        record.bookmark = bookmark
+        record.lastKnownPath = FolderInspector.canonicalPath(folder.path)
+        record.missingSince = nil
+        record.fileNumber = FolderInspector.fileNumber(of: folder)
+        if carried == nil, record.revision == IconRenderer.revision { carry(record, on: folder) }
         library.upsert(record)
         persist()
         return record
+    }
+
+    /// Whether `folder` is most likely what became of a record's folder that can't be found: moved
+    /// to another disk, since Finder does that by copying, then deleting. It shows what the record
+    /// says, and the disk the record's folder was on is there, without it. With that disk away,
+    /// the folder is on it, and this is a copy.
+    private func seemsToHaveMoved(_ record: FolderRecord, to folder: URL) -> Bool {
+        record.iconDigest == FolderInspector.iconResource(of: folder)?.sha256
+            && !FolderInspector.isOnDiskThatIsAway(record.lastKnownPath)
+    }
+
+    /// A new record for a folder whose icon `look` describes, under the marker it has if its `id`
+    /// is free, for a list set aside may yet be put right. Without its picture the icon couldn't
+    /// be changed, or even drawn again: it comes from another Mac, say.
+    private func newRecord(for folder: URL, showing look: CarriedLook, id: UUID? = nil) -> FolderRecord? {
+        guard FileManager.default.fileExists(atPath: library.pictureURL(named: look.pictureName).path),
+              let bookmark = try? folder.bookmarkData()
+        else { return nil }
+        let now = Date()
+        var record = FolderRecord(
+            id: id ?? UUID(), bookmark: bookmark, lastKnownPath: FolderInspector.canonicalPath(folder.path),
+            pictureName: look.pictureName, style: nil, iconDigest: look.iconDigest,
+            created: now, updated: now, fileNumber: FolderInspector.fileNumber(of: folder)
+        )
+        record.take(look, defaultStyle: defaultStyle)
+        // A list that can't be saved wouldn't find the folder again by a new marker. It can be
+        // looked at all the same; changing it is refused.
+        if library.isReadOnly { return record }
+        // One that can't take the marker couldn't find its record again.
+        if id == nil, !ExtendedAttributes.set(Data(record.id.uuidString.utf8), named: Self.markerAttribute, at: folder) {
+            return nil
+        }
+        look.write(to: folder)
+        library.upsert(record)
+        persist()
+        return record
+    }
+
+    /// What `folder` says about its icon, if that is the icon it shows.
+    private func carriedLook(of folder: URL) -> CarriedLook? {
+        guard FolderInspector.customIconFlag(folder) == true, let look = CarriedLook.read(from: folder),
+              FolderInspector.iconResource(of: folder)?.sha256 == look.iconDigest
+        else { return nil }
+        return look
+    }
+
+    /// Leaves on the folder what it needs to know about the icon just drawn for `record`.
+    private func carry(_ record: FolderRecord, on folder: URL) {
+        CarriedLook(of: record, defaultStyle: defaultStyle).write(to: folder)
     }
 
     /// Whether `record` describes `folder` itself, not the folder `folder` was copied from.
@@ -638,6 +710,7 @@ public actor FolderImageManager {
         // The original can't be found right now (on a disk that was ejected, say): go by
         // the path, and when in doubt keep the record.
         return FolderInspector.canonicalPath(record.lastKnownPath) == FolderInspector.canonicalPath(folder.path)
+            || seemsToHaveMoved(record, to: folder)
     }
 
     private enum Ownership {
@@ -659,7 +732,8 @@ public actor FolderImageManager {
             guard let resource = FolderInspector.iconResource(of: folder) else {
                 return FolderInspector.hasNoIconFile(folder) ? .theirs : .unknown
             }
-            return resource.sha256 == record.iconDigest ? .ours : .theirs
+            let digest = resource.sha256
+            return digest == record.iconDigest || digest == CarriedLook.read(from: folder)?.iconDigest ? .ours : .theirs
         }
     }
 
@@ -678,19 +752,28 @@ public actor FolderImageManager {
     /// with the up-to-date copy instead of saving an old one over it later.
     private func resolve(_ record: inout FolderRecord) -> URL? {
         var stale = false
-        guard let url = try? URL(
+        guard var url = try? URL(
             resolvingBookmarkData: record.bookmark,
             options: [.withoutUI, .withoutMounting],
             relativeTo: nil,
             bookmarkDataIsStale: &stale
         ) else { return nil }
-        // A bookmark looks at the old path first. A folder there without this record's marker is
-        // another one, made after this one was renamed, say; this one gets its record back when
-        // it is next looked at (see `ownedRecord`).
+        // A bookmark looks at the old path first, and what is there may be another folder by now:
+        // a new one, or a copy given the old name. This one still has its number, unless it went
+        // to another disk: then it gets its record back when it is next looked at (see `ownedRecord`).
+        if let number = record.fileNumber, number != FolderInspector.fileNumber(of: url),
+           let moved = FolderInspector.item(numbered: number, onDiskOf: url), markerID(of: moved) == record.id {
+            url = moved
+            stale = true
+        }
         guard markerID(of: url) == record.id else { return nil }
         var changed = false
         if stale, let fresh = try? url.bookmarkData() {
             record.bookmark = fresh
+            changed = true
+        }
+        if let number = FolderInspector.fileNumber(of: url), number != record.fileNumber {
+            record.fileNumber = number
             changed = true
         }
         if record.lastKnownPath != url.path {
@@ -701,14 +784,29 @@ public actor FolderImageManager {
             record.missingSince = nil
             changed = true
         }
+        // It shows an icon the record doesn't know: put back from a backup, say. It knows best,
+        // as long as its picture is still here.
+        var replaced: String?
+        if let carried = CarriedLook.read(from: url), carried.iconDigest != record.iconDigest, carriedLook(of: url) != nil,
+           FileManager.default.fileExists(atPath: library.pictureURL(named: carried.pictureName).path) {
+            replaced = record.pictureName
+            record.take(carried, defaultStyle: defaultStyle)
+            changed = true
+        }
         if changed {
             library.upsert(record)
             hasUnsavedChanges = true
         }
+        if let replaced { library.retirePictureIfUnused(replaced) }
         return url
     }
 
     private func sameItem(_ a: URL, _ b: URL) -> Bool {
+        // A URL remembers what it read, and the one given may be from before the folder at that
+        // path was replaced.
+        var a = a, b = b
+        a.removeAllCachedResourceValues()
+        b.removeAllCachedResourceValues()
         let key: Set<URLResourceKey> = [.fileResourceIdentifierKey]
         guard let first = (try? a.resourceValues(forKeys: key))?.fileResourceIdentifier,
               let second = (try? b.resourceValues(forKeys: key))?.fileResourceIdentifier

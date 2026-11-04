@@ -26,11 +26,14 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
     var updated: Date
     /// Set while the folder can't be found; the record is dropped after a grace period.
     var missingSince: Date?
+    /// The folder's number on its disk, which stays the same when it moves around that disk. It
+    /// finds a moved folder when a new one has taken its old place.
+    var fileNumber: UInt64?
 
     init(
         id: UUID, bookmark: Data, lastKnownPath: String, pictureName: String, style: IconStyle?,
         placement: PicturePlacement? = nil, iconDigest: String, revision: Int? = IconRenderer.revision,
-        created: Date, updated: Date, missingSince: Date? = nil
+        created: Date, updated: Date, missingSince: Date? = nil, fileNumber: UInt64? = nil
     ) {
         self.id = id
         self.bookmark = bookmark
@@ -43,6 +46,7 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
         self.created = created
         self.updated = updated
         self.missingSince = missingSince
+        self.fileNumber = fileNumber
     }
 
     /// Where the picture sat used to be kept as its alignment.
@@ -64,6 +68,7 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
         created = try container.decode(Date.self, forKey: .created)
         updated = try container.decode(Date.self, forKey: .updated)
         missingSince = try container.decodeIfPresent(Date.self, forKey: .missingSince)
+        fileNumber = try container.decodeIfPresent(UInt64.self, forKey: .fileNumber)
     }
 }
 
@@ -157,9 +162,9 @@ struct FolderLibrary {
         records[record.id] = record
     }
 
-    mutating func remove(_ id: UUID) {
+    mutating func remove(_ id: UUID, at date: Date = Date()) {
         guard let removed = records.removeValue(forKey: id) else { return }
-        deletePictureIfUnused(removed.pictureName)
+        retirePictureIfUnused(removed.pictureName, at: date)
     }
 
     func save() throws {
@@ -176,10 +181,18 @@ struct FolderLibrary {
         picturesDirectory.appendingPathComponent(name, isDirectory: false)
     }
 
+    private func pictureName(for data: Data, fileExtension: String) -> String {
+        data.sha256 + "." + fileExtension.lowercased()
+    }
+
+    func hasPicture(_ data: Data, fileExtension: String) -> Bool {
+        FileManager.default.fileExists(atPath: pictureURL(named: pictureName(for: data, fileExtension: fileExtension)).path)
+    }
+
     /// Stores bytes under their hash and returns the file name.
     func storePicture(_ data: Data, fileExtension: String) throws -> String {
         try FileManager.default.createDirectory(at: picturesDirectory, withIntermediateDirectories: true)
-        let name = data.sha256 + "." + fileExtension.lowercased()
+        let name = pictureName(for: data, fileExtension: fileExtension)
         let url = pictureURL(named: name)
         if !FileManager.default.fileExists(atPath: url.path) {
             try data.write(to: url, options: .atomic)
@@ -187,18 +200,32 @@ struct FolderLibrary {
         return name
     }
 
+    /// For a picture that never made it onto a folder.
     func deletePictureIfUnused(_ name: String) {
         guard !mustKeep(name), !records.values.contains(where: { $0.pictureName == name }) else { return }
         try? FileManager.default.removeItem(at: pictureURL(named: name))
     }
 
-    /// Removes stored pictures that no record points to (left over after a crash, say).
-    func collectGarbage() {
+    /// A picture that was on a folder may still be on copies of it that the list doesn't know
+    /// about, and they need it to be drawn again. So it stays for a while, from `date` on, which
+    /// its file's date says from now on.
+    func retirePictureIfUnused(_ name: String, at date: Date = Date()) {
+        guard !records.values.contains(where: { $0.pictureName == name }) else { return }
+        try? FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: pictureURL(named: name).path)
+    }
+
+    /// Removes stored pictures that no record points to and that have been out of use since
+    /// before `date`, or all of them without one.
+    func collectGarbage(retiredBefore date: Date? = nil) {
         guard !isReadOnly else { return }
         let used = Set(records.values.map(\.pictureName))
         let files = (try? FileManager.default.contentsOfDirectory(atPath: picturesDirectory.path)) ?? []
         for name in files where !used.contains(name) && !mustKeep(name) && !name.hasPrefix(".") {
-            try? FileManager.default.removeItem(at: pictureURL(named: name))
+            let url = pictureURL(named: name)
+            if let date, let retired = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate, retired >= date {
+                continue
+            }
+            try? FileManager.default.removeItem(at: url)
         }
     }
 }
