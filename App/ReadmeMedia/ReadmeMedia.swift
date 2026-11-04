@@ -24,6 +24,7 @@ enum ReadmeMedia {
         if let scale = value(after: "--scale", in: arguments).flatMap(Double.init) { Stage.scale = CGFloat(scale) }
         if let rate = value(after: "--fps", in: arguments).flatMap(Double.init) { Stage.framesPerSecond = rate }
         if let pointer = value(after: "--pointer", in: arguments).flatMap(Double.init) { Stage.pointerScale = CGFloat(pointer) }
+        Scenery.bareDesktop = arguments.contains("--no-desktop")
 
         MainActor.assumeIsolated {
             NSApplication.shared.setActivationPolicy(.accessory)

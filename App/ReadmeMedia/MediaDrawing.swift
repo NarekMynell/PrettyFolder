@@ -157,11 +157,14 @@ extension CGColor {
 enum Scenery {
     /// The desktop picture the scenes use, when there is one among the pictures.
     nonisolated(unsafe) static var desktopPicture: CGImage?
+    /// Nothing behind the scenes, for putting them on a desktop afterwards.
+    nonisolated(unsafe) static var bareDesktop = false
 
     /// The desktop picture, filling `size`; without one, a soft gradient like the ones macOS
     /// ships: deep blue to violet to warm pink, with a couple of glows.
     static func wallpaper(size: CGSize) -> CGImage {
         let bitmap = Bitmap(size: size)
+        if bareDesktop { return bitmap.image }
         if let picture = desktopPicture {
             let aspect = CGFloat(picture.width) / CGFloat(picture.height)
             let fill = size.width / size.height > aspect
