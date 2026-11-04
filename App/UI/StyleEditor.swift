@@ -1000,7 +1000,11 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
             burst { set(style, moved) }
         } else {
             let rect = style.rect.offsetBy(dx: offset.width / side, dy: offset.height / side)
-            burst { set(rect: rect) }
+            burst {
+                // Bigger or smaller from here on, not from where the frame was.
+                requestedRect = nil
+                set(rect: rect)
+            }
         }
     }
 
@@ -1014,10 +1018,10 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     /// Makes `change` part of the burst going on, or starts one. With `adjusting`, the parts
     /// cut off show faintly until it settles.
     private func burst(adjusting: Bool = false, _ change: () -> Void) {
-        if burstEnd == nil {
-            actions.begin(false)
-            requestedRect = nil
-        }
+        if burstEnd == nil { requestedRect = nil }
+        // Every time: the model may have finished the change so far (for a click on the Fill
+        // that was on already, say) with nothing to show for it here.
+        actions.begin(false)
         if adjusting { setAdjusting(true) }
         burstEnd?.cancel()
         change()
