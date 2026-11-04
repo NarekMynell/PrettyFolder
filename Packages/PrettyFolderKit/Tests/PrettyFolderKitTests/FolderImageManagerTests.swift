@@ -847,6 +847,75 @@ import UniformTypeIdentifiers
         #expect(FolderInspector.hasCustomIcon(folder))
     }
 
+    @Test func keepsDroppedSVGDataAsVector() async throws {
+        let folder = try temp.folder("Dropped")
+        let svg = temp.file("dropped.svg")
+        try TestImages.writeSVG(to: svg, width: 40, height: 40)
+        let outcomes = await manager.apply(imageData: try Data(contentsOf: svg), type: .svg, to: [folder])
+        #expect(outcomes.allSatisfy { $0.succeeded })
+        #expect(storedPictures().first?.hasSuffix(".svg") == true)
+        #expect(try ImageLoader.load(contentsOf: #require(await manager.look(for: folder)).pictureURL).hasAlpha)
+    }
+
+    @Test func removingEverythingForgetsIconsSomeoneElseChanged() async throws {
+        let folder = try temp.folder("Theirs")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        #expect(NSWorkspace.shared.setIcon(NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
+            NSColor.green.setFill()
+            rect.fill()
+            return true
+        }, forFile: folder.path, options: []))
+
+        let outcomes = await manager.removeAll()
+        #expect(outcomes.allSatisfy { $0.succeeded })
+        #expect(await manager.managedFolderCount() == 0)
+        #expect(FolderInspector.hasCustomIcon(folder), "their icon stays")
+        #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
+        #expect(storedPictures().isEmpty)
+    }
+
+    @Test func aFolderThatCantBeReadIsKeptAndReported() async throws {
+        let folder = try temp.folder("Locked/Away")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let parent = folder.deletingLastPathComponent().path
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: parent)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent) }
+
+        await manager.prune()
+        #expect(await manager.managedFolderCount() == 1, "nothing can be concluded from a folder that can't be read")
+        let outcomes = await manager.removeAll()
+        #expect(outcomes.count == 1)
+        #expect(outcomes.allSatisfy { !$0.succeeded })
+        #expect(await manager.managedFolderCount() == 1)
+        #expect(storedPictures().count == 1)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent)
+        await manager.prune()
+        #expect(await manager.managedFolderCount() == 1, "and it's still known when it can be read again")
+        #expect(await manager.showsOwnPicture(folder))
+    }
+
+    @Test func aMissingPictureIsReportedAndTheRecordKept() async throws {
+        let folder = try temp.folder("Lost")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let look = try #require(await manager.look(for: folder))
+        try FileManager.default.removeItem(at: look.pictureURL)
+
+        let outcomes = await manager.redrawAll()
+        #expect(outcomes.count == 1)
+        #expect(outcomes.allSatisfy { !$0.succeeded })
+        #expect(await manager.managedFolderCount() == 1)
+        #expect(await manager.showsOwnPicture(folder), "its icon is as it was")
+    }
+
+    @Test func aFolderWithoutAPictureHasNoLookToChange() async throws {
+        let folder = try temp.folder("Plain")
+        await #expect(throws: FolderImageError.self) {
+            try await manager.setPlacement(.natural, for: folder)
+        }
+        #expect(!FolderInspector.hasCustomIcon(folder))
+    }
+
     @Test func keepsSVGAsVector() async throws {
         let folder = try temp.folder("Vector")
         let svg = temp.file("logo.svg")
