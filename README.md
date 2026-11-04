@@ -7,7 +7,7 @@
 <p align="center">Put any picture on a folder icon on your Mac.</p>
 
 <p align="center">
-  <img src="docs/hero.gif" width="480" alt="A fashion show for folders. On a glossy runway, under a huge glowing folder sign that reads Folder Week, folders walk up and pose with pictures on them while camera flashes go off: koi over the whole folder, a small corgi off-center, a transparent rocket, an SVG lightning bolt and a macaw. A crowd of plain blue folders watches.">
+  <img src="docs/hero.gif" width="480" alt="Six plain blue folders on a Desktop get their pictures one after another: a piggy bank, ramen, a game controller, a corgi, hot air balloons and a transparent cactus. Then a picture is dragged onto a folder and it is done.">
 </p>
 
 ## Install
