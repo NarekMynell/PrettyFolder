@@ -19,7 +19,8 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
     /// matches, somebody else changed it and PrettyFolder keeps its hands off.
     var iconDigest: String
     /// The `IconRenderer.revision` the icon was drawn with; `nil` for icons from before there
-    /// was one. An older icon is drawn again once its folder can be reached.
+    /// was one, or that a new default look has yet to reach. An older icon is drawn again once
+    /// its folder can be reached.
     var revision: Int?
     var created: Date
     var updated: Date

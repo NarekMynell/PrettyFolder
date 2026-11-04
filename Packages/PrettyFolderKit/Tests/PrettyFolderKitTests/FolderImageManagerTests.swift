@@ -502,6 +502,27 @@ import UniformTypeIdentifiers
         #expect(FolderInspector.iconResource(of: pinned) == pinnedIcon, "folders with their own look are untouched")
     }
 
+    /// A folder on a disk that isn't connected can't be redrawn with the new default look. It
+    /// follows that look all the same, so it gets it once it can be reached.
+    @Test func aFolderOutOfReachCatchesUpWithTheNewDefaultLook() async throws {
+        let folder = try temp.folder("Disk/Away")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let before = try #require(FolderInspector.iconResource(of: folder))
+
+        let disk = folder.deletingLastPathComponent().path
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: disk)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: disk) }
+        _ = await manager.setDefaultStyle(IconStyle(x: 0.2, y: 0.3, width: 0.6, height: 0.4, mode: .fit), updateExisting: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: disk)
+        #expect(FolderInspector.iconResource(of: folder) == before, "it couldn't be reached")
+
+        let outcomes = await manager.redrawOutdated()
+        #expect(outcomes.count == 1)
+        #expect(outcomes.allSatisfy { $0.succeeded })
+        #expect(FolderInspector.iconResource(of: folder) != before, "it still shows the old default look")
+        #expect(await manager.redrawOutdated().isEmpty, "and only once")
+    }
+
     @Test func defaultStyleCanSpareExistingFolders() async throws {
         let folder = try temp.folder("Existing")
         _ = await manager.apply(imageAt: picture, to: [folder])

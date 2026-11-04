@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController?
     private var isReady = false
     private var queuedCommands: [(FolderCommand, fromOurExtension: Bool)] = []
+    private var mountObserver: NSObjectProtocol?
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "App")
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -34,14 +35,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Forget folders whose icon was changed elsewhere, and pictures left over from a crash.
-        // Then draw again the icons an earlier version drew differently: a fix in how a picture
-        // meets the folder's edge reaches the folders that have one already.
-        Task { [manager, log] in
+        Task {
             await manager.prune()
-            let outcomes = await manager.redrawOutdated()
-            guard !outcomes.isEmpty else { return }
-            let failed = outcomes.filter { !$0.succeeded }.count
-            log.notice("Redrew \(outcomes.count - failed) icons drawn by an earlier version, \(failed) failed")
+            await redrawOutdatedIcons()
+        }
+        // Folders on a disk that wasn't connected catch up as soon as it is.
+        mountObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didMountNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.redrawOutdatedIcons() }
         }
 
         isReady = true
@@ -58,6 +60,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             LoginItem.shared.setEnabled(true)
             actions.showEditor()
         }
+    }
+
+    /// Draws again the icons that are behind: those an earlier version drew differently, so that
+    /// a fix in how a picture meets the folder's edge reaches the folders that have one already,
+    /// and those a new default look couldn't reach.
+    private func redrawOutdatedIcons() async {
+        let outcomes = await manager.redrawOutdated()
+        guard !outcomes.isEmpty else { return }
+        let failed = outcomes.filter { !$0.succeeded }.count
+        log.notice("Redrew \(outcomes.count - failed) icons that were behind, \(failed) failed")
     }
 
     /// Commands from the Finder extension arrive as `prettyfolder://` URLs.

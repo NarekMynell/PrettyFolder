@@ -357,6 +357,13 @@ public actor FolderImageManager {
             persist()
             return []
         }
+        // They follow the new look from now on. Those this run doesn't get to, on a disk that
+        // isn't connected or because the app quits, get it once they can (`redrawOutdated`).
+        for var record in followers {
+            record.revision = nil
+            library.upsert(record)
+        }
+        persist()
         return await redraw(followers, progress: progress)
     }
 
