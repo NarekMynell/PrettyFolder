@@ -79,7 +79,12 @@ final class IconCover {
             placing -= 1
             stopWatchingIfIdle()
         }
-        guard let key = await Self.key(for: folder), icon.sequence >= newest[key] ?? icon.sequence else { return }
+        // Taking the covers away also stops the watching started above, so from here on nothing
+        // may go up that started before that: nothing would take it away again.
+        let generation = self.generation
+        guard let key = await Self.key(for: folder), generation == self.generation,
+              icon.sequence >= newest[key] ?? icon.sequence
+        else { return }
         newest[key] = icon.sequence
         // Covers still up from the last change get the new icon now, whatever the look below
         // finds: Finder is about to load this one.
@@ -87,7 +92,6 @@ final class IconCover {
         for panel in covers where panel.key == key {
             panel.update(icon.image, until: expiry)
         }
-        let generation = self.generation
         let icons = await look(pid: pid)
         let stillHasPicture = await Self.havePictures([folder]).first ?? false
         // Taken away, replaced or removed meanwhile.
