@@ -90,6 +90,15 @@ public enum FolderInspector {
         folder.appendingPathComponent("Icon\r", isDirectory: false)
     }
 
+    /// Whether the folder is known to have no icon file. Not when it can't be looked into.
+    static func hasNoIconFile(_ folder: URL) -> Bool {
+        iconFileURL(for: folder).withUnsafeFileSystemRepresentation { path in
+            var info = stat()
+            guard let path else { return false }
+            return lstat(path, &info) != 0 && errno == ENOENT
+        }
+    }
+
     /// The raw icon resource of the folder, if it has one.
     public static func iconResource(of folder: URL) -> Data? {
         ExtendedAttributes.value(named: "com.apple.ResourceFork", at: iconFileURL(for: folder))

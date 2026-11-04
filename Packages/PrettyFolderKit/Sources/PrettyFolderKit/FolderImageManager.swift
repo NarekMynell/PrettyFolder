@@ -56,6 +56,8 @@ public enum FolderImageError: LocalizedError {
     case cannotStorePicture
     case unreachable(String)
     case stopped
+    case pictureLost(String)
+    case newerList
 
     public var errorDescription: String? {
         switch self {
@@ -65,6 +67,8 @@ public enum FolderImageError: LocalizedError {
         case .cannotStorePicture: return "The picture could not be saved."
         case .unreachable(let name): return "PrettyFolder couldn't reach “\(name)”. If it's on a disk that isn't connected, connect the disk and try again."
         case .stopped: return "PrettyFolder is quitting."
+        case .pictureLost(let name): return "PrettyFolder no longer has its copy of the picture on “\(name)”. Choose the picture again to change how it looks."
+        case .newerList: return "A newer version of PrettyFolder keeps track of this folder. Update PrettyFolder to change how it looks."
         }
     }
 }
@@ -135,6 +139,8 @@ public actor FolderImageManager {
     /// Puts the picture in `imageURL` on every folder. Folders keep their own look if they
     /// have one; the picture starts in the middle of it, at the size the look gives it.
     public func apply(imageAt imageURL: URL, to folders: [URL]) async -> [FolderOutcome] {
+        // A link to a picture is that picture, whose type says how to keep it.
+        let imageURL = imageURL.resolvingSymlinksInPath()
         let type = (try? imageURL.resourceValues(forKeys: [.contentTypeKey]))?.contentType
             ?? UTType(filenameExtension: imageURL.pathExtension)
         let picture: SourceImage
@@ -314,7 +320,9 @@ public actor FolderImageManager {
         guard var record = ownedRecord(for: folder) else {
             throw FolderImageError.notManaged(displayName(folder))
         }
-        let picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
+        // Its list can't be saved, and that list would no longer recognize the new icon as ours.
+        guard !library.isReadOnly else { throw FolderImageError.newerList }
+        let picture = try loadPicture(of: record, for: folder)
         edit(&record)
         let icon = try writeIcon(draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .natural), to: folder)
         record.iconDigest = icon.digest
@@ -378,6 +386,11 @@ public actor FolderImageManager {
     /// Redraws the folders whose icon an earlier version drew differently (see
     /// `IconRenderer.revision`). Folders that can't be reached now keep theirs until next time.
     public func redrawOutdated() async -> [FolderOutcome] {
+        // A disk may have come back: its folders aren't missing any more, whichever are behind.
+        for var record in library.records.values where record.missingSince != nil {
+            _ = resolve(&record)
+        }
+        if hasUnsavedChanges { persist() }
         let outdated = library.records.values.filter { ($0.revision ?? 1) < IconRenderer.revision }
         guard !outdated.isEmpty else { return [] }
         return await redraw(outdated, progress: nil)
@@ -474,12 +487,13 @@ public actor FolderImageManager {
             guard var record = library.record(original.id) else { continue }
             if let folder = resolve(&record), isStillOurs(record, folder) {
                 do {
+                    guard !library.isReadOnly else { throw FolderImageError.newerList }
                     let picture: SourceImage
                     if let open, open.name == record.pictureName {
                         picture = open.picture
                     } else {
                         open = nil
-                        picture = try ImageLoader.load(contentsOf: library.pictureURL(named: record.pictureName))
+                        picture = try loadPicture(of: record, for: folder)
                         open = (record.pictureName, picture)
                     }
                     let image = try draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .natural)
@@ -515,6 +529,13 @@ public actor FolderImageManager {
         let sequence: Int
         /// The icon file it took the place of, until Finder has been told.
         let oldFile: IconFile.Replaced?
+    }
+
+    /// The stored copy of the picture on `folder`.
+    private func loadPicture(of record: FolderRecord, for folder: URL) throws -> SourceImage {
+        let url = library.pictureURL(named: record.pictureName)
+        guard FileManager.default.fileExists(atPath: url.path) else { throw FolderImageError.pictureLost(displayName(folder)) }
+        return try ImageLoader.load(contentsOf: url)
     }
 
     /// The icon for `picture` in `style`.
@@ -595,7 +616,8 @@ public actor FolderImageManager {
                 style: record.style, placement: record.placement, iconDigest: record.iconDigest, revision: record.revision,
                 created: now, updated: now
             )
-            ExtendedAttributes.set(Data(record.id.uuidString.utf8), named: Self.markerAttribute, at: folder)
+            // One that can't take the marker couldn't find its record again.
+            guard ExtendedAttributes.set(Data(record.id.uuidString.utf8), named: Self.markerAttribute, at: folder) else { return nil }
         } else {
             // The original is nowhere to be found: most likely this is it, moved to another
             // disk (Finder moves across disks by copying, then deleting). Take the record over.
@@ -635,8 +657,7 @@ public actor FolderImageManager {
             return .theirs
         case true?:
             guard let resource = FolderInspector.iconResource(of: folder) else {
-                let iconFileExists = FileManager.default.fileExists(atPath: FolderInspector.iconFileURL(for: folder).path)
-                return iconFileExists ? .unknown : .theirs
+                return FolderInspector.hasNoIconFile(folder) ? .theirs : .unknown
             }
             return resource.sha256 == record.iconDigest ? .ours : .theirs
         }
@@ -663,6 +684,10 @@ public actor FolderImageManager {
             relativeTo: nil,
             bookmarkDataIsStale: &stale
         ) else { return nil }
+        // A bookmark looks at the old path first. A folder there without this record's marker is
+        // another one, made after this one was renamed, say; this one gets its record back when
+        // it is next looked at (see `ownedRecord`).
+        guard markerID(of: url) == record.id else { return nil }
         var changed = false
         if stale, let fresh = try? url.bookmarkData() {
             record.bookmark = fresh

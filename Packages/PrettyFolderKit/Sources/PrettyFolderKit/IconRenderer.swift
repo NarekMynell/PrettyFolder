@@ -6,7 +6,8 @@ import AppKit
 /// system folder has hand-tuned small sizes and the picture is resampled once,
 /// straight to the final pixel size.
 public struct IconRenderer {
-    /// The pixel sizes that end up in the icon file (16 pt through 512 pt @2x).
+    /// The pixel sizes an icon is drawn at (16 pt through 512 pt @2x). macOS keeps all but 16 and
+    /// 128 in the icon file; those two are for showing the new icon while Finder loads it.
     public static let pixelSizes = [16, 32, 64, 128, 256, 512, 1024]
 
     /// Goes up whenever the same look comes out differently, so icons drawn before can be

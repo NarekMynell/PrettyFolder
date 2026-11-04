@@ -861,6 +861,143 @@ import UniformTypeIdentifiers
         #expect(FolderInspector.hasCustomIcon(folder))
     }
 
+    /// A bookmark looks at the old path first, where a new folder of the old name now is.
+    @Test func aRenamedFolderStaysManagedWhenANewOneTakesItsOldName() async throws {
+        let folder = try temp.folder("Invoices")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let renamed = temp.url.appendingPathComponent("Invoices 2025", isDirectory: true)
+        try FileManager.default.moveItem(at: folder, to: renamed)
+        let newcomer = try temp.folder("Invoices")
+
+        await manager.prune()
+        #expect(await manager.managedFolderCount() == 1)
+        #expect(storedPictures().count == 1)
+        #expect(!FolderInspector.hasCustomIcon(newcomer))
+        #expect(await manager.showsOwnPicture(renamed))
+        // Looked at, it has its record back, and can be changed and taken off.
+        try await manager.setPlacement(PicturePlacement(x: 0.1, y: 0.5), for: renamed)
+        #expect(try recordedPaths() == [FolderInspector.canonicalPath(renamed.path)])
+        let outcomes = await manager.removeImage(from: [renamed])
+        #expect(outcomes.allSatisfy { $0.succeeded })
+        #expect(await manager.managedFolderCount() == 0)
+        #expect(storedPictures().isEmpty)
+    }
+
+    @Test func twoFoldersThatSwapNamesStayManaged() async throws {
+        let first = try temp.folder("Alpha"), second = try temp.folder("Beta")
+        let other = temp.file("other.png")
+        TestImages.write(TestImages.solid(width: 300, height: 200, red: 0, green: 0.5, blue: 1), to: other, type: .png)
+        _ = await manager.apply(imageAt: picture, to: [first])
+        _ = await manager.apply(imageAt: other, to: [second])
+        let between = temp.url.appendingPathComponent("Between", isDirectory: true)
+        try FileManager.default.moveItem(at: first, to: between)
+        try FileManager.default.moveItem(at: second, to: first)
+        try FileManager.default.moveItem(at: between, to: second)
+
+        await manager.prune()
+        #expect(await manager.managedFolderCount() == 2)
+        #expect(storedPictures().count == 2)
+    }
+
+    /// The Mac starts without a disk, which comes back later: gone from then on, it is missing
+    /// since it went away the last time, not since the first.
+    @Test func aDiskThatComesAndGoesIsNotForgotten() async throws {
+        let folder = try temp.folder("OnADisk")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let marker = try #require(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder))
+        let start = Date()
+
+        // Out of reach, as far as the record can tell.
+        ExtendedAttributes.remove(named: FolderImageManager.markerAttribute, at: folder)
+        await manager.prune(now: start)
+        // Connected: what the app does when a disk mounts.
+        ExtendedAttributes.set(marker, named: FolderImageManager.markerAttribute, at: folder)
+        _ = await manager.redrawOutdated()
+        // Away again, more than the grace period after it first went.
+        ExtendedAttributes.remove(named: FolderImageManager.markerAttribute, at: folder)
+        await manager.prune(now: start.addingTimeInterval(FolderImageManager.missingGracePeriod + 60))
+        #expect(await manager.managedFolderCount() == 1, "forgotten, though it was here a moment ago")
+        #expect(storedPictures().count == 1)
+    }
+
+    @Test func aFolderThatCantBeLookedIntoIsNotForgotten() async throws {
+        let folder = try temp.folder("Private")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        // chmod -R 644 on a tree does this to its folders: its own attributes can be read, what is
+        // inside it can't.
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
+        await manager.prune()
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+
+        #expect(await manager.managedFolderCount() == 1)
+        #expect(await manager.showsOwnPicture(folder))
+        #expect(storedPictures().count == 1)
+    }
+
+    @Test func lookingAtACopyThatCantBeMarkedAddsNoRecords() async throws {
+        let original = try temp.folder("Original")
+        _ = await manager.apply(imageAt: picture, to: [original])
+        let copy = temp.url.appendingPathComponent("Locked copy", isDirectory: true)
+        try FileManager.default.copyItem(at: original, to: copy)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: copy.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: copy.path) }
+
+        for _ in 0..<5 { #expect(await manager.look(for: copy) == nil) }
+        #expect(await manager.managedFolderCount() == 1)
+    }
+
+    @Test func anSVGThroughALinkIsKeptAsVector() async throws {
+        let svg = temp.file("logo.svg")
+        try TestImages.writeSVG(to: svg, width: 40, height: 40)
+        let link = temp.url.appendingPathComponent("logo-link.svg")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: svg)
+        let folder = try temp.folder("Vector")
+        _ = await manager.apply(imageAt: link, to: [folder])
+        #expect(storedPictures().first?.hasSuffix(".svg") == true, "stored as \(storedPictures())")
+    }
+
+    /// An older copy of the app runs on a list a newer one wrote, can't save it, and mustn't change
+    /// icons that list knows, or the newer one forgets those folders when it is back.
+    @Test func anOlderCopyLeavesTheFoldersOfANewerListAlone() async throws {
+        let folder = try temp.folder("Newer")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let before = try #require(FolderInspector.iconResource(of: folder))
+        let index = libraryDirectory.appendingPathComponent("Library.json")
+        var list = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: index)) as? [String: Any])
+
+        list["version"] = 99
+        try JSONSerialization.data(withJSONObject: list).write(to: index)
+        let older = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard)
+        await #expect(throws: FolderImageError.self) {
+            try await older.setStyle(IconStyle(x: 0.2, y: 0.3, width: 0.5, height: 0.4, mode: .fit), placement: .natural, for: folder)
+        }
+        let redrawn = await older.redrawAll()
+        #expect(redrawn.count == 1)
+        #expect(redrawn.allSatisfy { !$0.succeeded })
+        #expect(FolderInspector.iconResource(of: folder) == before)
+
+        list["version"] = 2
+        try JSONSerialization.data(withJSONObject: list).write(to: index)
+        let newer = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard)
+        await newer.prune()
+        #expect(await newer.managedFolderCount() == 1)
+    }
+
+    @Test func aLostStoredPictureIsCalledThat() async throws {
+        let folder = try temp.folder("Lost")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let look = try #require(await manager.look(for: folder))
+        try FileManager.default.removeItem(at: look.pictureURL)
+        do {
+            try await manager.setPlacement(PicturePlacement(x: 0, y: 0), for: folder)
+            Issue.record("no error")
+        } catch {
+            #expect(error.localizedDescription.contains("Lost"))
+            #expect(!error.localizedDescription.contains(look.pictureURL.lastPathComponent))
+        }
+    }
+
     @Test func keepsDroppedSVGDataAsVector() async throws {
         let folder = try temp.folder("Dropped")
         let svg = temp.file("dropped.svg")
