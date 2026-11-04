@@ -60,10 +60,6 @@ final class FinderExtensionStatus {
         }
     }
 
-    func openSystemSettings() {
-        FIFinderSyncController.showExtensionManagementInterface()
-    }
-
     /// Whether this copy runs from somewhere it won't stay: the temporary place macOS uses for
     /// an app opened straight from Downloads, or a disk image.
     private static var isTemporaryCopy: Bool {

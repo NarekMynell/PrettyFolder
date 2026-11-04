@@ -17,7 +17,6 @@ DIST         := dist
 
 RELEASE_APP  := $(DERIVED)/Build/Products/Release/$(APP_NAME)
 DEBUG_APP    := $(DERIVED)/Build/Products/Debug/$(APP_NAME)
-VERSION       = $(shell /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$(RELEASE_APP)/Contents/Info.plist")
 
 XCODEBUILD   := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -derivedDataPath $(DERIVED)
 

@@ -147,11 +147,6 @@ public struct PicturePlacement: Codable, Sendable, Hashable {
     /// In the middle of its rectangle, however it is turned.
     public var isCentered: Bool { x == 0.5 && y == 0.5 }
 
-    /// The same placement, turned to `rotation` degrees.
-    public func turned(to rotation: Double) -> PicturePlacement {
-        PicturePlacement(x: x, y: y, rotation: rotation)
-    }
-
     /// The same placement with the picture in the middle of its rectangle.
     public var centered: PicturePlacement {
         PicturePlacement(x: 0.5, y: 0.5, rotation: rotation)

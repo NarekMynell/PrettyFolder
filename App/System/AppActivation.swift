@@ -8,7 +8,7 @@ import os
 /// cooperative activation may decline a background app's request to come forward, and
 /// Finder can take activation back while its menu closes; either way the picker would
 /// sit hidden behind Finder. So: ask nicely first; if that didn't stick and PrettyFolder
-/// has Accessibility access (the drop badge and tab button need it anyway), become
+/// has Accessibility access (the drop badge and the buttons on folders need it anyway), become
 /// frontmost the way assistive apps do; failing both, float the window above Finder so
 /// it is at least visible. The first click on it then activates the app as usual.
 enum AppActivation {

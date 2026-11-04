@@ -50,13 +50,6 @@ final class AccessibilityPermission {
         if !isGranted { startPolling() }
     }
 
-    func openSystemSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
-        startPolling()
-    }
-
     /// The notification is not always delivered, so poll while the user is on their way to grant it.
     private func startPolling() {
         pollDeadline = Date().addingTimeInterval(180)

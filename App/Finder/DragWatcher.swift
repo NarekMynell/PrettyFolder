@@ -40,8 +40,6 @@ final class DragWatcher {
         self.badge = badge
     }
 
-    var isRunning: Bool { monitor != nil }
-
     func start() {
         guard monitor == nil else { return }
         monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
@@ -127,6 +125,7 @@ final class DragWatcher {
             guard retryTask == nil else { return }
             retryTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(wait))
+                guard !Task.isCancelled else { return }
                 self?.retryTask = nil
                 self?.queryIfPossible()
             }

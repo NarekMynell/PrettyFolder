@@ -285,7 +285,6 @@ private struct EditorView: View {
                 help: model.isEditingFolders ? "Choose a Picture…" : "Preview with Another Picture…"
             ) { model.choosePicture() }
 
-
             Spacer(minLength: 8)
             Picker("Scaling", selection: Binding(get: { model.style.mode }, set: { model.setMode($0) })) {
                 Text("Fill").tag(FitMode.fill)
@@ -356,8 +355,6 @@ private struct QuarterTurnButton: View {
 private struct ToolButton: View {
     let symbol: String
     let help: LocalizedStringKey
-    /// What VoiceOver says; the help, unless that tells more than the button's name.
-    var label: LocalizedStringKey?
     let action: () -> Void
 
     var body: some View {
@@ -370,7 +367,7 @@ private struct ToolButton: View {
         .buttonBorderShape(.circle)
         .controlSize(.large)
         .help(help)
-        .accessibilityLabel(Text(label ?? help))
+        .accessibilityLabel(Text(help))
     }
 }
 

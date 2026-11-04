@@ -415,7 +415,7 @@ import Testing
         #expect(PicturePlacement(x: 0.5, y: 0.5, rotation: 12.5).rotation == 12.5)
         // Four quarter turns come back to upright.
         var placement = PicturePlacement.natural
-        for _ in 0..<4 { placement = placement.turned(to: placement.rotation + 90) }
+        for _ in 0..<4 { placement = PicturePlacement(x: placement.x, y: placement.y, rotation: placement.rotation + 90) }
         #expect(placement == .natural)
     }
 

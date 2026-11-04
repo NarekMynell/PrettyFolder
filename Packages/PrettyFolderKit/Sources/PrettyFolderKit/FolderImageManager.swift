@@ -367,12 +367,6 @@ public actor FolderImageManager {
         return await redraw(followers, progress: progress)
     }
 
-    /// Lets the app tell the manager about the default look it loaded from preferences,
-    /// without touching any folder.
-    public func adoptDefaultStyle(_ style: IconStyle) {
-        defaultStyle = style
-    }
-
     // MARK: - Maintenance
 
     /// Redraws every managed folder, for example after a macOS update changed the folder artwork.
