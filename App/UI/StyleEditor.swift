@@ -521,7 +521,15 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
     // MARK: - Dragging
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { false }
-    override var acceptsFirstResponder: Bool { isEnabled }
+    // The keyboard is the editor's from when the window opens, before its picture has been read:
+    // arrow keys, ⌘+ and ⌘− work without a click first. Without a picture they do nothing.
+    override var acceptsFirstResponder: Bool { true }
+    override var canBecomeKeyView: Bool { isEnabled && super.canBecomeKeyView }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.initialFirstResponder = self
+    }
 
     override func becomeFirstResponder() -> Bool {
         // The window takes it as its first responder once this returns.
