@@ -151,6 +151,20 @@ import UniformTypeIdentifiers
         #expect(throws: FolderInspector.Problem.insidePackage("Contents")) { try FolderInspector.validate(inside) }
     }
 
+    @Test func foldersInsidePackagesAreLeftAloneThroughLinksToo() async throws {
+        let app = try temp.folder("Tool.app")
+        let inside = app.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+        let link = temp.url.appendingPathComponent("Shortcut", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: app)
+
+        let through = link.appendingPathComponent("Contents", isDirectory: true)
+        let outcomes = await manager.apply(imageAt: picture, to: [through])
+        #expect(outcomes.allSatisfy { !$0.succeeded })
+        #expect(!FolderInspector.hasCustomIcon(inside))
+        #expect(!FileManager.default.fileExists(atPath: FolderInspector.iconFileURL(for: inside).path))
+    }
+
     @Test func aPictureOverSomeoneElsesIconReplacesTheOldRecordRightAway() async throws {
         let folder = try temp.folder("Taken")
         _ = await manager.apply(imageAt: picture, to: [folder])

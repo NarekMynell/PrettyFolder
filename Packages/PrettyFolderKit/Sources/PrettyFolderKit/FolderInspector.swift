@@ -37,9 +37,9 @@ public enum FolderInspector {
         if !FileManager.default.isWritableFile(atPath: url.path) { throw Problem.readOnly(name) }
     }
 
-    /// Whether any folder that `url` is in is a package.
+    /// Whether any folder that `url` is in is a package, whatever links lead there.
     private static func isInsidePackage(_ url: URL) -> Bool {
-        var folder = url.standardizedFileURL.deletingLastPathComponent()
+        var folder = URL(fileURLWithPath: canonicalPath(url.path), isDirectory: true).deletingLastPathComponent()
         while folder.pathComponents.count > 1 {
             if (try? folder.resourceValues(forKeys: [.isPackageKey]))?.isPackage == true { return true }
             folder.deleteLastPathComponent()
