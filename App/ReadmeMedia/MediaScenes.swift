@@ -67,8 +67,8 @@ extension Studio {
         let bitmap = Bitmap(size: size)
         bitmap.draw(Scenery.wallpaper(size: size), in: CGRect(origin: .zero, size: size))
         let materials = [
-            ("Summer", "watermelon.jpg"), ("Old Projects", "moss.jpg"), ("Art", "stained-glass.jpg"), ("Deadlines", "lava.jpg"),
-            ("Party", "sprinkles.jpg"), ("Vacation", "ocean.jpg"), ("Lunch", "pizza.jpg"), ("Stars", "galaxy.jpg"),
+            ("Summer", "silk.jpg"), ("Studio", "chrome.jpg"), ("Dreams", "holo.jpg"), ("Art", "paint.jpg"),
+            ("Design", "ribbons.jpg"), ("Weekend", "clouds.jpg"), ("Vacation", "wave.jpg"), ("Ideas", "gradient.jpg"),
         ]
         let frames = row(count: 4, side: 120, top: 32, spacing: 172, width: size.width)
             + row(count: 4, side: 120, top: 212, spacing: 172, width: size.width)
@@ -86,12 +86,12 @@ extension Studio {
         try await renderDrags(
             "drop",
             folders: [
-                Folder(name: "Music", picture: "vinyl.jpg", look: .zoomed(1.5)),
-                Folder(name: "Ideas", picture: "lightbulb.jpg", look: .badge),
+                Folder(name: "Music", picture: "headphones.jpg", look: .standard),
+                Folder(name: "Ideas", picture: "bulb.jpg", look: .front),
                 Folder(name: "Pets", picture: nil),
-                Folder(name: "Plants", picture: "monstera.jpg", look: .cover),
+                Folder(name: "Plants", picture: "leaf.jpg", look: .cover),
             ],
-            drags: [Drag(file: "corgi.jpg", target: 2, look: .standard, start: 0, at: CGPoint(x: 172, y: 272))],
+            drags: [Drag(file: "axolotl.jpg", target: 2, look: .standard, start: 0, at: CGPoint(x: 172, y: 272))],
             seconds: 6.6, pointerStart: CGPoint(x: 560, y: 380), pointerEnd: CGPoint(x: 520, y: 330)
         )
     }
@@ -257,8 +257,8 @@ extension Studio {
         let wallpaper = Scenery.wallpaper(size: size)
         // Games is the way the window opens it: as a new picture comes.
         let folders = [
-            Folder(name: "Code", picture: "robot.jpg", look: .corner), Folder(name: "Recipes", picture: "ramen.jpg", look: .front),
-            Folder(name: "Games", picture: "gamepad.jpg"), Folder(name: "Taxes", picture: "piggy-bank.jpg", look: .card(turned: 7)),
+            Folder(name: "Code", picture: "robot.jpg", look: .corner), Folder(name: "Recipes", picture: "citrus.jpg", look: .front),
+            Folder(name: "Games", picture: "gamepad.jpg"), Folder(name: "Taxes", picture: "piggy.jpg", look: .card(turned: 7)),
         ]
         let frames = row(count: 4, side: 96, top: 120, spacing: 140, width: size.width)
         var icons = try folders.map { try icon($0, side: 96) }
@@ -650,7 +650,7 @@ extension Studio {
     /// Zooming into a part of a picture: a pinch makes the frame well bigger than the folder,
     /// then dragging the frame brings the part to show over the folder.
     func renderZoom() async throws {
-        try await shootWindow("zoom", folder: "Balloons", picture: "hot-air-balloons.jpg") { shot, model in
+        try await shootWindow("zoom", folder: "Islands", picture: "lagoon.jpg") { shot, model in
             let frame = shot.pictureFrame(model.style)
             let over = CGPoint(x: frame.midX + 16, y: frame.midY + 8)
             let hold = CGPoint(x: over.x - 4, y: over.y + 6)
@@ -669,28 +669,32 @@ extension Studio {
 
     /// Straightening a crooked photo with the dial, to any angle.
     func renderTurn() async throws {
-        try await shootWindow("turn", folder: "Sailing", picture: "sailboat-crooked.jpg") { shot, model in
+        try await shootWindow("turn", folder: "Sunsets", picture: "horizon-crooked.jpg") { shot, model in
             let grab = CGPoint(x: shot.dial.midX - 2, y: shot.dial.midY + 5)
-            let turn = ReadmeTuning.straighten
+            let turn = ReadmeTuning.straighten, over = ReadmeTuning.turnOver
             var path = PointerPath(start: shot.rest)
-            path.move(to: grab, from: 0.3, to: 1.2)
-            path.move(to: CGPoint(x: grab.x + CGFloat(turn) * TurnDialView.pointsPerDegree, y: grab.y), from: 1.5, to: 3.25, arc: 0)
-            path.move(to: shot.rest, from: 4.1, to: 4.9)
-            return WindowScript(duration: 6.2, pointer: path, holds: [Hold(grip: .dial(degrees: turn), start: 1.5, end: 3.4)])
+            path.move(to: grab, from: 0.3, to: 1.1)
+            path.move(to: CGPoint(x: grab.x - CGFloat(over) * TurnDialView.pointsPerDegree, y: grab.y), from: 1.4, to: 2.35, arc: 0)
+            path.move(to: CGPoint(x: grab.x + CGFloat(turn) * TurnDialView.pointsPerDegree, y: grab.y), from: 2.6, to: 3.75, arc: 0)
+            path.move(to: shot.rest, from: 4.4, to: 5.2)
+            return WindowScript(duration: 6.2, pointer: path, holds: [
+                Hold(grip: .dial(degrees: -over), start: 1.4, end: 2.5),
+                Hold(grip: .dial(degrees: over + turn), start: 2.6, end: 3.9),
+            ])
         }
     }
 
     /// Fill crops a tall picture, so the right button picks the part that shows; Fit shows all
     /// of it, and back to Fill.
     func renderFit() async throws {
-        try await shootWindow("fit", folder: "Safari", picture: "giraffe.jpg") { shot, model in
+        try await shootWindow("fit", folder: "Flamingos", picture: "flamingo.jpg") { shot, model in
             let frame = shot.pictureFrame(model.style)
             let over = CGPoint(x: frame.midX + 12, y: frame.midY - 4)
             let hold = CGPoint(x: over.x + 4, y: over.y - 2)
             var path = PointerPath(start: shot.rest)
             path.move(to: over, from: 0.3, to: 1.0)
             path.move(to: hold, from: 1.2, to: 1.4, arc: 0)
-            path.move(to: CGPoint(x: hold.x, y: hold.y + ReadmeTuning.giraffeSlide), from: 1.65, to: 2.85, arc: 0.02)
+            path.move(to: CGPoint(x: hold.x, y: hold.y + ReadmeTuning.tallSlide), from: 1.65, to: 2.85, arc: 0.02)
             path.move(to: shot.fit, from: 3.4, to: 4.0)
             path.move(to: shot.fill, from: 5.2, to: 5.6, arc: 0)
             path.move(to: shot.rest, from: 6.5, to: 7.2)
@@ -708,11 +712,15 @@ enum ReadmeTuning {
     /// Small enough for a corner, and the way there, in points of the window's folder (300).
     static let shrink = 0.42
     static let cornerSlide = CGSize(width: 64, height: 40)
-    static let zoomFactor = 2.4
-    /// Far enough to bring the frame's left edge to the folder's: the balloon on the left.
-    static let zoomSlide = CGSize(width: ((IconStyle.standard.width * zoomFactor / 2 - 0.5) * 300).rounded(), height: 0)
+    /// Four times the folder.
+    static let zoomFactor = 4 / IconStyle.standard.width
+    /// Brings the palm island over the folder.
+    static let zoomSlide = CGSize(width: -115, height: 0)
     static let straighten = 12.0
-    static let giraffeSlide: CGFloat = 46
+    /// How far past level the dial goes first, the other way.
+    static let turnOver = 24.0
+    /// From the flamingo's middle up to its head.
+    static let tallSlide: CGFloat = 100
 }
 
 extension Stage {
