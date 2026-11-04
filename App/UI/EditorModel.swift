@@ -85,7 +85,7 @@ final class EditorModel {
     /// Each folder's look.
     @ObservationIgnored private var looks: [URL: Look] = [:]
     /// The folders as they were opened, to find them after a rename or a move.
-    @ObservationIgnored private var bookmarks: [Data?] = []
+    @ObservationIgnored private var places: [FolderInspector.Location?] = []
     /// Goes up whenever the window is opened for other folders. What was done to the folders
     /// before is about the same folders as long as it stays, whatever they are called by then.
     @ObservationIgnored private var opening = 0
@@ -106,6 +106,8 @@ final class EditorModel {
     private typealias Layout = (style: IconStyle, placement: PicturePlacement)
     /// Learns how saving the default look ended: saved, or not.
     @ObservationIgnored private var afterSavingDefault: ((Bool) -> Void)?
+    /// The default look being saved, while that goes on.
+    @ObservationIgnored private var savingDraft: IconStyle?
 
     init(actions: FolderActions) {
         self.actions = actions
@@ -117,6 +119,12 @@ final class EditorModel {
     var hasFolders: Bool { !folders.isEmpty }
     var isEditingFolders: Bool { scope == .folders && hasFolders }
     var hasPicture: Bool { folderPicture != nil && !managedFolders.isEmpty }
+    /// The icon a folder shows that PrettyFolder can't change: someone else's, or one whose
+    /// picture isn't on this Mac.
+    var otherIcon: NSImage? {
+        guard !hasPicture, hasCustomIcon else { return nil }
+        return folders.first(where: FolderInspector.hasCustomIcon).map { NSWorkspace.shared.icon(forFile: $0.path) }
+    }
     var isDefaultDirty: Bool { defaultDraft != settings.defaultStyle }
 
     var title: String {
@@ -163,11 +171,16 @@ final class EditorModel {
 
     func show(_ folders: [URL]) {
         finishPendingChange()
-        if folders != self.folders {
+        let opened = folders.map(FolderInspector.Location.init(of:))
+        // The same names may be other folders by now: a new one has taken a moved one's place.
+        let sameFolders = folders == self.folders && places.count == opened.count && zip(places, opened).allSatisfy { was, now in
+            if let was, let now { was.isSameFolder(as: now) } else { was == nil && now == nil }
+        }
+        if !sameFolders {
             undoManager?.removeAllActions(withTarget: self)
             opening += 1
             self.folders = folders
-            bookmarks = folders.map { try? $0.bookmarkData() }
+            places = opened
             managedFolders = []
             looks = [:]
             folderPicture = nil
@@ -217,7 +230,7 @@ final class EditorModel {
         loadGeneration += 1
         let generation = loadGeneration
         let writesSoFar = writeGeneration
-        let bookmarks = self.bookmarks
+        let places = self.places
         let opened = self.folders
         let manager = actions.manager
         let queuedWrites = writing
@@ -227,7 +240,7 @@ final class EditorModel {
             // Where they are now (renamed or moved since the window opened?) and whether any
             // has a custom icon. The disk is asked off the main thread.
             let (moved, anyCustomIcon) = await Task.detached(priority: .userInitiated) {
-                let moved = Self.locations(of: bookmarks)
+                let moved = places.map { $0?.current }
                 let current = opened.enumerated().map { index, folder in index < moved.count ? moved[index] ?? folder : folder }
                 return (moved, current.contains(where: FolderInspector.hasCustomIcon))
             }.value
@@ -287,15 +300,6 @@ final class EditorModel {
         folders[index] = location
         if let look = looks.removeValue(forKey: folder) { looks[location] = look }
         managedFolders = managedFolders.map { $0 == folder ? location : $0 }
-    }
-
-    /// Where the folders are now, from their bookmarks; `nil` for one that can't be found.
-    nonisolated private static func locations(of bookmarks: [Data?]) -> [URL?] {
-        bookmarks.map { bookmark in
-            guard let bookmark else { return nil }
-            var stale = false
-            return try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale)
-        }
     }
 
     // MARK: - Editing
@@ -415,11 +419,11 @@ final class EditorModel {
         writeGeneration += 1
         let manager = actions.manager
         let previous = writing
-        let folders = self.folders, bookmarks = self.bookmarks
+        let folders = self.folders, places = self.places
         writing = Task {
             await previous?.value
             // Where they are by now: one renamed since the window last looked still gets it.
-            let locations = await Task.detached(priority: .userInitiated) { Self.locations(of: bookmarks) }.value
+            let locations = await Task.detached(priority: .userInitiated) { places.map { $0?.current } }.value
             var failures: [FolderOutcome] = []
             for (index, folder) in folders.enumerated() {
                 guard let look = newLooks[folder] else { continue }
@@ -451,8 +455,10 @@ final class EditorModel {
             let current = model.looks
             var restored: [URL: Look] = [:]
             // Under the names they have now.
-            for (folder, now) in zip(folders, model.folders) where model.managedFolders.contains(now) {
-                guard var look = looks[folder] else { continue }
+            for (index, (folder, now)) in zip(folders, model.folders).enumerated() where model.managedFolders.contains(now) {
+                // Another folder with its name, since this one left its disk.
+                let place = model.places[index]
+                guard place?.isAt(place?.current ?? now) != false, var look = looks[folder] else { continue }
                 // It followed the default look then, but was left with the old one since: going
                 // back mustn't take it to the new one it was spared.
                 if look.style == nil, model.defaultsLeftBehind != defaultsLeftBehind { look.style = current[now]?.style }
@@ -529,8 +535,14 @@ final class EditorModel {
     func saveDefault(completion: ((Bool) -> Void)? = nil) {
         finishPendingChange()
         afterSavingDefault = completion
+        // What is shown now, whatever is done while the search goes on.
+        let draft = defaultDraft
+        savingDraft = draft
         let manager = actions.manager
         Task {
+            await findFolders()
+            // Put back meanwhile: there is nothing to save, or to ask about.
+            guard defaultDraft != settings.defaultStyle else { return cancelSavingDefault() }
             followerCount = await manager.folderCountFollowingDefault()
             if followerCount == 0 {
                 commitDefault(updateExisting: false)
@@ -543,7 +555,8 @@ final class EditorModel {
     /// Makes the draft the default look. `updateExisting` redraws the folders that follow
     /// the default; otherwise they keep the look they have and only new pictures change.
     func commitDefault(updateExisting: Bool) {
-        let style = defaultDraft
+        let style = savingDraft ?? defaultDraft
+        savingDraft = nil
         settings.defaultStyle = style
         if updateExisting { progress.start(total: followerCount) } else { defaultsLeftBehind += 1 }
         let reporter = progress.reporter
@@ -561,6 +574,7 @@ final class EditorModel {
 
     /// The question about existing folders was dismissed: nothing is saved.
     func cancelSavingDefault() {
+        savingDraft = nil
         let completion = afterSavingDefault
         afterSavingDefault = nil
         completion?(false)
@@ -574,11 +588,23 @@ final class EditorModel {
 
     // MARK: - Every folder
 
+    /// Finds the folders the list doesn't know yet, so that whatever is about to happen to every
+    /// folder happens to them too. The window says it is busy meanwhile. Spotlight is quick; going
+    /// through every disk takes a while, and Remove All, when nothing should be left behind, stops
+    /// at half a minute.
+    private func findFolders(_ reach: FolderSearchReach = .spotlight) async {
+        let wasRunning = progress.isRunning
+        if !wasRunning { progress.start(total: 1) }
+        await actions.manager.findFolders(reach, patience: 30)
+        if !wasRunning { progress.isRunning = false }
+    }
+
     /// Draws every picture again, for example after a macOS update changed how folders look.
     func redrawAll() {
         guard !progress.isRunning else { return }
         let manager = actions.manager
         Task {
+            await findFolders()
             let count = await manager.managedFolderCount()
             guard count > 0, !progress.isRunning else { return }
             progress.start(total: count)
@@ -595,8 +621,9 @@ final class EditorModel {
         guard !progress.isRunning, let window else { return }
         let manager = actions.manager
         Task {
+            await findFolders(.everyDisk)
             await manager.prune()
-            let count = await manager.managedFolderCount()
+            let count = await manager.folderCountWithPictures()
             guard count > 0 else { return }
             let alert = NSAlert()
             alert.messageText = count == 1

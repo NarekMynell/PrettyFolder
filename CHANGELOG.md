@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.3
+
+- PrettyFolder now finds copies of folders nobody has opened, folders moved to another disk, and folders moved around an exFAT or FAT disk, by itself: at launch, when a disk is connected, and before a new default look, **Redraw All Pictures** or **Remove All Pictures**. So all of those reach them, and the count in **Remove All Pictures** includes them. A folder in the trash or a backup folder stays out; a clone of a whole disk can't be told from copies, so it counts as copies.
+- **Remove All Pictures** and the question about a new default look no longer count folders that were deleted, and no longer say they couldn't reach one.
+- **Set as Icon** could fail to come up for a whole drag when the first look at what was being dragged came too early.
+- An open window stays on its folder when the folder is moved and a new one takes its old name. It used to switch to the new one.
+- A picture no folder uses any more stays beyond its first 90 days as long as all such pictures fit in 500 MB, so a copy on a disk that hasn't been connected for long can still be changed. **Remove All Pictures** still deletes them right away.
+- A folder that refuses changes to its attributes is left as it was, with no `Icon` file in it and its picture as it was.
+- Putting a new picture on a folder that was moved to another disk and got someone else's icon there no longer leaves its old record on the list.
+- The window shows what a folder really shows when PrettyFolder can't change it: someone else's icon, or a picture from another Mac. It used to show a plain folder.
+
 ## 1.3.2
 
 - A copy of a folder keeps its picture and stays adjustable after the original changes, gets another picture, loses its picture or is deleted. It used to lose its look if the original changed before the copy was first opened. Each folder now carries its own look, so the same goes for a folder moved to another disk or put back from a backup. A copy that had already lost its look needs its picture chosen again.

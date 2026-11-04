@@ -244,6 +244,13 @@ private struct EditorStage: View {
                 turnLink: turnLink
             )
             if model.isEditingFolders && !model.hasPicture && !model.isLoadingPicture {
+                // What the folder really shows, in Finder too, with the way to give it a picture.
+                if let icon = model.otherIcon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: editorSide, height: editorSide)
+                        .allowsHitTesting(false)
+                }
                 addButton
             }
             if isDropTargeted {

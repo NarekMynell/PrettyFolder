@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 
     init() throws {
         temp = try TemporaryDirectory()
-        manager = FolderImageManager(directory: try temp.folder("Library"), defaultStyle: .standard)
+        manager = FolderImageManager(directory: try temp.folder("Library"), defaultStyle: .standard, unusedPictureAllowance: 0)
         picture = temp.file("photo.jpg")
         TestImages.write(TestImages.solid(width: 640, height: 480, red: 1, green: 0.5, blue: 0), to: picture, type: .jpeg)
     }
@@ -137,15 +137,15 @@ import UniformTypeIdentifiers
         let outcomes = await manager.removeAll()
         #expect(!FolderInspector.hasCustomIcon(reachable))
         let failed = Set(outcomes.filter { !$0.succeeded }.map(\.folder.lastPathComponent))
-        #expect(failed == ["Gone", "Locked"])
-        #expect(await manager.managedFolderCount() == 2, "kept, to be done when they can be reached")
-        #expect(storedPictures().count == 1, "still needed by them")
+        #expect(failed == ["Locked"], "a deleted folder has nothing to take off, and nothing to tell")
+        #expect(await manager.managedFolderCount() == 1, "kept, to be done when it can be reached")
+        #expect(storedPictures().count == 1, "still needed by it")
 
         // Once the folder can be changed again, removing everything finishes the job.
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
         _ = await manager.removeAll()
         #expect(!FolderInspector.hasCustomIcon(locked))
-        #expect(await manager.managedFolderCount() == 1, "the deleted folder is remembered until it's been gone a while")
+        #expect(await manager.managedFolderCount() == 0)
     }
 
     @Test func foldersInsidePackagesAreLeftAlone() async throws {
@@ -1196,7 +1196,7 @@ import UniformTypeIdentifiers
         let cut = try #require(text.range(of: kept)?.upperBound)
         try Data(text[..<cut].utf8).write(to: index)
 
-        let reopened = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard)
+        let reopened = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard, unusedPictureAllowance: 0)
         #expect(await reopened.managedFolderCount() == 0)
         let files = try FileManager.default.contentsOfDirectory(atPath: libraryDirectory.path)
         #expect(files.contains { $0.hasPrefix("Library-unreadable-") }, "the bad file is kept for later")
@@ -1443,7 +1443,339 @@ import UniformTypeIdentifiers
         #expect(await manager.managedFolderCount() == 1)
     }
 
-    @Test func anSVGThroughALinkIsKeptAsVector() async throws {
+    // MARK: - Folders the list doesn't know
+
+    /// What Finder does when a folder goes to another disk: a copy, then the original is gone.
+    private func movedAcrossDisks(_ folder: URL, as name: String) throws -> URL {
+        let moved = temp.url.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.copyItem(at: folder, to: moved)
+        try FileManager.default.removeItem(at: folder)
+        return moved
+    }
+
+    @Test func removeAllReachesACopyNobodyOpenedOnceItIsFound() async throws {
+        let original = try temp.folder("Original")
+        _ = await manager.apply(imageAt: picture, to: [original])
+        let copy = temp.url.appendingPathComponent("Copy", isDirectory: true)
+        try FileManager.default.copyItem(at: original, to: copy)
+
+        await manager.takeOn([original, copy])
+        #expect(await manager.managedFolderCount() == 2)
+        let outcomes = await manager.removeAll()
+        #expect(outcomes.allSatisfy { $0.succeeded })
+        #expect(!FolderInspector.hasCustomIcon(original))
+        #expect(!FolderInspector.hasCustomIcon(copy))
+        #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: copy) == nil)
+    }
+
+    @Test func aNewDefaultLookReachesAFolderMovedToAnotherDiskOnceItIsFound() async throws {
+        let folder = try temp.folder("Going away")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let moved = try movedAcrossDisks(folder, as: "Over there")
+        await manager.takeOn([moved])
+        #expect(await manager.managedFolderCount() == 1, "the same record, not a second one")
+
+        let before = FolderInspector.iconResource(of: moved)
+        let turned = IconStyle(x: 0.1, y: 0.2, width: 0.5, height: 0.6, mode: .fit)
+        let outcomes = await manager.setDefaultStyle(turned, updateExisting: true)
+        #expect(outcomes.count == 1 && outcomes.allSatisfy { $0.succeeded })
+        #expect(FolderInspector.iconResource(of: moved) != before)
+        #expect(await manager.look(for: moved)?.style == turned)
+    }
+
+    @Test func redrawAllReachesACopyOnceItIsFound() async throws {
+        let original = try temp.folder("Original")
+        _ = await manager.apply(imageAt: picture, to: [original])
+        let copy = temp.url.appendingPathComponent("Copy", isDirectory: true)
+        try FileManager.default.copyItem(at: original, to: copy)
+        await manager.takeOn([copy])
+        let outcomes = await manager.redrawAll()
+        #expect(Set(outcomes.map(\.folder.lastPathComponent)) == ["Original", "Copy"])
+    }
+
+    @Test func takingOnAFolderTwiceChangesNothing() async throws {
+        let folder = try temp.folder("Known")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let index = libraryDirectory.appendingPathComponent("Library.json")
+        let saved = try Data(contentsOf: index)
+        await manager.takeOn([folder, folder])
+        #expect(try Data(contentsOf: index) == saved)
+        #expect(await manager.managedFolderCount() == 1)
+    }
+
+    @Test func aFolderWithSomeoneElsesIconIsNotTakenOn() async throws {
+        let folder = try temp.folder("Theirs")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let copy = temp.url.appendingPathComponent("Copy", isDirectory: true)
+        try FileManager.default.copyItem(at: folder, to: copy)
+        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), forFile: copy.path, options: []))
+        await manager.takeOn([copy])
+        #expect(await manager.managedFolderCount() == 1)
+    }
+
+    @Test func goingThroughADiskFindsMarkedFoldersAndLeavesOutTrashAndPackages() async throws {
+        let disk = try temp.folder("Disk")
+        func marked(_ path: String) throws -> URL {
+            let folder = disk.appendingPathComponent(path, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            ExtendedAttributes.set(Data("x".utf8), named: FolderImageManager.markerAttribute, at: folder)
+            return folder
+        }
+        let deep = try marked("a/b/c/Deep")
+        let plain = disk.appendingPathComponent("a/Plain", isDirectory: true)
+        try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+        _ = try marked(".Trashes/501/Thrown away")
+        _ = try marked("Backups.backupdb/Mac/Latest/Kept")
+        _ = try marked("Some.app/Contents/Inside")
+        let found = FolderSearch.markedFolders(on: disk).map(\.lastPathComponent)
+        #expect(found == [deep.lastPathComponent])
+    }
+
+    // MARK: - Pictures no folder on the list uses
+
+    @Test func anUnusedPictureOutlivesTheGracePeriodWhileThereIsRoomForIt() async throws {
+        let kept = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard)
+        let folder = try temp.folder("Folder")
+        _ = await kept.apply(imageAt: picture, to: [folder])
+        let copy = temp.url.appendingPathComponent("Copy", isDirectory: true)
+        try FileManager.default.copyItem(at: folder, to: copy)
+        _ = await kept.removeImage(from: [folder])
+        #expect(await kept.managedFolderCount() == 0)
+
+        await kept.prune(now: Date().addingTimeInterval(20 * FolderImageManager.missingGracePeriod))
+        #expect(storedPictures().count == 1)
+        #expect(await kept.look(for: copy) != nil, "years later, and it can still be changed")
+    }
+
+    @Test func removeAllTakesUnusedPicturesRightAway() async throws {
+        let kept = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard)
+        let folder = try temp.folder("Folder")
+        _ = await kept.apply(imageAt: picture, to: [folder])
+        let other = try temp.folder("Other")
+        let second = temp.file("second.jpg")
+        TestImages.write(TestImages.solid(width: 300, height: 200, red: 0, green: 0.5, blue: 1), to: second, type: .jpeg)
+        _ = await kept.apply(imageAt: second, to: [other])
+        _ = await kept.removeImage(from: [folder])
+        #expect(storedPictures().count == 2)
+        _ = await kept.removeAll()
+        #expect(storedPictures().isEmpty)
+    }
+
+    @Test func theOldestUnusedPicturesGoFirstWhenThereIsNoRoom() throws {
+        let directory = try temp.folder("Allowance")
+        var library = FolderLibrary(directory: directory)
+        let old = try library.storePicture(Data(repeating: 1, count: 1000), fileExtension: "jpg")
+        let older = try library.storePicture(Data(repeating: 2, count: 1000), fileExtension: "jpg")
+        let recent = try library.storePicture(Data(repeating: 3, count: 1000), fileExtension: "jpg")
+        let now = Date()
+        library.retirePictureIfUnused(old, at: now.addingTimeInterval(-200))
+        library.retirePictureIfUnused(older, at: now.addingTimeInterval(-300))
+        library.retirePictureIfUnused(recent, at: now)
+        library.upsert(FolderRecord(id: UUID(), bookmark: Data(), lastKnownPath: "/nowhere", pictureName: "none.jpg", style: nil, iconDigest: "", created: now, updated: now))
+
+        library.collectGarbage(retiredBefore: now.addingTimeInterval(-100), allowance: 2000)
+        let left = try FileManager.default.contentsOfDirectory(atPath: library.picturesDirectory.path)
+        #expect(Set(left) == [old, recent], "over by one: the oldest goes")
+        library.collectGarbage(retiredBefore: now.addingTimeInterval(-100), allowance: 0)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: library.picturesDirectory.path) == [recent], "still in its grace period")
+    }
+
+    // MARK: - What the dialogs say
+
+    @Test func theCountsLeaveOutDeletedFolders() async throws {
+        let kept = try temp.folder("Kept")
+        let deleted = try temp.folder("Deleted")
+        _ = await manager.apply(imageAt: picture, to: [kept, deleted])
+        try FileManager.default.removeItem(at: deleted)
+        #expect(await manager.managedFolderCount() == 2, "remembered for a while")
+        #expect(await manager.folderCountWithPictures() == 1)
+        #expect(await manager.folderCountFollowingDefault() == 1)
+    }
+
+    // MARK: - Searching while other things go on
+
+    /// Remove All waits on the app for the original while a search takes on a copy with the same
+    /// marker, whose record just went.
+    @Test func aSearchLandingDuringRemoveAllDoesNotLoseACopy() async throws {
+        let original = try temp.folder("Original")
+        _ = await manager.apply(imageAt: picture, to: [original])
+        let copy = temp.url.appendingPathComponent("Copy", isDirectory: true)
+        try FileManager.default.copyItem(at: original, to: copy)
+        let manager = self.manager
+        await manager.onIconChange { folder, change in
+            if case .removed = change, folder.lastPathComponent == "Original" { await manager.takeOn([copy]) }
+        }
+        _ = await manager.removeAll()
+        #expect(!FolderInspector.hasCustomIcon(copy))
+        #expect(await manager.managedFolderCount() == 0)
+        #expect(storedPictures().isEmpty)
+    }
+
+    /// May be a backup: nothing is written to it just because the app or the disk started.
+    @Test func aFolderOnlyFoundIsNotDrawnAgainWithoutBeingAsked() async throws {
+        let older = FolderImageManager(directory: libraryDirectory, defaultStyle: .standard, unusedPictureAllowance: 0)
+        let original = try temp.folder("Original")
+        _ = await older.apply(imageAt: picture, to: [original])
+        // A copy of a folder drawn by an earlier version.
+        let current = try #require(ExtendedAttributes.value(named: CarriedLook.attribute, at: original))
+        var fields = try #require(try JSONSerialization.jsonObject(with: current) as? [String: Any])
+        fields["revision"] = 1
+        ExtendedAttributes.set(try JSONSerialization.data(withJSONObject: fields), named: CarriedLook.attribute, at: original)
+        let copy = temp.url.appendingPathComponent("Clone", isDirectory: true)
+        try FileManager.default.copyItem(at: original, to: copy)
+        ExtendedAttributes.set(current, named: CarriedLook.attribute, at: original)
+
+        await older.takeOn([copy])
+        #expect(await older.managedFolderCount() == 2)
+        let before = FolderInspector.iconResource(of: copy)
+        let outcomes = await older.redrawOutdated()
+        #expect(outcomes.isEmpty)
+        #expect(FolderInspector.iconResource(of: copy) == before)
+
+        // Opened, it catches up.
+        _ = await older.look(for: copy)
+        #expect(FolderInspector.iconResource(of: copy) != before)
+    }
+
+    @Test func takingOnManyFoldersStaysQuick() async throws {
+        let original = try temp.folder("Original")
+        _ = await manager.apply(imageAt: picture, to: [original])
+        var copies: [URL] = []
+        for index in 0..<300 {
+            let copy = temp.url.appendingPathComponent("Copy \(index)", isDirectory: true)
+            try FileManager.default.copyItem(at: original, to: copy)
+            copies.append(copy)
+        }
+        await manager.takeOn(copies)
+        #expect(await manager.managedFolderCount() == 301)
+        // All on the list on disk too.
+        #expect((try libraryJSON()["records"] as? [Any])?.count == 301)
+    }
+
+    // MARK: - Refused
+
+    /// A folder that may be written to, but not have its attributes changed.
+    private func denyAttributes(on folder: URL) throws {
+        let tool = Process()
+        tool.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        tool.arguments = ["+a", "everyone deny writeextattr,writeattr", folder.path]
+        try tool.run()
+        tool.waitUntilExit()
+        #expect(tool.terminationStatus == 0)
+    }
+
+    private func allowAttributes(on folder: URL) throws {
+        let tool = Process()
+        tool.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        tool.arguments = ["-N", folder.path]
+        try tool.run()
+        tool.waitUntilExit()
+    }
+
+    @Test func aFolderThatRefusesItsMarkerKeepsWhatItShows() async throws {
+        let theirs = try temp.folder("Theirs")
+        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), forFile: theirs.path, options: []))
+        let before = try #require(FolderInspector.iconResource(of: theirs))
+        let tool = Process()
+        tool.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        tool.arguments = ["+a", "everyone deny writeextattr", theirs.path]
+        try tool.run()
+        tool.waitUntilExit()
+        defer { try? allowAttributes(on: theirs) }
+        let outcomes = await manager.apply(imageAt: picture, to: [theirs])
+        #expect(outcomes.allSatisfy { !$0.succeeded })
+        #expect(FolderInspector.iconResource(of: theirs) == before)
+        #expect(await manager.managedFolderCount() == 0)
+    }
+
+    @Test func aFolderOfOursThatRefusesItsMarkerKeepsItsLook() async throws {
+        let mine = try temp.folder("Mine")
+        _ = await manager.apply(imageAt: picture, to: [mine])
+        let turned = IconStyle(x: 0.1, y: 0.2, width: 0.5, height: 0.6, mode: .fit)
+        try await manager.setStyle(turned, for: mine)
+        let before = try #require(FolderInspector.iconResource(of: mine))
+        let tool = Process()
+        tool.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        tool.arguments = ["+a", "everyone deny writeextattr", mine.path]
+        try tool.run()
+        tool.waitUntilExit()
+        let second = temp.file("second.jpg")
+        TestImages.write(TestImages.solid(width: 300, height: 200, red: 0, green: 0.5, blue: 1), to: second, type: .jpeg)
+        let outcomes = await manager.apply(imageAt: second, to: [mine])
+        try allowAttributes(on: mine)
+        #expect(outcomes.allSatisfy { !$0.succeeded })
+        #expect(FolderInspector.iconResource(of: mine) == before)
+        await manager.prune()
+        #expect(await manager.managedFolderCount() == 1)
+        #expect(await manager.look(for: mine)?.style == turned)
+    }
+
+    @Test func aFolderThatRefusesAttributesIsLeftAsItWas() async throws {
+        let folder = try temp.folder("Refusing")
+        try denyAttributes(on: folder)
+        defer { try? allowAttributes(on: folder) }
+        let outcomes = await manager.apply(imageAt: picture, to: [folder])
+        #expect(outcomes.allSatisfy { !$0.succeeded })
+        #expect(FolderInspector.hasNoIconFile(folder), "no icon file left behind")
+        #expect(await manager.managedFolderCount() == 0)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty)
+    }
+
+    // MARK: - An old record
+
+    @Test func aNewPictureOnAFolderMovedAwayWithSomeoneElsesIconDropsItsOldRecord() async throws {
+        let folder = try temp.folder("Going away")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let moved = try movedAcrossDisks(folder, as: "Over there")
+        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), forFile: moved.path, options: []))
+
+        let second = temp.file("second.jpg")
+        TestImages.write(TestImages.solid(width: 300, height: 200, red: 0, green: 0.5, blue: 1), to: second, type: .jpeg)
+        #expect(await manager.apply(imageAt: second, to: [moved]).allSatisfy { $0.succeeded })
+        #expect(await manager.managedFolderCount() == 1)
+    }
+
+    // MARK: - Finding a folder again
+
+    @Test func aFolderIsFoundAgainWhateverTakesItsOldName() throws {
+        let folder = try temp.folder("Here")
+        let location = try #require(FolderInspector.Location(of: folder))
+        #expect(location.current?.lastPathComponent == "Here")
+
+        let moved = temp.url.appendingPathComponent("There", isDirectory: true)
+        try FileManager.default.moveItem(at: folder, to: moved)
+        #expect(location.current?.lastPathComponent == "There")
+
+        // Something new takes the old name: the bookmark alone would say this is it.
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        #expect(location.current?.lastPathComponent == "There")
+
+        try FileManager.default.removeItem(at: moved)
+        #expect(location.current?.lastPathComponent == "Here", "gone: what is at its place is all there is")
+    }
+
+    @Test func aFolderInTheTrashIsLetGoOfForWhatTakesItsName() throws {
+        let trash = try temp.folder("Volume/.Trashes/501")
+        let folder = try temp.folder("Volume/Project")
+        let location = try #require(FolderInspector.Location(of: folder))
+        try FileManager.default.moveItem(at: folder, to: trash.appendingPathComponent("Project", isDirectory: true))
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        #expect(location.current?.path.contains(".Trashes") == false)
+    }
+
+    @Test func goingThroughADiskLeavesOutWhatBackupsAndOtherSystemsKeep() throws {
+        let disk = try temp.folder("Backed")
+        var kept: [String] = []
+        for path in [".MobileBackups/x/F", ".Trash-1000/F", "$RECYCLE.BIN/F", ".TemporaryItems/F", "2024.previous/F", "2024.inprogress/F", "Fine/F"] {
+            let folder = disk.appendingPathComponent(path, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            ExtendedAttributes.set(Data("x".utf8), named: FolderImageManager.markerAttribute, at: folder)
+            kept.append(path)
+        }
+        #expect(FolderSearch.markedFolders(on: disk).map { $0.deletingLastPathComponent().lastPathComponent } == ["Fine"])
+    }
+
+        @Test func anSVGThroughALinkIsKeptAsVector() async throws {
         let svg = temp.file("logo.svg")
         try TestImages.writeSVG(to: svg, width: 40, height: 40)
         let link = temp.url.appendingPathComponent("logo-link.svg")

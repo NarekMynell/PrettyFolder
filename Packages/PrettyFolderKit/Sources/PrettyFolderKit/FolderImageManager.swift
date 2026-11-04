@@ -92,12 +92,20 @@ public actor FolderImageManager {
     private var isStopped = false
     /// Set when a record was refreshed in memory (a folder moved) but not written yet.
     private var hasUnsavedChanges = false
+    /// Set while folders found on the disks get their records (see `takeOn`).
+    private var isFinding = false
     private lazy var renderer = IconRenderer()
     public private(set) var defaultStyle: IconStyle
+    private let unusedPictureAllowance: Int
 
     public init(directory: URL, defaultStyle: IconStyle) {
+        self.init(directory: directory, defaultStyle: defaultStyle, unusedPictureAllowance: Self.unusedPictureAllowance)
+    }
+
+    init(directory: URL, defaultStyle: IconStyle, unusedPictureAllowance: Int) {
         self.library = FolderLibrary(directory: directory)
         self.defaultStyle = defaultStyle
+        self.unusedPictureAllowance = unusedPictureAllowance
     }
 
     /// Called whenever a folder's icon changes. A new icon comes before Finder is told about
@@ -203,10 +211,27 @@ public actor FolderImageManager {
                 let style = existing?.style ?? defaultStyle
                 let image = try drawn[style] ?? draw(picture, style: style, placement: .natural)
                 drawn[style] = image
-                let icon = try writeIcon(image, to: folder)
+                let id = existing?.id ?? UUID()
+                // Asked first, before anything changes: a folder that refuses its marker couldn't
+                // be told apart later.
+                let earlierMarker = ExtendedAttributes.value(named: Self.markerAttribute, at: folder)
+                guard ExtendedAttributes.set(Data(id.uuidString.utf8), named: Self.markerAttribute, at: folder) else {
+                    throw FolderImageError.setIconFailed(displayName(folder))
+                }
+                let icon: WrittenIcon
+                do {
+                    icon = try writeIcon(image, to: folder)
+                } catch {
+                    if let earlierMarker {
+                        ExtendedAttributes.set(earlierMarker, named: Self.markerAttribute, at: folder)
+                    } else {
+                        ExtendedAttributes.remove(named: Self.markerAttribute, at: folder)
+                    }
+                    throw error
+                }
                 let now = Date()
                 let record = FolderRecord(
-                    id: existing?.id ?? UUID(),
+                    id: id,
                     bookmark: bookmark,
                     lastKnownPath: FolderInspector.canonicalPath(folder.path),
                     pictureName: pictureName,
@@ -216,7 +241,6 @@ public actor FolderImageManager {
                     updated: now,
                     fileNumber: FolderInspector.fileNumber(of: folder)
                 )
-                ExtendedAttributes.set(Data(record.id.uuidString.utf8), named: Self.markerAttribute, at: folder)
                 carry(record, on: folder)
                 library.upsert(record)
                 // The record from before someone else changed the icon goes now, not at the next tidy-up.
@@ -340,6 +364,7 @@ public actor FolderImageManager {
         guard !library.isReadOnly else { throw FolderImageError.newerList }
         let picture = try loadPicture(of: record, for: folder)
         edit(&record)
+        record.wasFound = nil
         let icon = try writeIcon(draw(picture, style: record.style ?? defaultStyle, placement: record.placement ?? .natural), to: folder)
         record.iconDigest = icon.digest
         record.revision = IconRenderer.revision
@@ -352,13 +377,28 @@ public actor FolderImageManager {
 
     // MARK: - Default look
 
-    /// Number of folders that follow the default look.
+    /// Number of folders that follow the default look. Those deleted aren't counted, though
+    /// they stay on the list for a while.
     public func folderCountFollowingDefault() -> Int {
-        library.records.values.filter { $0.style == nil }.count
+        library.records.values.filter { $0.style == nil && !isGone($0) }.count
     }
 
+    /// Number of folders on the list, deleted ones included.
     public func managedFolderCount() -> Int {
         library.records.count
+    }
+
+    /// Number of folders with a picture, for saying so: on the list, and not deleted.
+    public func folderCountWithPictures() -> Int {
+        library.records.values.filter { !isGone($0) }.count
+    }
+
+    /// Whether a record's folder has been deleted, as far as can be told: it can't be found, and
+    /// nothing stands in the way of finding it.
+    private func isGone(_ record: FolderRecord) -> Bool {
+        var record = record
+        return resolve(&record) == nil && !FolderInspector.isOnDiskThatIsAway(record.lastKnownPath)
+            && FolderInspector.isKnownToBeAbsent(record.lastKnownPath)
     }
 
     /// Changes the default look.
@@ -408,7 +448,8 @@ public actor FolderImageManager {
             _ = resolve(&record)
         }
         if hasUnsavedChanges { persist() }
-        let outdated = library.records.values.filter { ($0.revision ?? 1) < IconRenderer.revision }
+        // Not those only found on a disk: nobody asked for anything on what may be a backup.
+        let outdated = library.records.values.filter { ($0.revision ?? 1) < IconRenderer.revision && $0.wasFound != true }
         guard !outdated.isEmpty else { return [] }
         return await redraw(outdated, progress: nil)
     }
@@ -430,9 +471,13 @@ public actor FolderImageManager {
                 case .ours:
                     let outcome = await removeImage(from: [folder])
                     outcomes += outcome
-                    // Normally gone with the picture already; not when the folder's marker
-                    // pointed elsewhere.
-                    if outcome.allSatisfy(\.succeeded), library.record(id) != nil {
+                    if let now = library.record(id), now.lastKnownPath != record.lastKnownPath {
+                        // A copy under the same marker came on the list while the app was being
+                        // told: it has its own picture to lose.
+                        handled.remove(id)
+                    } else if outcome.allSatisfy(\.succeeded), library.record(id) != nil {
+                        // Normally gone with the picture already; not when the folder's marker
+                        // pointed elsewhere.
                         library.remove(id)
                         persist()
                     }
@@ -443,6 +488,10 @@ public actor FolderImageManager {
                 case .unknown:
                     outcomes.append(.failed(folder, FolderImageError.unreachable(displayName(folder))))
                 }
+            } else if isGone(record) {
+                // Deleted. Nothing to take off, and nothing to tell.
+                library.remove(id)
+                persist()
             } else {
                 let folder = URL(fileURLWithPath: record.lastKnownPath, isDirectory: true)
                 outcomes.append(.failed(folder, FolderImageError.unreachable(displayName(folder))))
@@ -458,8 +507,43 @@ public actor FolderImageManager {
 
     /// How long a folder that can't be found is remembered. It may be on a disk that
     /// isn't connected, or moved to another disk and not touched since. A picture no folder
-    /// on the list uses stays as long, for copies the list doesn't know about.
+    /// on the list uses stays at least as long, for copies on such a disk.
     public static let missingGracePeriod: TimeInterval = 90 * 24 * 60 * 60
+
+    /// Past that, pictures no folder on the list uses stay as long as they all fit in this many
+    /// bytes, the oldest going first: such a copy can still be changed years later.
+    public static let unusedPictureAllowance = 500 * 1024 * 1024
+
+    /// Puts on the list the folders across the Mac's disks that show a picture from PrettyFolder
+    /// and aren't on it yet: copies nobody has opened, folders moved to another disk or around one
+    /// where they can't be followed. From then on a new default look, Redraw All and Remove All
+    /// reach them like any other. The disks are searched off this actor; going through them stops
+    /// after `patience` seconds, which only a big disk would use up.
+    public func findFolders(_ reach: FolderSearchReach = .spotlight, patience: TimeInterval = 300) async {
+        let found = await Task.detached(priority: .utility) { FolderSearch.markedFolders(reach, patience: patience) }.value
+        await takeOn(found)
+    }
+
+    /// Those among `folders` that show a picture from PrettyFolder get a record, if they have none.
+    func takeOn(_ folders: [URL]) async {
+        guard !library.isReadOnly else { return }
+        // Most are known, right where they were: no need to read their icon.
+        let new = folders.filter { folder in
+            guard let id = markerID(of: folder), let record = library.record(id) else { return true }
+            return record.lastKnownPath != FolderInspector.canonicalPath(folder.path) || record.fileNumber != FolderInspector.fileNumber(of: folder)
+        }
+        // A few at a time, the list saved after each few: saving it after each one takes longer the
+        // longer it gets. Other work gets its turn in between.
+        var next = new[...]
+        while !next.isEmpty, !isStopped {
+            isFinding = true
+            for folder in next.prefix(32) { _ = ownedRecord(for: folder) }
+            isFinding = false
+            next = next.dropFirst(32)
+            persist()
+            await Task.yield()
+        }
+    }
 
     /// Forgets folders whose icon was changed by something else, and folders that have
     /// been missing for longer than `missingGracePeriod`. Folders that can't be read right
@@ -492,7 +576,7 @@ public actor FolderImageManager {
                 carry(record, on: folder)
             }
         }
-        library.collectGarbage(retiredBefore: now.addingTimeInterval(-Self.missingGracePeriod))
+        library.collectGarbage(retiredBefore: now.addingTimeInterval(-Self.missingGracePeriod), allowance: unusedPictureAllowance)
         if changed || hasUnsavedChanges { persist() }
     }
 
@@ -574,11 +658,14 @@ public actor FolderImageManager {
     private func writeIcon(_ image: NSImage, to folder: URL) throws -> WrittenIcon {
         guard !isStopped else { throw FolderImageError.stopped }
         let replacing = FolderInspector.hasCustomIcon(folder)
+        let hadIconFile = !FolderInspector.hasNoIconFile(folder)
         let (written, oldFile) = FolderMetadata.keepingModificationDate(of: folder) {
             autoreleasepool { IconFile.write(image, to: folder) }
         }
         guard written, let resource = FolderInspector.iconResource(of: folder) else {
             oldFile?.discard()
+            // macOS may have got as far as the file before being refused the rest.
+            if !hadIconFile { removeIconFile(of: folder) }
             throw FolderImageError.setIconFailed(displayName(folder))
         }
         iconsWritten += 1
@@ -600,6 +687,12 @@ public actor FolderImageManager {
         FolderMetadata.noteIconChanged(icon.folder)
     }
 
+    private func removeIconFile(of folder: URL) {
+        FolderMetadata.keepingModificationDate(of: folder) {
+            try? FileManager.default.removeItem(at: FolderInspector.iconFileURL(for: folder))
+        }
+    }
+
     /// The folder's icon isn't PrettyFolder's any more: leave nothing of ours on it. That is
     /// the marker, the count in its Finder info, and our icon file when only the custom icon
     /// flag was turned off and the file was left behind.
@@ -611,9 +704,7 @@ public actor FolderImageManager {
         }
         if FolderInspector.customIconFlag(folder) == false, let digest = FolderInspector.iconResource(of: folder)?.sha256,
            digest == record.iconDigest || digest == carriedDigest {
-            FolderMetadata.keepingModificationDate(of: folder) {
-                try? FileManager.default.removeItem(at: FolderInspector.iconFileURL(for: folder))
-            }
+            removeIconFile(of: folder)
         }
         FolderMetadata.forgetIconChanges(folder)
     }
@@ -621,8 +712,11 @@ public actor FolderImageManager {
     /// The record the folder's marker points to when it is this folder's own, but the icon is
     /// no longer PrettyFolder's: somebody else changed it since.
     private func staleRecord(of folder: URL) -> FolderRecord? {
-        guard let id = markerID(of: folder), var record = library.record(id), describes(&record, folder) else { return nil }
-        return record
+        guard let id = markerID(of: folder), var record = library.record(id) else { return nil }
+        if describes(&record, folder) { return record }
+        // Its folder can't be found with its disk here, and this one has its marker. This is what
+        // became of it, or a copy; if there is another such folder, the search finds it again.
+        return resolve(&record) == nil && !FolderInspector.isOnDiskThatIsAway(record.lastKnownPath) ? record : nil
     }
 
     /// The record for `folder` if PrettyFolder made its current icon.
@@ -676,6 +770,7 @@ public actor FolderImageManager {
             created: now, updated: now, fileNumber: FolderInspector.fileNumber(of: folder)
         )
         record.take(look, defaultStyle: defaultStyle)
+        record.wasFound = isFinding ? true : nil
         // A list that can't be saved wouldn't find the folder again by a new marker. It can be
         // looked at all the same; changing it is refused.
         if library.isReadOnly { return record }
@@ -825,6 +920,10 @@ public actor FolderImageManager {
 
     /// Saves the library. When that fails (a full disk, say), the next change tries again.
     private func persist() {
+        guard !isFinding else {
+            hasUnsavedChanges = true
+            return
+        }
         do {
             try library.save()
             hasUnsavedChanges = false

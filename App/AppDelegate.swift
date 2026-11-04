@@ -36,8 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Forget folders whose icon was changed elsewhere, and pictures left over from a crash.
+        // Find copies and moved folders that are new to the list, forget folders whose icon was
+        // changed elsewhere, and pictures left over from a crash.
         Task {
+            await manager.findFolders(.disksWithoutSpotlight)
             await manager.prune()
             await redrawOutdatedIcons()
         }
@@ -45,7 +47,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mountObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didMountNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.redrawOutdatedIcons() }
+            Task { @MainActor in
+                await self?.redrawOutdatedIcons()
+                await self?.manager.findFolders(.disksWithoutSpotlight)
+                // Spotlight may only be starting on a disk it hasn't seen before.
+                try? await Task.sleep(for: .seconds(60))
+                await self?.manager.findFolders()
+            }
         }
 
         isReady = true

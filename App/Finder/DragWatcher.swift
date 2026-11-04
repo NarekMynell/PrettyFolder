@@ -16,6 +16,8 @@ final class DragWatcher {
 
     /// Accessibility queries are cheap but not free; this caps them at about 25 per second.
     private static let queryInterval: TimeInterval = 0.04
+    /// How long after a drag starts a picture may still turn up on its pasteboard.
+    private static let pictureGrace: TimeInterval = 1
 
     private let finder: FinderProcess
     private let accessibility: FinderAccessibility
@@ -26,6 +28,7 @@ final class DragWatcher {
     private var monitor: Any?
     private var spaceObserver: NSObjectProtocol?
     private var phase = Phase.idle
+    private var dragStart: TimeInterval = 0
     private var hovered: FinderItem?
     private var queryInFlight = false
     private var pendingPoint: NSPoint?
@@ -85,15 +88,22 @@ final class DragWatcher {
             case .pressed(let changeCount):
                 // A selection rectangle or a window move never touches the drag pasteboard.
                 guard dragPasteboard.changeCount != changeCount else { return }
+                dragStart = ProcessInfo.processInfo.systemUptime
                 let hasPicture = DroppedPicture.isPresent(on: dragPasteboard)
-                log.debug("Drag started, picture: \(hasPicture)")
+                log.debug("Drag started, picture: \(hasPicture), types: \(self.dragPasteboard.types?.count ?? 0)")
                 phase = .dragging(hasPicture: hasPicture)
-                if hasPicture {
-                    startReleaseCheck()
-                    track(NSEvent.mouseLocation)
-                }
+                if hasPicture { pictureFound() }
             case .dragging(hasPicture: true):
                 track(NSEvent.mouseLocation)
+            case .dragging(hasPicture: false):
+                // The app that started the drag may still be filling the pasteboard: the first
+                // look can come too early, and the badge wouldn't show for the whole drag.
+                guard ProcessInfo.processInfo.systemUptime - dragStart < Self.pictureGrace,
+                      DroppedPicture.isPresent(on: dragPasteboard)
+                else { return }
+                log.debug("The picture came on the pasteboard after the drag started")
+                phase = .dragging(hasPicture: true)
+                pictureFound()
             default:
                 break
             }
@@ -103,6 +113,11 @@ final class DragWatcher {
         default:
             break
         }
+    }
+
+    private func pictureFound() {
+        startReleaseCheck()
+        track(NSEvent.mouseLocation)
     }
 
     // MARK: - Following the pointer

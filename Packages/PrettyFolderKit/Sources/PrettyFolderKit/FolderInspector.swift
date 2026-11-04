@@ -92,6 +92,12 @@ public enum FolderInspector {
         return !FileManager.default.fileExists(atPath: "/Volumes/" + components[2])
     }
 
+    /// Whether nothing is at `path`. Not when something on the way there can't be read.
+    static func isKnownToBeAbsent(_ path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) != 0 && (errno == ENOENT || errno == ENOTDIR)
+    }
+
     /// The folder's number on its disk, which stays the same when it moves around that disk.
     static func fileNumber(of folder: URL) -> UInt64? {
         folder.withUnsafeFileSystemRepresentation { path in
@@ -99,6 +105,56 @@ public enum FolderInspector {
             guard let path, lstat(path, &info) == 0 else { return nil }
             return info.st_ino
         }
+    }
+
+    /// A folder as it can be found again after it is renamed or moved, whatever takes its old name.
+    public struct Location: Sendable {
+        let bookmark: Data
+        let number: UInt64?
+        let disk: String?
+
+        public init?(of folder: URL) {
+            guard let bookmark = try? folder.bookmarkData() else { return nil }
+            self.bookmark = bookmark
+            number = FolderInspector.fileNumber(of: folder)
+            disk = FolderInspector.diskIdentifier(of: folder)
+        }
+
+        /// Where the folder is now. A bookmark looks at the old path first, and what is there may be
+        /// another folder by now: a new one, or a copy given the old name. This one still has its
+        /// number as long as it stays on its disk, on disks that can tell (not exFAT or FAT). Once in
+        /// the trash it has been let go of, for whatever has taken its place.
+        public var current: URL? {
+            var stale = false
+            guard let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
+            if let number, number != FolderInspector.fileNumber(of: url), disk == FolderInspector.diskIdentifier(of: url),
+               let moved = FolderInspector.item(numbered: number, onDiskOf: url), !FolderInspector.isInTrash(moved),
+               (try? moved.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                return moved
+            }
+            return url
+        }
+
+        /// Whether `other` was taken of the same folder.
+        public func isSameFolder(as other: Location) -> Bool {
+            number == other.number && disk == other.disk
+        }
+
+        /// Whether the folder at `url` is this one, as far as can be told.
+        public func isAt(_ url: URL) -> Bool {
+            number == nil || number == FolderInspector.fileNumber(of: url)
+        }
+    }
+
+    /// What tells a disk from another of the same name.
+    static func diskIdentifier(of url: URL) -> String? {
+        var url = url
+        url.removeAllCachedResourceValues()
+        return (try? url.resourceValues(forKeys: [.volumeUUIDStringKey]))?.volumeUUIDString
+    }
+
+    static func isInTrash(_ url: URL) -> Bool {
+        url.pathComponents.contains { $0.hasPrefix(".Trash") }
     }
 
     /// Where the item with a number is on the disk that `neighbor` is on.

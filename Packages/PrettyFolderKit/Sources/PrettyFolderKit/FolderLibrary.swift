@@ -29,11 +29,14 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
     /// The folder's number on its disk, which stays the same when it moves around that disk. It
     /// finds a moved folder when a new one has taken its old place.
     var fileNumber: UInt64?
+    /// It was found on a disk, not given its picture here, and nobody has done anything with it
+    /// since: it may be a backup. Nothing is written to it without being asked.
+    var wasFound: Bool?
 
     init(
         id: UUID, bookmark: Data, lastKnownPath: String, pictureName: String, style: IconStyle?,
         placement: PicturePlacement? = nil, iconDigest: String, revision: Int? = IconRenderer.revision,
-        created: Date, updated: Date, missingSince: Date? = nil, fileNumber: UInt64? = nil
+        created: Date, updated: Date, missingSince: Date? = nil, fileNumber: UInt64? = nil, wasFound: Bool? = nil
     ) {
         self.id = id
         self.bookmark = bookmark
@@ -47,6 +50,7 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
         self.updated = updated
         self.missingSince = missingSince
         self.fileNumber = fileNumber
+        self.wasFound = wasFound
     }
 
     /// Where the picture sat used to be kept as its alignment.
@@ -69,6 +73,7 @@ public struct FolderRecord: Codable, Sendable, Identifiable {
         updated = try container.decode(Date.self, forKey: .updated)
         missingSince = try container.decodeIfPresent(Date.self, forKey: .missingSince)
         fileNumber = try container.decodeIfPresent(UInt64.self, forKey: .fileNumber)
+        wasFound = try container.decodeIfPresent(Bool.self, forKey: .wasFound)
     }
 }
 
@@ -214,18 +219,26 @@ struct FolderLibrary {
         try? FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: pictureURL(named: name).path)
     }
 
-    /// Removes stored pictures that no record points to and that have been out of use since
-    /// before `date`, or all of them without one.
-    func collectGarbage(retiredBefore date: Date? = nil) {
+    /// Removes the stored pictures that no record points to. With a `date`, only those out of use
+    /// since before it, the oldest first, and only until all that are left fit in `allowance` bytes.
+    func collectGarbage(retiredBefore date: Date? = nil, allowance: Int = 0) {
         guard !isReadOnly else { return }
         let used = Set(records.values.map(\.pictureName))
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .fileSizeKey]
         let files = (try? FileManager.default.contentsOfDirectory(atPath: picturesDirectory.path)) ?? []
-        for name in files where !used.contains(name) && !mustKeep(name) && !name.hasPrefix(".") {
+        let unused = files.filter { !used.contains($0) && !mustKeep($0) && !$0.hasPrefix(".") }.map { name in
             let url = pictureURL(named: name)
-            if let date, let retired = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate, retired >= date {
-                continue
-            }
-            try? FileManager.default.removeItem(at: url)
+            let values = try? url.resourceValues(forKeys: keys)
+            return (url: url, retired: values?.contentModificationDate ?? .distantPast, size: values?.fileSize ?? 0)
+        }
+        guard let date else {
+            for picture in unused { try? FileManager.default.removeItem(at: picture.url) }
+            return
+        }
+        var total = unused.reduce(0) { $0 + $1.size }
+        for picture in unused.sorted(by: { $0.retired < $1.retired }) where total > allowance && picture.retired < date {
+            try? FileManager.default.removeItem(at: picture.url)
+            total -= picture.size
         }
     }
 }

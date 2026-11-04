@@ -29,6 +29,10 @@ final class TemporaryDirectory {
 
 enum TestImages {
     /// A solid-color bitmap. With `alpha < 1` the image carries an alpha channel.
+    static func nsImage(red: CGFloat, green: CGFloat, blue: CGFloat) -> NSImage {
+        NSImage(cgImage: solid(width: 64, height: 64, red: red, green: green, blue: blue), size: NSSize(width: 64, height: 64))
+    }
+
     static func solid(width: Int, height: Int, red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat = 1) -> CGImage {
         let info = alpha < 1 ? CGImageAlphaInfo.premultipliedLast.rawValue : CGImageAlphaInfo.noneSkipLast.rawValue
         let context = CGContext(
