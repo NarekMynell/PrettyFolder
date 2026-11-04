@@ -622,3 +622,156 @@ import Testing
         #expect(snapped.width >= IconStyle.minimumSide - 1e-9)
     }
 }
+
+/// Reproducible random numbers, so a failure can be run again.
+private struct SeededRandom: RandomNumberGenerator {
+    var state: UInt64
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var mixed = state
+        mixed = (mixed ^ (mixed >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        mixed = (mixed ^ (mixed >> 27)) &* 0x94D0_49BB_1331_11EB
+        return mixed ^ (mixed >> 31)
+    }
+
+    /// One axis of a frame a style can have: small on the canvas, covering it, or on its limits.
+    mutating func axis() -> (origin: Double, length: Double) {
+        switch Int.random(in: 0..<6, using: &self) {
+        case 0:
+            let length = Double.random(in: 0.08...1, using: &self)
+            return (Double.random(in: 0...(1 - length), using: &self), length)
+        case 1:
+            let length = Double.random(in: 1...8, using: &self)
+            return (Double.random(in: (1 - length)...0, using: &self), length)
+        case 2:
+            return (0, Double.random(in: 0.08...8, using: &self))
+        case 3:
+            let length = Double.random(in: 0.08...8, using: &self)
+            return (1 - length, length)
+        case 4:
+            return (0, 1)
+        default:
+            return (0, 0.08)
+        }
+    }
+
+    mutating func frame() -> CGRect {
+        let (x, width) = axis(), (y, height) = axis()
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// A step of a drag: from a hair to well past anything on the canvas.
+    mutating func step() -> Double {
+        let scale = [0.002, 0.05, 0.5, 3.0, 20.0].randomElement(using: &self)!
+        return Double.random(in: -scale...scale, using: &self)
+    }
+}
+
+/// What must hold for any frame and any drag.
+@Suite struct ResizeHandleTests {
+    private let tolerance = 1e-9
+
+    @Test func aResizedFrameKeepsItsPromisesWhateverTheDrag() {
+        var random = SeededRandom(state: 1)
+        for _ in 0..<40_000 {
+            let frame = random.frame()
+            let handle = ResizeHandle.allCases.randomElement(using: &random)!
+            let keepRatio = Bool.random(using: &random), fromCenter = Bool.random(using: &random)
+            let dx = random.step(), dy = random.step()
+            let resized = handle.resize(frame, dx: dx, dy: dy, keepRatio: keepRatio, fromCenter: fromCenter)
+            let drag = "\(handle) on \(frame) by \(dx), \(dy), ratio \(keepRatio), middle \(fromCenter): \(resized)"
+
+            #expect(IconStyle.allows(resized, tolerance: 1e-7), "a style can't have that: \(drag)")
+            // Without a move, nothing moves.
+            let still = handle.resize(frame, dx: 0, dy: 0, keepRatio: keepRatio, fromCenter: fromCenter)
+            #expect(abs(still.minX - frame.minX) < tolerance && abs(still.width - frame.width) < tolerance
+                && abs(still.minY - frame.minY) < tolerance && abs(still.height - frame.height) < tolerance, "\(handle) on \(frame): \(still)")
+            // What the handle doesn't own stays where it is.
+            let edges = handle.edges
+            let horizontal = !edges.isDisjoint(with: [.left, .right]), vertical = !edges.isDisjoint(with: [.top, .bottom])
+            if !horizontal { #expect(abs(resized.width - frame.width) < tolerance && abs(resized.minX - frame.minX) < tolerance, "\(drag)") }
+            if !vertical { #expect(abs(resized.height - frame.height) < tolerance && abs(resized.minY - frame.minY) < tolerance, "\(drag)") }
+            if fromCenter {
+                if horizontal { #expect(abs(resized.midX - frame.midX) < tolerance, "\(drag)") }
+                if vertical { #expect(abs(resized.midY - frame.midY) < tolerance, "\(drag)") }
+            } else {
+                if !edges.contains(.left) { #expect(abs(resized.minX - frame.minX) < tolerance, "\(drag)") }
+                if !edges.contains(.right) { #expect(abs(resized.maxX - frame.maxX) < tolerance, "\(drag)") }
+                if !edges.contains(.top) { #expect(abs(resized.minY - frame.minY) < tolerance, "\(drag)") }
+                if !edges.contains(.bottom) { #expect(abs(resized.maxY - frame.maxY) < tolerance, "\(drag)") }
+            }
+            if keepRatio, handle.isCorner {
+                #expect(abs(resized.width / resized.height - frame.width / frame.height) < 1e-6, "\(drag)")
+            }
+        }
+    }
+
+    @Test func eachHandleIsOnTheFrame() {
+        let frame = CGRect(x: 0.2, y: 0.3, width: 0.4, height: 0.2)
+        #expect(ResizeHandle.topLeft.position(in: frame) == CGPoint(x: frame.minX, y: frame.minY))
+        #expect(ResizeHandle.bottom.position(in: frame) == CGPoint(x: frame.midX, y: frame.maxY))
+        #expect(ResizeHandle.right.position(in: frame) == CGPoint(x: frame.maxX, y: frame.midY))
+        #expect(ResizeHandle.corners.allSatisfy { $0.isCorner })
+        #expect(ResizeHandle.topRight.outward == CGPoint(x: 1, y: -1))
+        #expect(ResizeHandle.left.edges == .left && ResizeHandle.bottomRight.edges == [.bottom, .right])
+    }
+}
+
+/// What must hold for any frame, picture and turn.
+@Suite struct RandomLayoutTests {
+    @Test func snappingNeverLeavesALegalFrameIllegal() {
+        var random = SeededRandom(state: 2)
+        let snapping = IconSnapping(threshold: 0.02)
+        for _ in 0..<20_000 {
+            let frame = random.frame()
+            let moved = snapping.move(frame.offsetBy(dx: Double.random(in: -0.5...0.5, using: &random), dy: Double.random(in: -0.5...0.5, using: &random)))
+            #expect(IconStyle.allows(moved.rect, tolerance: 1e-7), "moving \(frame): \(moved.rect)")
+            let scaled = snapping.scale(IconGeometry.scaled(frame, by: Double.random(in: 0.2...5, using: &random)))
+            #expect(IconStyle.allows(scaled.rect, tolerance: 1e-7), "scaling \(frame): \(scaled.rect)")
+            let handle = ResizeHandle.allCases.randomElement(using: &random)!
+            let fromCenter = Bool.random(using: &random)
+            let resized = handle.resize(frame, dx: Double.random(in: -0.5...0.5, using: &random), dy: Double.random(in: -0.5...0.5, using: &random), keepRatio: false, fromCenter: fromCenter)
+            let snapped = snapping.resize(resized, moving: handle.edges, symmetric: fromCenter)
+            #expect(IconStyle.allows(snapped.rect, tolerance: 1e-7), "\(handle) on \(resized): \(snapped.rect)")
+        }
+    }
+
+    @Test func aPictureCoversOrFitsItsFrameAndCanBeFoundAgain() {
+        var random = SeededRandom(state: 3)
+        let folder = FolderEdges(bounds: CGRect(x: 0.04, y: 0.13, width: 0.92, height: 0.74))
+        for _ in 0..<20_000 {
+            let mode: FitMode = Bool.random(using: &random) ? .fill : .fit
+            let style = IconStyle(rect: random.frame(), mode: mode)
+            let size = CGSize(width: Double.random(in: 1...6000, using: &random), height: Double.random(in: 1...6000, using: &random))
+            let rotation = [0, 90, -90, 180, 45, -45, 135, -135, Double.random(in: -400...400, using: &random)].randomElement(using: &random)!
+            let placement = PicturePlacement(x: Double.random(in: 0...1, using: &random), y: Double.random(in: 0...1, using: &random), rotation: rotation)
+            let side: CGFloat = [16, 300, 1024].randomElement(using: &random)!
+            let about = "\(style), \(size), \(placement), on \(side)"
+
+            let layout = IconGeometry.layout(imageSize: size, style: style, placement: placement, canvas: side, flipped: true, folder: folder)
+            let unit = IconGeometry.frame(for: style, canvas: side, folder: folder).rect
+            let frame = CGRect(x: unit.minX * side, y: unit.minY * side, width: unit.width * side, height: unit.height * side)
+            let slack = 1e-6 * max(layout.size.width, layout.size.height, 1) + 1e-6
+            switch mode {
+            case .fill:
+                let upright = layout.uprightRect.insetBy(dx: -slack, dy: -slack), back = layout.transform.inverted()
+                let corners = [CGPoint(x: frame.minX, y: frame.minY), CGPoint(x: frame.maxX, y: frame.minY), CGPoint(x: frame.maxX, y: frame.maxY), CGPoint(x: frame.minX, y: frame.maxY)]
+                #expect(corners.allSatisfy { upright.contains($0.applying(back)) }, "part of the frame is bare: \(about)")
+            case .fit:
+                let bounds = layout.bounds
+                #expect(bounds.minX >= frame.minX - slack && bounds.maxX <= frame.maxX + slack
+                    && bounds.minY >= frame.minY - slack && bounds.maxY <= frame.maxY + slack, "it sticks out: \(about)")
+            }
+
+            let center = IconGeometry.pictureCenter(imageSize: size, style: style, placement: placement, canvas: side, folder: folder)
+            let found = IconGeometry.placement(near: center, rotation: placement.rotation, imageSize: size, style: style, canvas: side, folder: folder)
+            let again = IconGeometry.pictureCenter(imageSize: size, style: style, placement: found, canvas: side, folder: folder)
+            #expect(hypot(center.x - again.x, center.y - again.y) < 1e-6, "it isn't where its placement says: \(about)")
+
+            let bigger = IconGeometry.scaled(style.rect, by: Double.random(in: 0.5...2, using: &random))
+            #expect(IconStyle.allows(bigger, tolerance: 1e-7), "scaled \(style.rect): \(bigger)")
+            #expect(abs(bigger.width / bigger.height - style.width / style.height) < 1e-6, "scaled \(style.rect): \(bigger)")
+        }
+    }
+}
