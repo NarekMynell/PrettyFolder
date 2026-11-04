@@ -58,7 +58,8 @@ final class FolderActions {
         editor?.model.reload(ifShowing: folders)
     }
 
-    /// Before quitting: finishes the window's change going on and waits for its writes.
+    /// Finishes the window's change going on and waits for its writes: before quitting, and
+    /// before a new picture goes on or one comes off.
     func finishEditing() async {
         await editor?.model.finishEditing()
     }
@@ -96,6 +97,7 @@ final class FolderActions {
             }
             settings.lastPictureFolder = url.deletingLastPathComponent()
             Task {
+                await self.finishEditing()
                 let outcomes = await self.manager.apply(imageAt: url, to: eligible)
                 self.picturesChanged(eligible)
                 self.finish(outcomes, returningTo: returnTo)
@@ -121,6 +123,7 @@ final class FolderActions {
 
     /// Puts the picture in a file on `folders`, reporting any failure.
     func apply(imageAt url: URL, to folders: [URL]) async {
+        await finishEditing()
         let outcomes = await manager.apply(imageAt: url, to: folders)
         picturesChanged(folders)
         report(outcomes)
@@ -128,6 +131,7 @@ final class FolderActions {
 
     /// Applies a dropped picture. Returns whether it worked, for the badge to show.
     func apply(_ picture: DroppedPicture, to folder: URL) async -> Bool {
+        await finishEditing()
         let outcomes: [FolderOutcome]
         switch picture {
         case .file(let url):
@@ -158,6 +162,7 @@ final class FolderActions {
 
     func removeImage(from folders: [URL]) {
         Task {
+            await finishEditing()
             let outcomes = await manager.removeImage(from: folders)
             picturesChanged(folders)
             report(outcomes)

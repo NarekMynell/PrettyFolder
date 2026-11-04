@@ -11,6 +11,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     let model: EditorModel
     /// The newest icon shown in the title bar; an older one that comes in later is ignored.
     private var titleIconSequence = Int.min
+    private let undoSteps = EditorUndoManager()
 
     init(actions: FolderActions) {
         model = EditorModel(actions: actions)
@@ -31,6 +32,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         window.setFrameAutosaveName("Editor")
         model.window = window
         model.onFoldersChanged = { [weak self] in self?.updateTitle() }
+        model.undoManager = undoSteps
+        undoSteps.finishChange = { [weak model] in model?.finishPendingChange() }
+        undoSteps.isHolding = { [weak model] in model?.isHolding ?? false }
     }
 
     @available(*, unavailable)
@@ -38,7 +42,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     /// Shows the window for `folders`; with none, as it was, or for the default look.
     func show(folders: [URL]) {
-        if !folders.isEmpty || window?.isVisible != true {
+        if !folders.isEmpty || (window?.isVisible != true && window?.isMiniaturized != true) {
             model.show(folders)
         }
         updateTitle()
@@ -111,6 +115,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         model.windowClosed()
     }
 
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        undoSteps
+    }
+
     // ⌘L and ⌘R turn the picture wherever the keyboard's focus is in the window; the editor
     // takes them first when it has it.
     @objc func rotateLeft(_ sender: Any?) {
@@ -138,7 +146,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
 private struct EditorView: View {
     @Bindable var model: EditorModel
-    @Environment(\.undoManager) private var undoManager
     @State private var turnLink = TurnLink()
 
     // Each part is a view of its own, reading only what it shows. While something moves, the
@@ -172,8 +179,6 @@ private struct EditorView: View {
             SetupBar()
         }
         .frame(width: 384)
-        .onAppear { model.undoManager = undoManager }
-        .onChange(of: undoManager) { model.undoManager = undoManager }
         .confirmationDialog("Update existing folders too?", isPresented: $model.isAskingAboutExistingFolders) {
             Button(model.followerCount == 1 ? LocalizedStringKey("Update It Too") : "Update All \(model.followerCount) Folders") {
                 model.commitDefault(updateExisting: true)
@@ -202,6 +207,8 @@ private struct ScopeBar: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
+                // Not with something held on to in the editor: that belongs to where it began.
+                .allowsHitTesting(!model.isHolding)
             }
             HStack {
                 Spacer()
@@ -353,6 +360,7 @@ private struct ScalingPicker: View {
         .labelsHidden()
         .fixedSize()
         .disabled(!model.canEdit)
+        .allowsHitTesting(!model.isHolding)
         .help(model.style.mode == .fill
               ? "Fill: the picture covers the whole rectangle; what doesn't fit is cropped."
               : "Fit: the whole picture shows and grows until it touches the rectangle's sides.")

@@ -1121,9 +1121,10 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
                                    (String(localized: "Move Picture Right"), CGSize(width: step, height: 0)),
                                    (String(localized: "Move Picture Up"), CGSize(width: 0, height: -step)),
                                    (String(localized: "Move Picture Down"), CGSize(width: 0, height: step))] {
-                list.append(action(name) { editor in
-                    guard let moved = editor.picture(movedBy: offset) else { return }
-                    editor.change { editor.set(editor.style, moved) }
+                list.append(NSAccessibilityCustomAction(name: name) { [weak self] in
+                    guard let self, let moved = picture(movedBy: offset) else { return false }
+                    change { self.set(self.style, moved) }
+                    return true
                 })
             }
             list.append(action(String(localized: "Center Picture")) { $0.centerPicture() })

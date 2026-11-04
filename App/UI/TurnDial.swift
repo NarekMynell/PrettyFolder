@@ -78,7 +78,7 @@ final class TurnDialView: NSView, NSMenuItemValidation {
         if value != before { NSAccessibility.post(element: self, notification: .valueChanged) }
         if enabledChanged {
             window?.invalidateCursorRects(for: self)
-            if !isEnabled, window?.firstResponder === self { window?.makeFirstResponder(nil) }
+            if !isEnabled, window?.firstResponder === self { window?.makeFirstResponder(link?.editor) }
         }
     }
 

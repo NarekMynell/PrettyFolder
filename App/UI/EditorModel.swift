@@ -86,6 +86,11 @@ final class EditorModel {
     @ObservationIgnored private var looks: [URL: Look] = [:]
     /// The folders as they were opened, to find them after a rename or a move.
     @ObservationIgnored private var bookmarks: [Data?] = []
+    /// Goes up whenever the window is opened for other folders. What was done to the folders
+    /// before is about the same folders as long as it stays, whatever they are called by then.
+    @ObservationIgnored private var opening = 0
+    /// Goes up whenever folders that followed the default look stay behind with the old one.
+    @ObservationIgnored private var defaultsLeftBehind = 0
     @ObservationIgnored private var folderPictureURL: URL?
     @ObservationIgnored private var loadGeneration = 0
     @ObservationIgnored private var writeGeneration = 0
@@ -95,7 +100,7 @@ final class EditorModel {
     @ObservationIgnored private var reloadIsDue = false
     /// The editor's change in progress (a drag, a pinch, a burst of arrow keys or of scrolling):
     /// what it was made in, and where it started from.
-    @ObservationIgnored private var pendingChange: (scope: Scope, folders: [URL], start: Layout)?
+    @ObservationIgnored private var pendingChange: (scope: Scope, opening: Int, start: Layout)?
 
     /// The look and where the picture sits in it, as the editor shows them.
     private typealias Layout = (style: IconStyle, placement: PicturePlacement)
@@ -160,6 +165,7 @@ final class EditorModel {
         finishPendingChange()
         if folders != self.folders {
             undoManager?.removeAllActions(withTarget: self)
+            opening += 1
             self.folders = folders
             bookmarks = folders.map { try? $0.bookmarkData() }
             managedFolders = []
@@ -189,7 +195,8 @@ final class EditorModel {
         previewPicture = nil
     }
 
-    /// Before quitting: finishes the change going on in the editor and waits for every write.
+    /// Before quitting or a new picture: finishes the change going on in the editor and waits for
+    /// every write. Those would otherwise find no picture left, or land on the new one.
     func finishEditing() async {
         finishPendingChange()
         await writing?.value
@@ -226,7 +233,7 @@ final class EditorModel {
             }.value
             guard generation == loadGeneration else { return }
             for (index, location) in moved.enumerated() where index < folders.count {
-                if let location, location.path != folders[index].path { folders[index] = location }
+                if let location, location.path != folders[index].path { follow(folders[index], to: location, at: index) }
             }
             let folders = self.folders
             var found: [(folder: URL, look: FolderLook)] = []
@@ -248,8 +255,10 @@ final class EditorModel {
             hasCustomIcon = anyCustomIcon
             if pictureURL != folderPictureURL, folderPictureURL != nil {
                 // Another picture, or none. What was being done to the old one, and undoing
-                // what was done to it, would put that onto this one.
+                // what was done to it, would put that onto this one. Something may still be held
+                // on to in the editor; it has the last word until then.
                 pendingChange = nil
+                reloadIsDue = isHolding
                 undoManager?.removeAllActions(withTarget: self)
             }
             // A change in the editor, or one made since this started, is newer than what was read.
@@ -273,6 +282,13 @@ final class EditorModel {
         }
     }
 
+    /// A folder was renamed or moved: it is the same one, with what is known about it.
+    private func follow(_ folder: URL, to location: URL, at index: Int) {
+        folders[index] = location
+        if let look = looks.removeValue(forKey: folder) { looks[location] = look }
+        managedFolders = managedFolders.map { $0 == folder ? location : $0 }
+    }
+
     /// Where the folders are now, from their bookmarks; `nil` for one that can't be found.
     nonisolated private static func locations(of bookmarks: [Data?]) -> [URL?] {
         bookmarks.map { bookmark in
@@ -288,53 +304,33 @@ final class EditorModel {
     /// `holding` for a drag or a gesture, which holds on until it ends.
     func beginChange(holding: Bool = false) {
         guard pendingChange == nil else { return }
-        pendingChange = (scope, folders, layout)
+        pendingChange = (scope, opening, layout)
         isHolding = holding
     }
 
     /// The editor finished its change.
     func commit() {
         isHolding = false
-        // Already finished, because the scope or the folders changed under it.
-        guard let pending = pendingChange else { return }
-        pendingChange = nil
-        if pending.scope == scope, pending.folders == folders {
-            record(from: pending.start, in: scope)
+        // It may be finished already, because the scope or the folders changed under it.
+        if let pending = pendingChange {
+            pendingChange = nil
+            if pending.scope == scope, pending.opening == opening {
+                record(from: pending.start, in: scope)
+            }
         }
         if reloadIsDue { reload() }
     }
 
     /// Finishes a change that is still going on, in what it was made in, as an undo step of
-    /// its own: whatever comes next in the same moment (Fit, reset) is undone separately (see
-    /// `beginUndoStep`).
-    private func finishPendingChange() {
+    /// its own: whatever comes next (Fit, reset, undo) is a step of its own too.
+    func finishPendingChange() {
         isHolding = false
         guard let pending = pendingChange else { return }
         pendingChange = nil
-        if pending.folders == folders {
+        if pending.opening == opening {
             record(from: pending.start, in: pending.scope)
         }
         if reloadIsDue { reload() }
-    }
-
-    /// Whether a change was registered for undo in this turn of the run loop.
-    @ObservationIgnored private var registeredUndoThisTurn = false
-
-    /// Every change is undone on its own. The undo manager puts everything registered in one
-    /// event into one step, so a change registered in the same event as another (a burst of
-    /// arrow keys finished by ⌘L, or by Fit) starts a step of its own. Only then: a step left
-    /// empty would make ⌘Z do nothing once.
-    private func beginUndoStep() {
-        guard let undoManager, !undoManager.isUndoing, !undoManager.isRedoing else { return }
-        if registeredUndoThisTurn {
-            if undoManager.groupingLevel > 0 {
-                undoManager.endUndoGrouping()
-                undoManager.beginUndoGrouping()
-            }
-        } else {
-            registeredUndoThisTurn = true
-            DispatchQueue.main.async { [weak self] in self?.registeredUndoThisTurn = false }
-        }
     }
 
     /// Keeps a finished change: writes it to the folders, or keeps it in the draft, and
@@ -419,22 +415,29 @@ final class EditorModel {
         writeGeneration += 1
         let manager = actions.manager
         let previous = writing
+        let folders = self.folders, bookmarks = self.bookmarks
         writing = Task {
             await previous?.value
+            // Where they are by now: one renamed since the window last looked still gets it.
+            let locations = await Task.detached(priority: .userInitiated) { Self.locations(of: bookmarks) }.value
             var failures: [FolderOutcome] = []
-            for (folder, look) in newLooks {
+            for (index, folder) in folders.enumerated() {
+                guard let look = newLooks[folder] else { continue }
+                let location = (index < locations.count ? locations[index] : nil) ?? folder
                 do {
                     switch parts {
-                    case .style: try await manager.setStyle(look.style, for: folder)
-                    case .placement: try await manager.setPlacement(look.placement, for: folder)
-                    case .both: try await manager.setStyle(look.style, placement: look.placement, for: folder)
+                    case .style: try await manager.setStyle(look.style, for: location)
+                    case .placement: try await manager.setPlacement(look.placement, for: location)
+                    case .both: try await manager.setStyle(look.style, placement: look.placement, for: location)
                     }
                 } catch {
-                    failures.append(FolderOutcome(folder: folder, failure: error.localizedDescription))
+                    failures.append(FolderOutcome(folder: location, failure: error.localizedDescription))
                 }
             }
             actions.report(failures)
             onFoldersChanged?()
+            // Undoing a change that never got there would only fail again.
+            if !failures.isEmpty { undoManager?.removeAllActions(withTarget: self) }
             // What the window shows isn't what is on the folders, or a reload waited for this.
             if !failures.isEmpty || reloadIsDue { reload() }
         }
@@ -442,38 +445,44 @@ final class EditorModel {
 
     /// Undo puts every folder back to its own look from before.
     private func registerUndo(restoring looks: [URL: Look]) {
-        guard let undoManager else { return }
-        beginUndoStep()
-        let folders = self.folders
-        undoManager.registerUndo(withTarget: self) { model in
-            guard model.folders == folders else { return }
-            model.dropPendingChange()
+        let opening = self.opening, folders = self.folders, defaultsLeftBehind = self.defaultsLeftBehind
+        registerUndoStep(named: String(localized: "Change Look")) { model in
+            guard model.opening == opening else { return }
             let current = model.looks
+            var restored: [URL: Look] = [:]
+            // Under the names they have now.
+            for (folder, now) in zip(folders, model.folders) where model.managedFolders.contains(now) {
+                guard var look = looks[folder] else { continue }
+                // It followed the default look then, but was left with the old one since: going
+                // back mustn't take it to the new one it was spared.
+                if look.style == nil, model.defaultsLeftBehind != defaultsLeftBehind { look.style = current[now]?.style }
+                restored[now] = look
+            }
             model.scope = .folders
-            model.apply(looks.filter { model.managedFolders.contains($0.key) }, writing: .both)
+            model.apply(restored, writing: .both)
             model.registerUndo(restoring: current)
         }
-        undoManager.setActionName(String(localized: "Change Look"))
     }
 
     private func registerUndo(restoringDraft draft: IconStyle) {
-        guard let undoManager else { return }
-        beginUndoStep()
-        undoManager.registerUndo(withTarget: self) { model in
-            model.dropPendingChange()
+        registerUndoStep(named: String(localized: "Change Default Look")) { model in
             let current = model.defaultDraft
             model.scope = .defaultLook
             model.defaultDraft = draft
             model.registerUndo(restoringDraft: current)
         }
-        undoManager.setActionName(String(localized: "Change Default Look"))
     }
 
-    /// Undo goes back past anything the editor still had going; recording it now would put it
-    /// among the redo steps. (The editor finishes its arrow keys before it undoes.)
-    private func dropPendingChange() {
-        pendingChange = nil
-        isHolding = false
+    /// Every change is undone on its own, however soon after another it comes: the undo manager
+    /// doesn't group by event here (see `EditorUndoManager`). What undoing registers goes among
+    /// the redo steps by itself, and the other way round.
+    private func registerUndoStep(named name: String, undo: @escaping @MainActor (EditorModel) -> Void) {
+        guard let undoManager else { return }
+        let isNewStep = !undoManager.isUndoing && !undoManager.isRedoing
+        if isNewStep { undoManager.beginUndoGrouping() }
+        undoManager.registerUndo(withTarget: self, handler: undo)
+        undoManager.setActionName(name)
+        if isNewStep { undoManager.endUndoGrouping() }
     }
 
     // MARK: - Pictures
@@ -536,7 +545,7 @@ final class EditorModel {
     func commitDefault(updateExisting: Bool) {
         let style = defaultDraft
         settings.defaultStyle = style
-        if updateExisting { progress.start(total: followerCount) }
+        if updateExisting { progress.start(total: followerCount) } else { defaultsLeftBehind += 1 }
         let reporter = progress.reporter
         let manager = actions.manager
         let completion = afterSavingDefault
@@ -609,6 +618,36 @@ final class EditorModel {
                 }
             }
         }
+    }
+}
+
+/// The window's undo manager. Every change is a step of its own, so it doesn't group by event:
+/// everything registered with it has to be in a group of its own (`EditorModel.registerUndoStep`).
+/// Undo and redo finish a change still going on first, whichever way they are asked for, and
+/// wait while the pointer or the fingers hold on to something.
+final class EditorUndoManager: UndoManager {
+    /// Finishes a burst of keys or of scrolling, which then is the step to undo.
+    var finishChange: () -> Void = {}
+    var isHolding: () -> Bool = { false }
+
+    override init() {
+        super.init()
+        groupsByEvent = false
+    }
+
+    override var canUndo: Bool { !isHolding() && super.canUndo }
+    override var canRedo: Bool { !isHolding() && super.canRedo }
+
+    override func undo() {
+        guard !isHolding() else { return }
+        finishChange()
+        super.undo()
+    }
+
+    override func redo() {
+        guard !isHolding() else { return }
+        finishChange()
+        super.redo()
     }
 }
 
