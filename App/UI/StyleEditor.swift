@@ -60,7 +60,11 @@ struct StyleEditor: NSViewRepresentable {
         turnLink?.editor = view
         view.actions = StyleEditorView.Actions(
             current: { (style, placement) },
-            change: { style = $0; placement = $1 },
+            // Only what changed: whatever shows the other part needn't hear of it.
+            change: { newStyle, newPlacement in
+                if newStyle != style { style = newStyle }
+                if newPlacement != placement { placement = newPlacement }
+            },
             showGuides: { guides = $0 },
             adjust: { isAdjusting = $0 },
             begin: onBegin,

@@ -139,41 +139,26 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 private struct EditorView: View {
     @Bindable var model: EditorModel
     @Environment(\.undoManager) private var undoManager
-    @State private var isDropTargeted = false
     @State private var turnLink = TurnLink()
 
-    private let editorSide = StyleEditor.side
-
+    // Each part is a view of its own, reading only what it shows. While something moves, the
+    // look changes with every step of the pointer, and only what depends on it is updated.
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
-                if model.hasFolders {
-                    Picker("Edit", selection: $model.scope) {
-                        Text(model.folders.count == 1 ? "This Folder" : "These Folders").tag(EditorModel.Scope.folders)
-                        Text("Default").tag(EditorModel.Scope.defaultLook)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-                HStack {
-                    Spacer()
-                    PreferencesButton(model: model)
-                }
-            }
-            .frame(height: 28)
-            .padding(.horizontal, 14)
-            .padding(.top, 2)
+            ScopeBar(model: model)
+                .frame(height: 28)
+                .padding(.horizontal, 14)
+                .padding(.top, 2)
 
-            stage
+            EditorStage(model: model, turnLink: turnLink)
                 .padding(.horizontal, 22)
                 .padding(.top, 10)
 
-            turnBar
+            TurnBar(model: model, turnLink: turnLink)
                 .padding(.horizontal, 22)
                 .padding(.top, 10)
 
-            tools
+            ToolBar(model: model)
                 .padding(.horizontal, 22)
                 .padding(.top, 12)
                 .padding(.bottom, 16)
@@ -201,10 +186,40 @@ private struct EditorView: View {
                  : "\(model.followerCount) folders use the default look. They can switch to the new look now, or keep their current look while only new pictures get the new one.")
         }
     }
+}
 
-    // MARK: - The folder
+/// This folder or the default look, and the gear.
+private struct ScopeBar: View {
+    @Bindable var model: EditorModel
 
-    private var stage: some View {
+    var body: some View {
+        ZStack {
+            if model.hasFolders {
+                Picker("Edit", selection: $model.scope) {
+                    Text(model.folders.count == 1 ? "This Folder" : "These Folders").tag(EditorModel.Scope.folders)
+                    Text("Default").tag(EditorModel.Scope.defaultLook)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            HStack {
+                Spacer()
+                PreferencesButton(model: model)
+            }
+        }
+    }
+}
+
+/// The folder with its picture on it, to place by hand and to drop a picture on.
+private struct EditorStage: View {
+    @Bindable var model: EditorModel
+    let turnLink: TurnLink
+    @State private var isDropTargeted = false
+
+    private let editorSide = StyleEditor.side
+
+    var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(Color.primary.opacity(0.045))
@@ -255,14 +270,17 @@ private struct EditorView: View {
         .help("Choose a Picture…")
         .accessibilityLabel(Text("Choose a Picture"))
     }
+}
 
-    // MARK: - Turning
+/// The dial that turns the picture to any angle, between quarter turns either way. Only a
+/// folder's own picture turns: the default look keeps it upright.
+private struct TurnBar: View {
+    let model: EditorModel
+    let turnLink: TurnLink
 
-    /// The dial that turns the picture to any angle, between quarter turns either way. Only a
-    /// folder's own picture turns: the default look keeps it upright.
-    private var turnBar: some View {
+    var body: some View {
         let canTurn = model.placesPicture && !model.isHolding
-        return HStack(spacing: 6) {
+        HStack(spacing: 6) {
             QuarterTurnButton(symbol: "rotate.left", help: "Rotate Left 90° (⌘L)", label: "Rotate Left") {
                 model.rotatePicture(clockwise: false)
             }
@@ -275,10 +293,13 @@ private struct EditorView: View {
             .disabled(!canTurn)
         }
     }
+}
 
-    // MARK: - Tools
+/// Choosing a picture, Fill or Fit, reset, remove, and Save or Done.
+private struct ToolBar: View {
+    let model: EditorModel
 
-    private var tools: some View {
+    var body: some View {
         HStack(spacing: 10) {
             ToolButton(
                 symbol: "photo.badge.plus",
@@ -286,17 +307,7 @@ private struct EditorView: View {
             ) { model.choosePicture() }
 
             Spacer(minLength: 8)
-            Picker("Scaling", selection: Binding(get: { model.style.mode }, set: { model.setMode($0) })) {
-                Text("Fill").tag(FitMode.fill)
-                Text("Fit").tag(FitMode.fit)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .disabled(!model.canEdit)
-            .help(model.style.mode == .fill
-                  ? "Fill: the picture covers the whole rectangle; what doesn't fit is cropped."
-                  : "Fit: the whole picture shows and grows until it touches the rectangle's sides.")
+            ScalingPicker(model: model)
             Spacer(minLength: 8)
 
             ToolButton(
@@ -326,6 +337,25 @@ private struct EditorView: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
+    }
+}
+
+/// Fill or Fit.
+private struct ScalingPicker: View {
+    let model: EditorModel
+
+    var body: some View {
+        Picker("Scaling", selection: Binding(get: { model.style.mode }, set: { model.setMode($0) })) {
+            Text("Fill").tag(FitMode.fill)
+            Text("Fit").tag(FitMode.fit)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .disabled(!model.canEdit)
+        .help(model.style.mode == .fill
+              ? "Fill: the picture covers the whole rectangle; what doesn't fit is cropped."
+              : "Fit: the whole picture shows and grows until it touches the rectangle's sides.")
     }
 }
 
