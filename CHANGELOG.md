@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.1
 
 - Moving, resizing, pinching and turning a picture in the window are far smoother: a frame took up to 100 ms on the main thread, and now takes 5 to 25 ms.
 - ⌘+, ⌘− and the arrow keys work as soon as the window opens, without clicking the folder first.
