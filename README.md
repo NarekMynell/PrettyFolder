@@ -6,9 +6,18 @@
 
 <p align="center">Put any picture on a folder icon on your Mac.</p>
 
-<p align="center">
-  <img src="docs/hero.gif" width="300" alt="The real app on a Mac desktop, a mountain lake at sunset. A picture of a smiling pink axolotl is dragged to a plain folder and dropped on the Set as Icon badge. Then one big folder wears everything in turn: headphones, fruit, a rocket, a tree frog, a robot that shrinks into a corner and grows past the edges, and oranges spinning to any angle.">
-</p>
+<table>
+<tr>
+<td width="33%" valign="top"><img src="docs/drop.gif" width="100%" alt="A picture of a pink axolotl is dragged to a folder and dropped on the Set as Icon badge, and the folder shows it. Then a transparent logo is dropped on another folder: only the lightning bolt is left on it, the blue folder showing all around."><br><b>Drop a picture on a folder</b><br>Drag it over a folder and drop it on <b>Set as Icon</b>. A transparent PNG or an SVG leaves the folder showing around it.</td>
+<td width="33%" valign="top"><img src="docs/buttons.gif" width="100%" alt="The pointer rests on a folder and buttons appear on it. The trash button takes the picture off, the picture button opens a panel where a tree frog is picked, and the last button opens the folder in PrettyFolder's window."><br><b>Or use the buttons on it</b><br>Point at a folder in Finder's icon view or on the Desktop to choose a picture, take it off or open the window.</td>
+<td width="33%" valign="top"><img src="docs/frame.gif" width="100%" alt="In the window, a handle changes the shape of the frame around an aerial photo, and the frame is dragged to another spot. Two fingers pinch it until it is far bigger than the folder, tab and all, and dragging it brings a palm island over the folder."><br><b>Any shape, any size, anywhere</b><br>Drag the handles or the frame, pinch or scroll. It snaps to the folder's lines and goes up to eight times the folder, tab and all.</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/picture.gif" width="100%" alt="Fit shows the whole flamingo and Fill brings it back. The right mouse button slides the picture to show the flamingo's head. The dial turns it to an angle, a button next to the dial turns it a quarter turn, and Command Z takes that back."><br><b>The part that shows, at any angle</b><br><b>Fill</b> or <b>Fit</b>. The right mouse button moves the picture in its frame. The dial, the buttons beside it or two fingers turn it.</td>
+<td valign="top"><img src="docs/several.gif" width="100%" alt="Three folders are selected and right-clicked, and Folder Picture… opens the window. A photo dropped on the window lands on all three folders, and a pinch changes all three."><br><b>Several folders at once</b><br>Select them, right-click, <b>Folder Picture…</b>. A picture dropped on the window, and whatever you do there, goes to all of them.</td>
+<td valign="top"><img src="docs/everything.gif" width="100%" alt="A folder is duplicated with the Option key, and the copy has the same picture. In the Default Look window the frame is made smaller and saved: a question asks about the folders using it, and all three change. Behind the gear, Remove All Pictures asks first, then all three go back to plain."><br><b>All your folders</b><br>Copies keep their picture, and moved folders stay known. A new default look can reach them all, and <b>Remove All Pictures…</b> takes everything off.</td>
+</tr>
+</table>
 
 ## Install
 
@@ -23,54 +32,13 @@
 
 PrettyFolder starts with your Mac and lives in the menu bar. Needs macOS 14 Sonoma or later.
 
-## Give a folder a picture
+## Good to know
 
-<table>
-<tr>
-<td width="33%" valign="top"><img src="docs/drop.gif" width="100%" alt="A picture of a pink axolotl is dragged to a folder and dropped on the Set as Icon badge. The folder shows the axolotl."><br><b>Drop it</b><br>Drag a picture over a folder and drop it on <b>Set as Icon</b>. Dropping it on the folder itself works as always.</td>
-<td width="33%" valign="top"><img src="docs/choose.gif" width="100%" alt="The pointer rests on a plain folder and buttons appear on it. The picture button opens a panel, a tree frog is picked, and the folder shows the frog."><br><b>Choose it</b><br>Point at a folder in Finder's icon view or on the Desktop. Buttons appear on top: the first one picks a picture.</td>
-<td width="33%" valign="top"><img src="docs/remove.gif" width="100%" alt="The pointer rests on a folder with a leaf on it. The trash button takes the leaf off, and the plain folder is back."><br><b>Take it off</b><br>The trash button puts the standard folder back.</td>
-</tr>
-<tr>
-<td valign="top"><img src="docs/open.gif" width="100%" alt="The third button on a folder opens the folder in PrettyFolder's window."><br><b>Open the window</b><br>The last button opens the folder in PrettyFolder's window, where everything below happens.</td>
-<td valign="top"><img src="docs/menu.gif" width="100%" alt="A right-click on a folder opens Finder's menu. Folder Picture… opens PrettyFolder's window."><br><b>Or right-click</b><br>Finder's menu has one item from PrettyFolder, <b>Folder Picture…</b>, for one folder or several.</td>
-<td valign="top"><img src="docs/clear.gif" width="100%" alt="A transparent rocket and a transparent logo are dropped on two folders. Only the rocket and the lightning bolt are left on them, the blue folder showing all around."><br><b>Logos and cut-outs</b><br>A transparent PNG or an SVG leaves the folder showing around it. SVGs stay sharp at every size.</td>
-</tr>
-</table>
-
-## Put it just where you want
-
-<table>
-<tr>
-<td width="33%" valign="top"><img src="docs/size.gif" width="100%" alt="Two fingers pinch the frame around a little robot until it is small, then the frame is dragged into the folder's corner."><br><b>Any size, anywhere</b><br>Pinch or scroll to change the size, and drag the frame anywhere on the folder.</td>
-<td width="33%" valign="top"><img src="docs/shape.gif" width="100%" alt="The frame's handles are dragged, and its shape changes, sticking to the folder's lines."><br><b>Any shape</b><br>Drag the handles. Everything snaps to the folder's edges and middle. ⇧ keeps the proportions, ⌥ resizes around the middle, ⌘ turns snapping off.</td>
-<td width="33%" valign="top"><img src="docs/zoom.gif" width="100%" alt="Two fingers pinch the frame around an aerial photo of a lagoon until it is four times the folder, then dragging the frame brings a palm island over the folder."><br><b>Zoom in</b><br>Make the frame up to eight times the folder, and drag it to choose the part that shows.</td>
-</tr>
-<tr>
-<td valign="top"><img src="docs/cover.gif" width="100%" alt="Two fingers pinch the frame around a peony until the photo takes over the whole folder, tab and all."><br><b>The whole folder</b><br>Stretch the frame over the folder, and the picture covers it right up to its outline, in the folder's own light and shade.</td>
-<td valign="top"><img src="docs/part.gif" width="100%" alt="The right mouse button slides a tall picture down inside its frame, to show the flamingo's head."><br><b>Choose the part</b><br>Drag with the right mouse button to move the picture inside its frame. Or hold Control, or double-click and drag.</td>
-<td valign="top"><img src="docs/fit.gif" width="100%" alt="Fit shows the whole flamingo inside the frame, and Fill brings it back over the whole frame."><br><b>Fill or Fit</b><br><b>Fill</b> covers the whole frame. <b>Fit</b> shows the whole picture inside it.</td>
-</tr>
-<tr>
-<td valign="top"><img src="docs/turn.gif" width="100%" alt="Dragging the dial under the folder turns a crooked sunset one way, then back until the horizon is straight."><br><b>Any angle</b><br>Drag the dial. It sticks to upright and to quarter turns; ⇧ turns in steps of 15°, and a double-click makes the picture upright.</td>
-<td valign="top"><img src="docs/quarter.gif" width="100%" alt="The buttons beside the dial turn a sea turtle a quarter turn each way, then two fingers twist it to an angle."><br><b>Quarter turns and a twist</b><br>The buttons beside the dial turn a quarter turn, and so do ⌘L and ⌘R. Twist two fingers on the trackpad for any angle.</td>
-<td valign="top"><img src="docs/keys.gif" width="100%" alt="Arrow keys move the frame, Command minus makes it smaller, and Command Z takes the last change back."><br><b>From the keyboard</b><br>Arrow keys nudge the frame, ⌥ and arrows nudge the picture, ⌘+ and ⌘− resize it, and ⌘Z undoes. <b>Done</b> closes the window.</td>
-</tr>
-</table>
-
-## All your folders
-
-<table>
-<tr>
-<td width="33%" valign="top"><img src="docs/several.gif" width="100%" alt="A picture is dropped on the window for three folders. All three get it, and a pinch changes all three."><br><b>Several at once</b><br>Select folders and right-click. Drop a picture on the window, and whatever you do there happens to all of them.</td>
-<td width="33%" valign="top"><img src="docs/default.gif" width="100%" alt="The frame in the default look is made smaller and saved. A question asks about the folders using it, and all three folders change."><br><b>A default look</b><br><b>Default</b> is the look new pictures get. Saving it asks whether the folders using it should change too.</td>
-<td width="33%" valign="top"><img src="docs/copies.gif" width="100%" alt="A folder is duplicated with the Option key. The copy has the same picture, and a pinch in the window changes the copy only."><br><b>Copies and moves</b><br>A copy keeps its picture and gets a look of its own. A folder moved or renamed stays known, on any disk.</td>
-</tr>
-<tr>
-<td valign="top"><img src="docs/removeall.gif" width="100%" alt="The gear in the window opens the settings. Remove All Pictures asks first, then all three folders go back to plain."><br><b>Everything behind the gear</b><br>Open at login, the menu bar icon, the buttons on folders, <b>Redraw All Pictures</b> and <b>Remove All Pictures…</b>.</td>
-<td colspan="2" valign="top"><img src="docs/depth.png" width="100%" alt="Eight folders covered completely by a photo: blood oranges and dragon fruit, a tree frog, the northern lights, oranges in their leaves, a sea turtle, a magenta peony, a pineapple and a beach from the air. Each keeps the folder's tab, light and shade."><br><b>Any picture macOS can open</b><br>JPEG, PNG, HEIC, WebP, GIF, TIFF, PSD, RAW, PDF, SVG and more.</td>
-</tr>
-</table>
+- **Pictures:** JPEG, PNG, HEIC, WebP, GIF, TIFF, PSD, RAW, PDF, SVG and anything else macOS can open.
+- **Frame:** ⇧ keeps the proportions, ⌥ resizes around the middle, ⌘ turns snapping off. Arrow keys nudge it, and ⌘+ and ⌘− resize it.
+- **Picture:** Control-drag, or double-click and drag, moves it too, and so do ⌥ and the arrow keys. ⌘L and ⌘R make quarter turns. On the dial, ⇧ turns in steps of 15° and a double-click makes the picture upright.
+- **Default look:** the one new pictures get. Saving it asks whether the folders using it should change too.
+- **Behind the gear:** open at login, the menu bar icon, the buttons on folders, **Redraw All Pictures** and **Remove All Pictures…**. Backups and clones of a whole Mac are left alone.
 
 ## Uninstall
 
@@ -87,7 +55,7 @@ cd PrettyFolder
 make install
 ```
 
-`make test` runs the tests, and `make readme-media` draws the pictures and animations in this README from the app's own views.
+`make test` runs the tests, and `make readme-media` draws the animations in this README from the app's own views.
 
 ## License
 

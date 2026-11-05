@@ -5,11 +5,11 @@ import ObjectiveC
 import PrettyFolderKit
 import SwiftUI
 
-/// Renders the README's pictures and animations from the app's own views and icons:
+/// Renders the README's animations from the app's own views and icons:
 ///
 ///     PrettyFolder --readme-media <output folder> --pictures <folder> [--only <scene>] [--scale 2] [--fps 25] [--pointer 1]
 ///
-/// writes a folder of numbered PNG frames for each animation, and single PNGs, then quits.
+/// writes a folder of numbered PNG frames for each animation, then quits.
 /// `wallpaper.jpg` among the pictures, if there is one, is the desktop the scenes are on.
 /// `make readme-media` builds a debug copy, runs this and turns the frames into GIFs.
 ///
@@ -123,24 +123,12 @@ final class Studio {
 
     func render(only: String?) async throws {
         let scenes: [(name: String, render: () async throws -> Void)] = [
-            ("depth", renderDepth),
             ("drop", renderDrop),
-            ("hover", renderHover),
-            ("menu", renderMenu),
-            ("clear", renderClear),
-            ("size", renderSize),
-            ("shape", renderShape),
-            ("zoom", renderZoom),
-            ("cover", renderCover),
-            ("part", renderPart),
-            ("fit", renderFit),
-            ("turn", renderTurn),
-            ("quarter", renderQuarter),
-            ("keys", renderKeys),
+            ("buttons", renderButtons),
+            ("frame", renderFrame),
+            ("picture", renderPicture),
             ("several", renderSeveral),
-            ("default", renderDefault),
-            ("copies", renderCopies),
-            ("removeall", renderRemoveAll),
+            ("everything", renderEverything),
         ]
         for scene in scenes where only == nil || only == scene.name {
             print("Rendering \(scene.name)…")
