@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.4
+
+- **Remove All Pictures** now looks everywhere before it asks: every other disk, however big, and what Spotlight leaves out of your home folder, such as hidden folders and caches. It never stops to ask macOS for access to a folder it hasn't been in. If a big disk takes more than half a minute it asks about what it has found so far, and what turns up later goes the same way.
+- It also takes the picture off copies from before folders carried their look, which nothing else could reach any more.
+- A copy on a disk Spotlight only gets to after it is connected comes on the list as soon as Spotlight knows about it, however long that takes. So does any new copy while PrettyFolder is running.
+- A folder renamed on an exFAT or FAT disk stays known, even when a new folder takes its old name, and an open window stays on it.
+- A disk with a whole Mac on it, such as a clone made by a backup app, is left alone by the search, as Time Machine backups are.
+- A frame far bigger than the folder no longer draws its edges over the buttons above and below the folder.
+- ⌘+ works on keyboard layouts whose Command key only knows the Latin lower row, such as Armenian Phonetic.
+- The README shows it all in six short animations.
+
 ## 1.3.3
 
 - PrettyFolder now finds copies of folders nobody has opened, folders moved to another disk, and folders moved around an exFAT or FAT disk, by itself: at launch, when a disk is connected, and before a new default look, **Redraw All Pictures** or **Remove All Pictures**. So all of those reach them, and the count in **Remove All Pictures** includes them. A folder in the trash or a backup folder stays out; a clone of a whole disk can't be told from copies, so it counts as copies.
