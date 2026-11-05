@@ -1527,8 +1527,194 @@ import UniformTypeIdentifiers
         _ = try marked(".Trashes/501/Thrown away")
         _ = try marked("Backups.backupdb/Mac/Latest/Kept")
         _ = try marked("Some.app/Contents/Inside")
-        let found = FolderSearch.markedFolders(on: disk).map(\.lastPathComponent)
+        let found = FolderSearch.markedFolders(in: [disk]).map(\.lastPathComponent)
         #expect(found == [deep.lastPathComponent])
+    }
+
+    @Test func goingThroughTheHomeFolderFindsWhatSpotlightLeavesOutWithoutAskingForAnything() throws {
+        let home = try temp.folder("Home")
+        func marked(_ path: String) throws -> URL {
+            let folder = home.appendingPathComponent(path, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            ExtendedAttributes.set(Data("x".utf8), named: FolderImageManager.markerAttribute, at: folder)
+            return folder
+        }
+        let hidden = try marked(".config/backup/Hidden")
+        let unindexed = try marked("Work/Stuff.noindex/Unindexed")
+        let cached = try marked("Library/Caches/com.some.tool/Cached")
+        let known = try marked("Documents/Known")
+        _ = try marked("Documents/.old/Beside")
+        _ = try marked("Library/Containers/some.app/Data/Theirs")
+        _ = try marked("Desktop/.old/Protected")
+        _ = try marked("Downloads/Protected")
+        _ = try marked(".Trash/Thrown away")
+        try FileManager.default.createSymbolicLink(at: home.appendingPathComponent("Link"), withDestinationURL: temp.url)
+
+        let found = Set(FolderSearch.markedFolders(in: FolderSearch.placesInHome(home, knownPaths: [FolderInspector.canonicalPath(known.path)])).map(\.lastPathComponent))
+        #expect(found == [hidden.lastPathComponent, unindexed.lastPathComponent, cached.lastPathComponent, known.lastPathComponent, "Beside"])
+    }
+
+    @Test func aFolderInAHiddenPlaceInTheHomeFolderIsTheOneMarkedThereToo() throws {
+        let home = try temp.folder("Home")
+        let top = home.appendingPathComponent("Marked", isDirectory: true)
+        try FileManager.default.createDirectory(at: top, withIntermediateDirectories: true)
+        ExtendedAttributes.set(Data("x".utf8), named: FolderImageManager.markerAttribute, at: top)
+        #expect(FolderSearch.markedFolders(in: FolderSearch.placesInHome(home, knownPaths: [])).map(\.lastPathComponent) == ["Marked"])
+    }
+
+    /// A folder with an icon from PrettyFolder, and nothing that says which picture it is.
+    private func orphan(named name: String, marker: String = UUID().uuidString) throws -> URL {
+        let folder = try temp.folder(name)
+        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 0, blue: 1), forFile: folder.path, options: []))
+        ExtendedAttributes.set(Data(marker.utf8), named: FolderImageManager.markerAttribute, at: folder)
+        return folder
+    }
+
+    @Test func aCopyWhosePictureIsGoneCanStillHaveItTakenOffWithTheRest() async throws {
+        let original = try temp.folder("Original")
+        _ = await manager.apply(imageAt: picture, to: [original])
+        let lost = try orphan(named: "Lost")
+        await manager.takeOn([lost])
+        #expect(await manager.look(for: lost) == nil)
+        #expect(await manager.managedFolderCount() == 1)
+        #expect(await manager.folderCountWithPictures() == 2)
+
+        let outcomes = await manager.removeAll()
+        #expect(outcomes.allSatisfy { $0.succeeded }, "\(outcomes)")
+        #expect(!FolderInspector.hasCustomIcon(lost))
+        #expect(!FolderInspector.hasCustomIcon(original))
+        #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: lost) == nil)
+        #expect(await manager.folderCountWithPictures() == 0)
+    }
+
+    @Test func aPictureFromAnotherMacIsLeftToThatMac() async throws {
+        let original = try temp.folder("Original")
+        _ = await manager.apply(imageAt: picture, to: [original])
+        let copied = try copy(original, as: "From another Mac")
+        // What this list sees of it: a look it can't draw, under a marker it doesn't know.
+        let other = FolderImageManager(directory: try temp.folder("Empty"), defaultStyle: .standard)
+        ExtendedAttributes.set(Data(UUID().uuidString.utf8), named: FolderImageManager.markerAttribute, at: copied)
+        await other.takeOn([copied])
+        #expect(await other.look(for: copied) == nil)
+        #expect(await other.folderCountWithPictures() == 0)
+        #expect(await other.removeAll().isEmpty)
+        #expect(FolderInspector.hasCustomIcon(copied))
+    }
+
+    @Test func someoneElsesIconOnAFolderThatOnceHadOursStaysPut() async throws {
+        let folder = try temp.folder("Theirs now")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        let copied = try copy(folder, as: "Copy")
+        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), forFile: copied.path, options: []))
+        await manager.takeOn([copied])
+        #expect(await manager.folderCountWithPictures() == 1, "only the original")
+        #expect(await manager.removeAll().allSatisfy { $0.succeeded })
+        #expect(FolderInspector.hasCustomIcon(copied))
+    }
+
+    @Test func aStrayThatLostItsIconMeanwhileIsNotCountedOrReported() async throws {
+        let lost = try orphan(named: "Lost")
+        await manager.takeOn([lost])
+        #expect(await manager.folderCountWithPictures() == 1)
+        #expect(NSWorkspace.shared.setIcon(nil, forFile: lost.path, options: []))
+        #expect(await manager.folderCountWithPictures() == 0)
+        #expect(await manager.removeAll().isEmpty)
+    }
+
+    @Test func aStrayThatGetsAPictureIsCountedOnce() async throws {
+        let lost = try orphan(named: "Lost")
+        await manager.takeOn([lost])
+        #expect(await manager.apply(imageAt: picture, to: [lost]).allSatisfy { $0.succeeded })
+        #expect(await manager.folderCountWithPictures() == 1)
+    }
+
+    @Test func aStrayThatCouldNotBeChangedIsToldAboutAndTriedAgain() async throws {
+        let lost = try orphan(named: "Lost")
+        await manager.takeOn([lost])
+        let file = FolderInspector.iconFileURL(for: lost)
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: file.path)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: file.path) }
+        let refused = await manager.removeAll()
+        #expect(refused.count == 1 && !refused[0].succeeded)
+        #expect(await manager.folderCountWithPictures() == 1)
+        try FileManager.default.setAttributes([.immutable: false], ofItemAtPath: file.path)
+        #expect(await manager.removeAll().allSatisfy { $0.succeeded })
+        #expect(!FolderInspector.hasCustomIcon(lost))
+    }
+
+    @Test func aDeletedFolderWithANewOneInItsPlaceIsNotCountedOrReported() async throws {
+        let folder = try temp.folder("Mine")
+        _ = await manager.apply(imageAt: picture, to: [folder])
+        try FileManager.default.removeItem(at: folder)
+        _ = try temp.folder("Mine")
+        #expect(await manager.folderCountWithPictures() == 0)
+        #expect(await manager.removeAll().allSatisfy { $0.succeeded })
+        #expect(await manager.managedFolderCount() == 0)
+    }
+
+    @Test func aPictureGivenWhileTheSearchGoesOnStays() async throws {
+        let first = try temp.folder("Before")
+        _ = await manager.apply(imageAt: picture, to: [first])
+        let later = try temp.folder("Later")
+        let manager = self.manager, picture = self.picture
+        let search = Task<Void, Never> {
+            _ = await manager.apply(imageAt: picture, to: [later])
+        }
+        #expect(await manager.removeAll(whileSearching: search).allSatisfy { $0.succeeded })
+        #expect(!FolderInspector.hasCustomIcon(first))
+        #expect(FolderInspector.hasCustomIcon(later))
+    }
+
+    @Test func whatTheSearchTurnsUpAfterTheAnswerGoesTooWithItsPictureStillThere() async throws {
+        let original = try temp.folder("Original")
+        _ = await manager.apply(imageAt: picture, to: [original])
+        let late = try copy(original, as: "Late")
+        let lost = try orphan(named: "Lost")
+        await manager.takeOn([lost])
+        let manager = self.manager
+        // It may turn up only once all the others are gone, and their picture with them.
+        let search = Task<Void, Never> {
+            while await manager.managedFolderCount() > 0 { await Task.yield() }
+            ExtendedAttributes.set(Data(UUID().uuidString.utf8), named: FolderImageManager.markerAttribute, at: late)
+            await manager.takeOn([late])
+        }
+        let outcomes = await manager.removeAll(whileSearching: search)
+        #expect(outcomes.allSatisfy { $0.succeeded }, "\(outcomes)")
+        for folder in [original, late, lost] { #expect(!FolderInspector.hasCustomIcon(folder), "\(folder.lastPathComponent)") }
+        #expect(await manager.folderCountWithPictures() == 0)
+        #expect(storedPictures().isEmpty, "and the picture goes in the end")
+    }
+
+    @Test func aFolderRenamedAfterItsDatesWerePutBackIsStillFollowed() throws {
+        let old = try temp.folder("Old")
+        let location = try #require(FolderInspector.Location(of: old))
+        // Set to before it was made, the system moves the date it was made along.
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_500_000_000)], ofItemAtPath: old.path)
+        try FileManager.default.moveItem(at: old, to: temp.url.appendingPathComponent("Renamed", isDirectory: true))
+        _ = try temp.folder("Old")
+        #expect(location.current?.lastPathComponent == "Renamed")
+    }
+
+    @Test func aPictureOnDocumentsItselfMeansItCanBeGoneThrough() throws {
+        let home = try temp.folder("Home")
+        let documents = home.appendingPathComponent("Documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        let places = FolderSearch.placesInHome(home, knownPaths: [FolderInspector.canonicalPath(documents.path)]).map(\.lastPathComponent)
+        #expect(places.contains("Documents"))
+        // Not by a neighbor with a longer name.
+        let others = FolderSearch.placesInHome(home, knownPaths: [FolderInspector.canonicalPath(documents.path) + "2/Folder"]).map(\.lastPathComponent)
+        #expect(!others.contains("Documents"))
+    }
+
+    @Test func iconFilesSpotlightReportsBringOnlyMarkedFoldersOnTheList() async throws {
+        let original = try temp.folder("Original")
+        _ = await manager.apply(imageAt: picture, to: [original])
+        let copied = try copy(original, as: "Copy")
+        let plain = try temp.folder("Plain")
+        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), forFile: plain.path, options: []))
+        await manager.takeOn(iconFiles: [copied, plain].map(FolderInspector.iconFileURL(for:)))
+        #expect(await manager.managedFolderCount() == 2)
+        #expect(await manager.look(for: plain) == nil)
     }
 
     // MARK: - Pictures no folder on the list uses
@@ -1772,7 +1958,7 @@ import UniformTypeIdentifiers
             ExtendedAttributes.set(Data("x".utf8), named: FolderImageManager.markerAttribute, at: folder)
             kept.append(path)
         }
-        #expect(FolderSearch.markedFolders(on: disk).map { $0.deletingLastPathComponent().lastPathComponent } == ["Fine"])
+        #expect(FolderSearch.markedFolders(in: [disk]).map { $0.deletingLastPathComponent().lastPathComponent } == ["Fine"])
     }
 
         @Test func anSVGThroughALinkIsKeptAsVector() async throws {

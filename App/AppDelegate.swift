@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isReady = false
     private var queuedCommands: [(FolderCommand, fromOurExtension: Bool)] = []
     private var mountObserver: NSObjectProtocol?
+    private var spotlightWatch: FolderSpotlightWatch?
     /// Quitting was asked for and is waiting for an answer, or for the last writes.
     private var isQuitting = false
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "App")
@@ -39,9 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Find copies and moved folders that are new to the list, forget folders whose icon was
         // changed elsewhere, and pictures left over from a crash.
         Task {
-            await manager.findFolders(.disksWithoutSpotlight)
+            await manager.findFolders()
             await manager.prune()
             await redrawOutdatedIcons()
+            // Last: on a big disk without Spotlight this takes as long as it takes.
+            await manager.findFolders(.placesWithoutSpotlight)
         }
         // Folders on a disk that wasn't connected catch up as soon as it is.
         mountObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -49,11 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor in
                 await self?.redrawOutdatedIcons()
-                await self?.manager.findFolders(.disksWithoutSpotlight)
-                // Spotlight may only be starting on a disk it hasn't seen before.
-                try? await Task.sleep(for: .seconds(60))
-                await self?.manager.findFolders()
+                await self?.manager.findFolders(.placesWithoutSpotlight)
             }
+        }
+        // Spotlight may take a while over a disk it hasn't seen before. It says when it knows more.
+        spotlightWatch = FolderSpotlightWatch { [manager] iconFiles in
+            Task { await manager.takeOn(iconFiles: iconFiles) }
         }
 
         isReady = true

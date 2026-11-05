@@ -108,6 +108,7 @@ final class EditorModel {
     @ObservationIgnored private var afterSavingDefault: ((Bool) -> Void)?
     /// The default look being saved, while that goes on.
     @ObservationIgnored private var savingDraft: IconStyle?
+    @ObservationIgnored private var isSearchingEverywhere = false
 
     init(actions: FolderActions) {
         self.actions = actions
@@ -589,13 +590,11 @@ final class EditorModel {
     // MARK: - Every folder
 
     /// Finds the folders the list doesn't know yet, so that whatever is about to happen to every
-    /// folder happens to them too. The window says it is busy meanwhile. Spotlight is quick; going
-    /// through every disk takes a while, and Remove All, when nothing should be left behind, stops
-    /// at half a minute.
-    private func findFolders(_ reach: FolderSearchReach = .spotlight) async {
+    /// folder happens to them too. The window says it is busy meanwhile.
+    private func findFolders() async {
         let wasRunning = progress.isRunning
         if !wasRunning { progress.start(total: 1) }
-        await actions.manager.findFolders(reach, patience: 30)
+        await actions.manager.findFolders()
         if !wasRunning { progress.isRunning = false }
     }
 
@@ -615,15 +614,30 @@ final class EditorModel {
         }
     }
 
-    /// Puts every folder that got a picture from PrettyFolder back to the standard icon,
-    /// after asking.
+    /// Puts every folder that got a picture from PrettyFolder back to the standard icon, after
+    /// asking. Nothing should be left behind, so the search goes everywhere. On a big disk that
+    /// takes long: after half a minute it asks about what has turned up, and what turns up later
+    /// goes the same way.
     func removeAll() {
         guard !progress.isRunning, let window else { return }
         let manager = actions.manager
         Task {
-            await findFolders(.everyDisk)
+            progress.start(total: 1)
+            await manager.findFolders()
+            isSearchingEverywhere = true
+            let search = Task {
+                await manager.findFolders(.everywhere)
+                isSearchingEverywhere = false
+            }
+            let patience = Date().addingTimeInterval(30)
+            var count = await manager.folderCountWithPictures()
+            while isSearchingEverywhere, Date() < patience || count == 0 {
+                try? await Task.sleep(for: .milliseconds(100))
+                count = await manager.folderCountWithPictures()
+            }
             await manager.prune()
-            let count = await manager.folderCountWithPictures()
+            count = await manager.folderCountWithPictures()
+            progress.isRunning = false
             guard count > 0 else { return }
             let alert = NSAlert()
             alert.messageText = count == 1
@@ -638,7 +652,7 @@ final class EditorModel {
                 self.progress.start(total: count)
                 let reporter = self.progress.reporter
                 Task {
-                    let outcomes = await manager.removeAll(progress: reporter)
+                    let outcomes = await manager.removeAll(progress: reporter, whileSearching: search)
                     self.progress.isRunning = false
                     self.actions.report(outcomes)
                     self.reload()

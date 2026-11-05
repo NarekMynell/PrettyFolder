@@ -207,6 +207,8 @@ final class StyleEditorView: NSView, NSViewToolTipOwner, NSMenuItemValidation {
         for overlay in [guidesView, frameView] {
             overlay.frame = bounds
             overlay.autoresizingMask = [.width, .height]
+            // A frame well past the folder has its edges over the rest of the window otherwise.
+            overlay.clipsToBounds = true
             addSubview(overlay)
         }
         guidesView.isHidden = true

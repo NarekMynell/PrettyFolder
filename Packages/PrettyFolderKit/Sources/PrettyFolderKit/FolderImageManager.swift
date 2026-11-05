@@ -94,6 +94,11 @@ public actor FolderImageManager {
     private var hasUnsavedChanges = false
     /// Set while folders found on the disks get their records (see `takeOn`).
     private var isFinding = false
+    /// Folders found showing a picture from PrettyFolder that nothing says anything about any more:
+    /// copies from before folders carried their look. They can only have it taken off. (One that
+    /// says which picture it shows, and it isn't here, comes from another Mac or another person on
+    /// this one, and stays theirs.)
+    private var strays = Set<URL>()
     private lazy var renderer = IconRenderer()
     public private(set) var defaultStyle: IconStyle
     private let unusedPictureAllowance: Int
@@ -388,17 +393,26 @@ public actor FolderImageManager {
         library.records.count
     }
 
-    /// Number of folders with a picture, for saying so: on the list, and not deleted.
+    /// Number of folders with a picture, for saying so: those known and not deleted, and those
+    /// that can only have it taken off.
     public func folderCountWithPictures() -> Int {
-        library.records.values.filter { !isGone($0) }.count
+        library.records.values.filter { !isGone($0) }.count + currentStrays.count
+    }
+
+    /// Those that are still what they were when they were found.
+    private var currentStrays: [URL] {
+        strays.filter { Self.appearsToHavePicture($0) && isStray($0) }
     }
 
     /// Whether a record's folder has been deleted, as far as can be told: it can't be found, and
     /// nothing stands in the way of finding it.
     private func isGone(_ record: FolderRecord) -> Bool {
         var record = record
-        return resolve(&record) == nil && !FolderInspector.isOnDiskThatIsAway(record.lastKnownPath)
-            && FolderInspector.isKnownToBeAbsent(record.lastKnownPath)
+        guard resolve(&record) == nil, !FolderInspector.isOnDiskThatIsAway(record.lastKnownPath) else { return false }
+        if FolderInspector.isKnownToBeAbsent(record.lastKnownPath) { return true }
+        // Another folder has taken its place, unless what is there can't be read.
+        if case .unreadable = ExtendedAttributes.read(named: Self.markerAttribute, at: URL(fileURLWithPath: record.lastKnownPath)) { return false }
+        return true
     }
 
     /// Changes the default look.
@@ -458,12 +472,31 @@ public actor FolderImageManager {
     /// folder that can't be reached or changed right now (on a disk that isn't connected,
     /// say) keeps its record and comes back as a failure, so it can be done later; a folder
     /// whose icon someone else changed is only forgotten.
-    public func removeAll(progress: (@Sendable (Int, Int) -> Void)? = nil) async -> [FolderOutcome] {
+    ///
+    /// With `search` still going on, what it turns up goes the same way once it is done. A picture
+    /// given to a folder meanwhile is new, and stays.
+    public func removeAll(progress: (@Sendable (Int, Int) -> Void)? = nil, whileSearching search: Task<Void, Never>? = nil) async -> [FolderOutcome] {
+        var outcomes = await removeKnown(onlyFound: false, progress: progress)
+        if let search {
+            await search.value
+            let later = await removeKnown(onlyFound: true, progress: progress)
+            let retried = Set(later.map(\.folder.path))
+            outcomes = outcomes.filter { !retried.contains($0.folder.path) } + later
+        }
+        library.collectGarbage()
+        persist()
+        return outcomes
+    }
+
+    private func removeKnown(onlyFound: Bool, progress: (@Sendable (Int, Int) -> Void)?) async -> [FolderOutcome] {
         var outcomes: [FolderOutcome] = []
         var handled = Set<UUID>()
+        func isDue(_ record: (key: UUID, value: FolderRecord)) -> Bool {
+            !handled.contains(record.key) && (!onlyFound || record.value.wasFound == true)
+        }
         // Drops and menu actions keep working meanwhile, so always take the library as it
         // is now rather than a list made at the start.
-        while !isStopped, let id = library.records.keys.first(where: { !handled.contains($0) }) {
+        while !isStopped, let id = library.records.first(where: isDue)?.key {
             handled.insert(id)
             guard var record = library.record(id) else { continue }
             if let folder = resolve(&record) {
@@ -496,12 +529,17 @@ public actor FolderImageManager {
                 let folder = URL(fileURLWithPath: record.lastKnownPath, isDirectory: true)
                 outcomes.append(.failed(folder, FolderImageError.unreachable(displayName(folder))))
             }
-            let left = library.records.keys.filter { !handled.contains($0) }.count
+            let left = library.records.filter(isDue).count
             progress?(handled.count, handled.count + left)
             await Task.yield()
         }
-        library.collectGarbage()
-        persist()
+        if !isStopped {
+            let found = currentStrays
+            let done = await removeImage(from: found)
+            // Those it didn't work for are still there to be told about, and tried again.
+            strays = Set(done.filter { !$0.succeeded }.map(\.folder))
+            outcomes += done
+        }
         return outcomes
     }
 
@@ -517,10 +555,18 @@ public actor FolderImageManager {
     /// Puts on the list the folders across the Mac's disks that show a picture from PrettyFolder
     /// and aren't on it yet: copies nobody has opened, folders moved to another disk or around one
     /// where they can't be followed. From then on a new default look, Redraw All and Remove All
-    /// reach them like any other. The disks are searched off this actor; going through them stops
-    /// after `patience` seconds, which only a big disk would use up.
-    public func findFolders(_ reach: FolderSearchReach = .spotlight, patience: TimeInterval = 300) async {
-        let found = await Task.detached(priority: .utility) { FolderSearch.markedFolders(reach, patience: patience) }.value
+    /// reach them like any other. The disks are searched off this actor, unhurried unless someone
+    /// is waiting for it.
+    public func findFolders(_ reach: FolderSearchReach = .spotlight) async {
+        let known = library.records.values.map(\.lastKnownPath)
+        let priority: TaskPriority = reach == .placesWithoutSpotlight ? .background : .utility
+        let found = await Task.detached(priority: priority) { FolderSearch.markedFolders(reach, knownPaths: known) }.value
+        await takeOn(found)
+    }
+
+    /// The same for icon files Spotlight has just got to know about.
+    public func takeOn(iconFiles: [URL]) async {
+        let found = await Task.detached(priority: .utility) { FolderSearch.markedFolders(holding: iconFiles) }.value
         await takeOn(found)
     }
 
@@ -537,7 +583,9 @@ public actor FolderImageManager {
         var next = new[...]
         while !next.isEmpty, !isStopped {
             isFinding = true
-            for folder in next.prefix(32) { _ = ownedRecord(for: folder) }
+            for folder in next.prefix(32) where ownedRecord(for: folder) == nil && isStray(folder) {
+                strays.insert(folder)
+            }
             isFinding = false
             next = next.dropFirst(32)
             persist()
@@ -784,6 +832,15 @@ public actor FolderImageManager {
         return record
     }
 
+    /// Whether a folder without a record, and none to be had, is a copy from before folders carried
+    /// their look. The marker is all there is to go by, unless it is the record's own folder, whose
+    /// icon someone else has changed.
+    private func isStray(_ folder: URL) -> Bool {
+        guard let id = markerID(of: folder), FolderInspector.customIconFlag(folder) == true, CarriedLook.read(from: folder) == nil else { return false }
+        guard var record = library.record(id) else { return true }
+        return !describes(&record, folder)
+    }
+
     /// What `folder` says about its icon, if that is the icon it shows.
     private func carriedLook(of folder: URL) -> CarriedLook? {
         guard FolderInspector.customIconFlag(folder) == true, let look = CarriedLook.read(from: folder),
@@ -847,21 +904,22 @@ public actor FolderImageManager {
     /// with the up-to-date copy instead of saving an old one over it later.
     private func resolve(_ record: inout FolderRecord) -> URL? {
         var stale = false
-        guard var url = try? URL(
+        var resolved = try? URL(
             resolvingBookmarkData: record.bookmark,
             options: [.withoutUI, .withoutMounting],
             relativeTo: nil,
             bookmarkDataIsStale: &stale
-        ) else { return nil }
+        )
         // A bookmark looks at the old path first, and what is there may be another folder by now:
         // a new one, or a copy given the old name. This one still has its number, unless it went
         // to another disk: then it gets its record back when it is next looked at (see `ownedRecord`).
-        if let number = record.fileNumber, number != FolderInspector.fileNumber(of: url),
-           let moved = FolderInspector.item(numbered: number, onDiskOf: url), markerID(of: moved) == record.id {
-            url = moved
+        if let number = record.fileNumber, resolved.map({ number != FolderInspector.fileNumber(of: $0) }) ?? true,
+           let moved = FolderInspector.item(numbered: number, near: resolved ?? URL(fileURLWithPath: record.lastKnownPath)),
+           markerID(of: moved) == record.id {
+            resolved = moved
             stale = true
         }
-        guard markerID(of: url) == record.id else { return nil }
+        guard let url = resolved, markerID(of: url) == record.id else { return nil }
         var changed = false
         if stale, let fresh = try? url.bookmarkData() {
             record.bookmark = fresh

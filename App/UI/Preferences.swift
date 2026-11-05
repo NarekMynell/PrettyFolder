@@ -103,7 +103,7 @@ struct PreferencesView: View {
     private func countPictures() async {
         await model.actions.manager.findFolders()
         await model.actions.manager.prune()
-        pictureCount = await model.actions.manager.managedFolderCount()
+        pictureCount = await model.actions.manager.folderCountWithPictures()
     }
 }
 

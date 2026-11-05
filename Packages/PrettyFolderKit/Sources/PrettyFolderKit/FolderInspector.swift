@@ -112,23 +112,31 @@ public enum FolderInspector {
         let bookmark: Data
         let number: UInt64?
         let disk: String?
+        /// Where it was, for a disk whose bookmarks lose it when it is renamed (exFAT, FAT).
+        let place: URL
+        /// When it was made, for such a disk (see `item(numbered:near:created:)`).
+        let created: Date?
 
         public init?(of folder: URL) {
             guard let bookmark = try? folder.bookmarkData() else { return nil }
             self.bookmark = bookmark
             number = FolderInspector.fileNumber(of: folder)
             disk = FolderInspector.diskIdentifier(of: folder)
+            place = folder
+            created = FolderInspector.creationDate(of: folder)
         }
 
         /// Where the folder is now. A bookmark looks at the old path first, and what is there may be
         /// another folder by now: a new one, or a copy given the old name. This one still has its
-        /// number as long as it stays on its disk, on disks that can tell (not exFAT or FAT). Once in
-        /// the trash it has been let go of, for whatever has taken its place.
+        /// number as long as it stays on its disk. Once in the trash it has been let go of, for
+        /// whatever has taken its place.
         public var current: URL? {
             var stale = false
-            guard let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
-            if let number, number != FolderInspector.fileNumber(of: url), disk == FolderInspector.diskIdentifier(of: url),
-               let moved = FolderInspector.item(numbered: number, onDiskOf: url), !FolderInspector.isInTrash(moved),
+            let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale)
+            let lastSeen = url ?? place
+            if let number, url == nil || number != FolderInspector.fileNumber(of: lastSeen),
+               disk == FolderInspector.diskIdentifier(of: lastSeen.deletingLastPathComponent()),
+               let moved = FolderInspector.item(numbered: number, near: lastSeen, created: created), !FolderInspector.isInTrash(moved),
                (try? moved.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 return moved
             }
@@ -157,15 +165,32 @@ public enum FolderInspector {
         url.pathComponents.contains { $0.hasPrefix(".Trash") }
     }
 
-    /// Where the item with a number is on the disk that `neighbor` is on.
-    static func item(numbered number: UInt64, onDiskOf neighbor: URL) -> URL? {
-        neighbor.withUnsafeFileSystemRepresentation { path -> URL? in
+    static func creationDate(of url: URL) -> Date? {
+        var url = url
+        url.removeAllCachedResourceValues()
+        return (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+    }
+
+    /// Where the item with a number is now, going by where it was last seen. A disk that can't look
+    /// a number up (exFAT, FAT) still shows it among its neighbors, if it was only renamed; it may
+    /// give the number to another one when it is connected again, so it has to have been made then
+    /// too, if that is known.
+    static func item(numbered number: UInt64, near lastSeen: URL, created: Date? = nil) -> URL? {
+        let neighbors = lastSeen.deletingLastPathComponent()
+        var canLookUp = true
+        let found = neighbors.withUnsafeFileSystemRepresentation { path -> URL? in
             var disk = statfs()
             guard let path, statfs(path, &disk) == 0 else { return nil }
             var found = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-            guard fsgetpath(&found, found.count, &disk.f_fsid, number) > 0 else { return nil }
+            guard fsgetpath(&found, found.count, &disk.f_fsid, number) > 0 else {
+                canLookUp = errno != ENOTSUP
+                return nil
+            }
             return URL(fileURLWithPath: String(cString: found), isDirectory: true)
         }
+        if canLookUp { return found }
+        let items = (try? FileManager.default.contentsOfDirectory(at: neighbors, includingPropertiesForKeys: nil)) ?? []
+        return items.first { fileNumber(of: $0) == number && (created == nil || creationDate(of: $0) == created) }
     }
 
     /// The hidden `Icon\r` file that holds a folder's custom icon.

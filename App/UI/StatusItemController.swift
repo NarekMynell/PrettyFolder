@@ -89,6 +89,10 @@ enum MainMenu {
         let view = NSMenu(title: String(localized: "View"))
         view.addItem(withTitle: String(localized: "Zoom In"), action: #selector(StyleEditorView.zoomIn(_:)), keyEquivalent: "+")
         view.addItem(withTitle: String(localized: "Zoom In"), action: #selector(StyleEditorView.zoomIn(_:)), keyEquivalent: "=")
+        // A keyboard layout whose Command key only knows the Latin lower row (Armenian Phonetic, for
+        // one) sends ⌘+ as ⌘⇧=, which neither of those takes.
+        view.addItem(withTitle: String(localized: "Zoom In"), action: #selector(StyleEditorView.zoomIn(_:)), keyEquivalent: "=")
+            .keyEquivalentModifierMask = [.command, .shift]
         view.addItem(withTitle: String(localized: "Zoom Out"), action: #selector(StyleEditorView.zoomOut(_:)), keyEquivalent: "-")
         view.addItem(.separator())
         view.addItem(withTitle: String(localized: "Rotate Left"), action: #selector(StyleEditorView.rotateLeft(_:)), keyEquivalent: "l")
