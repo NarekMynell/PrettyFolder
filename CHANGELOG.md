@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.6
+
+- PrettyFolder could still keep the keyboard in rarer cases. It asked macOS about its Accessibility permission when it started, and about Open at Login when the settings opened, and waited for the answers on the thread that also runs its menu; it also read folders' names and icons there, and a network disk that has stopped answering takes as long as it likes. None of that happens on that thread any more, and a window or a panel that comes up after such a wait waits until no menu is open.
+- If PrettyFolder stops answering while one of its menus is open, it now quits after 3 seconds rather than 15, so the keyboard is back almost at once. With no menu open nothing else is kept waiting, so it no longer quits then: setting up the picture picker, for one, can take macOS a while.
+- **Remove All Pictures** could take off an icon you gave a folder yourself: if PrettyFolder had been stopped in the middle of putting a picture on it, or on a copy made before 1.3.2 that you gave your own icon. It now only takes off icons PrettyFolder drew. Two leftovers from before this update can't be told apart: an icon you gave such a copy before updating is still taken off, and a copy whose original no longer has its picture keeps its own (take it off in PrettyFolder's window).
+- On a disk that was all but full, putting a picture on a folder could leave it with no icon at all, sometimes while saying it had worked. The folder now keeps the icon it had, and you are told the disk is full.
+- A PrettyFolder opened while another copy is still running (right after an update, say) now waits until that one has quit instead of both looking after the folders at once, which could lose what one of them did. If you keep the old one, the new one gives up after two minutes.
+- For a folder on a network disk, the window's title bar no longer shows the folder's icon: macOS reads that from the disk, on the thread that runs PrettyFolder's menus.
+- The menu bar menu changes while it is open when macOS says something new, and coming back from System Settings is noticed at once. When macOS doesn't answer for a long time, PrettyFolder hears that it is back within minutes, not hours.
+- Quitting during a search stops Spotlight's tools for good, and leaves no files behind.
+
 ## 1.3.5
 
 - PrettyFolder could take the keyboard away from every app. Opening its menu in the menu bar asked macOS whether the Finder menu was on, and waited for the answer while the menu, which already had the keyboard, waited to show. Once macOS never answered, and nothing could be typed anywhere for an hour, until PrettyFolder was quit. The menu now opens at once with what PrettyFolder already knows, and such questions to macOS are asked in the background.
