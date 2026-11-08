@@ -423,11 +423,11 @@ private struct SetupBar: View {
 
     var body: some View {
         Group {
-            if !finderExtension.isEnabled || !permission.isGranted {
+            if finderExtension.needsTurningOn || !permission.isGranted {
                 VStack(spacing: 0) {
                     Divider()
                     HStack(spacing: 8) {
-                        if !finderExtension.isEnabled {
+                        if finderExtension.needsTurningOn {
                             Button { finderExtension.enable() } label: {
                                 Label("Turn On Finder Menu", systemImage: "contextualmenu.and.cursorarrow")
                             }

@@ -240,11 +240,11 @@ final class EditorModel {
             await queuedWrites?.value
             // Where they are now (renamed or moved since the window opened?) and whether any
             // has a custom icon. The disk is asked off the main thread.
-            let (moved, anyCustomIcon) = await Task.detached(priority: .userInitiated) {
+            let (moved, anyCustomIcon) = await onOwnThread {
                 let moved = places.map { $0?.current }
                 let current = opened.enumerated().map { index, folder in index < moved.count ? moved[index] ?? folder : folder }
                 return (moved, current.contains(where: FolderInspector.hasCustomIcon))
-            }.value
+            }
             guard generation == loadGeneration else { return }
             for (index, location) in moved.enumerated() where index < folders.count {
                 if let location, location.path != folders[index].path { follow(folders[index], to: location, at: index) }
@@ -258,7 +258,7 @@ final class EditorModel {
             let picture: SourceImage? = if pictureURL == folderPictureURL {
                 folderPicture
             } else if let pictureURL {
-                await Task.detached(priority: .userInitiated) { PreviewPicture.load(pictureURL) }.value
+                await onOwnThread { PreviewPicture.load(pictureURL) }
             } else {
                 nil
             }
@@ -424,7 +424,7 @@ final class EditorModel {
         writing = Task {
             await previous?.value
             // Where they are by now: one renamed since the window last looked still gets it.
-            let locations = await Task.detached(priority: .userInitiated) { places.map { $0?.current } }.value
+            let locations = await onOwnThread { places.map { $0?.current } }
             var failures: [FolderOutcome] = []
             for (index, folder) in folders.enumerated() {
                 guard let look = newLooks[folder] else { continue }
@@ -515,7 +515,7 @@ final class EditorModel {
         guard isEditingFolders else {
             Task {
                 let url = file.url
-                if let picture = await Task.detached(priority: .userInitiated, operation: { PreviewPicture.load(url) }).value {
+                if let picture = await onOwnThread({ PreviewPicture.load(url) }) {
                     previewPicture = picture
                 }
                 file.discard()
@@ -590,13 +590,17 @@ final class EditorModel {
     // MARK: - Every folder
 
     /// Finds the folders the list doesn't know yet, so that whatever is about to happen to every
-    /// folder happens to them too. The window says it is busy meanwhile.
+    /// folder happens to them too. The window says it is busy meanwhile, for as long as Spotlight
+    /// takes but not for good: what turns up later still comes on the list.
     private func findFolders() async {
         let wasRunning = progress.isRunning
         if !wasRunning { progress.start(total: 1) }
-        await actions.manager.findFolders()
+        await actions.manager.findFolders(patience: Self.searchPatience)
         if !wasRunning { progress.isRunning = false }
     }
+
+    /// How long the window waits for a search: longer than Spotlight gets to answer (10 s).
+    static let searchPatience: Duration = .seconds(15)
 
     /// Draws every picture again, for example after a macOS update changed how folders look.
     func redrawAll() {
@@ -623,7 +627,7 @@ final class EditorModel {
         let manager = actions.manager
         Task {
             progress.start(total: 1)
-            await manager.findFolders()
+            await manager.findFolders(patience: Self.searchPatience)
             isSearchingEverywhere = true
             let search = Task {
                 await manager.findFolders(.everywhere)

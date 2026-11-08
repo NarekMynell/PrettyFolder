@@ -1,8 +1,9 @@
 import CoreServices
 import Foundation
+import os
 
 /// How far a search for folders goes.
-public enum FolderSearchReach: Sendable {
+public enum FolderSearchReach: Sendable, Hashable {
     /// What Spotlight knows: quick, and most of what there is.
     case spotlight
     /// That, and the disks here that Spotlight stays off.
@@ -20,20 +21,49 @@ enum FolderSearch {
     static func markedFolders(
         _ reach: FolderSearchReach,
         knownPaths: [String],
-        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
+        spotlight: () -> [URL]? = { indexedIconFiles() }
     ) -> [URL] {
-        var found = indexedIconFiles().map(folder(holding:)).filter(hasMarker)
+        var found = (spotlight() ?? []).map(folder(holding:)).filter(hasMarker)
         switch reach {
         case .spotlight:
             break
         case .placesWithoutSpotlight:
-            found += markedFolders(in: otherDisks().filter { !isIndexed($0) })
-            if !isIndexed(URL(fileURLWithPath: "/")) { found += markedFolders(in: placesInHome(home, knownPaths: knownPaths)) }
+            // A disk `mdutil` can't say anything about in time (it asks Spotlight too) is left to
+            // the next search.
+            found += markedFolders(in: otherDisks().filter { isIndexed($0) == false })
+            if isIndexed(URL(fileURLWithPath: "/")) == false { found += markedFolders(in: placesInHome(home, knownPaths: knownPaths)) }
         case .everywhere:
             found += markedFolders(in: otherDisks() + placesInHome(home, knownPaths: knownPaths))
         }
         return worthChanging(found)
     }
+
+    /// Runs a search on `reach`'s own thread and waits for it there. The threads all tasks share
+    /// are as many as the Mac has cores and mustn't wait on Spotlight or a disk: a search can,
+    /// for as long as they take. Searches of one reach take turns.
+    static func run<T: Sendable>(_ reach: FolderSearchReach, _ work: @escaping @Sendable () -> T) async -> T {
+        await perform(on: queues[reach] ?? checking, work)
+    }
+
+    /// Looks at the folders holding icon files Spotlight has just reported.
+    static func check<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        await perform(on: checking, work)
+    }
+
+    private static func perform<T: Sendable>(on queue: DispatchQueue, _ work: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: work()) }
+        }
+    }
+
+    private static let queues: [FolderSearchReach: DispatchQueue] = [
+        .spotlight: DispatchQueue(label: "com.narekmynell.PrettyFolder.search.spotlight", qos: .utility),
+        // Started by a disk being connected, with nobody waiting for it.
+        .placesWithoutSpotlight: DispatchQueue(label: "com.narekmynell.PrettyFolder.search.places", qos: .background),
+        .everywhere: DispatchQueue(label: "com.narekmynell.PrettyFolder.search.everywhere", qos: .utility),
+    ]
+    private static let checking = DispatchQueue(label: "com.narekmynell.PrettyFolder.search.check", qos: .utility)
 
     /// The folders with the marker on them that could be changed, among those holding `iconFiles`.
     static func markedFolders(holding iconFiles: [URL]) -> [URL] {
@@ -44,18 +74,22 @@ enum FolderSearch {
         iconFile.deletingLastPathComponent()
     }
 
-    /// The icon files Spotlight knows. It doesn't index the markers, but it does the file's name,
-    /// and few folders have one. A new one is found within seconds.
-    private static func indexedIconFiles() -> [URL] {
-        guard let query = MDQueryCreate(kCFAllocatorDefault, "kMDItemFSName == \"Icon\r\"" as CFString, nil, nil),
-              MDQueryExecute(query, CFOptionFlags(kMDQuerySynchronous.rawValue))
-        else { return [] }
-        return (0..<MDQueryGetResultCount(query)).compactMap { index -> URL? in
-            guard let raw = MDQueryGetResultAtIndex(query, index) else { return nil }
-            let item = Unmanaged<MDItem>.fromOpaque(raw).takeUnretainedValue()
-            guard let path = MDItemCopyAttribute(item, kMDItemPath) as? String else { return nil }
-            return URL(fileURLWithPath: path, isDirectory: false)
-        }
+    /// How long Spotlight gets to answer. It takes well under a second, but it can also not answer
+    /// at all: twelve searches in a row waited for good one night, from the moment the Mac locked.
+    static let spotlightPatience: TimeInterval = 10
+
+    /// The icon files Spotlight knows, or `nil` if it doesn't say in time. It doesn't index the
+    /// markers, but it does the file's name, and few folders have one. A new one is found within
+    /// seconds.
+    ///
+    /// Asked through `mdfind`, which is stopped when its time is up. A query made in this process
+    /// can't be: one Spotlight never answers keeps its thread for good, and even one that doesn't
+    /// wait for its results first waits for Spotlight to take it.
+    static func indexedIconFiles(within patience: TimeInterval = spotlightPatience) -> [URL]? {
+        guard let result = Subprocess.run("/usr/bin/mdfind", ["-0", "kMDItemFSName == \"Icon\r\""], within: patience),
+              result.status == 0
+        else { return nil }
+        return result.output.split(separator: "\0").map { URL(fileURLWithPath: String($0), isDirectory: false) }
     }
 
     /// The disks here that could be changed, other than the Mac's own.
@@ -83,18 +117,11 @@ enum FolderSearch {
         return places + [home.appendingPathComponent("Library/Caches", isDirectory: true)]
     }
 
-    /// What Spotlight says about a disk. Nothing else tells without a privileged look.
-    private static func isIndexed(_ disk: URL) -> Bool {
-        let tool = Process()
-        tool.executableURL = URL(fileURLWithPath: "/usr/bin/mdutil")
-        tool.arguments = ["-s", disk.path]
-        let output = Pipe()
-        tool.standardOutput = output
-        tool.standardError = FileHandle.nullDevice
-        guard (try? tool.run()) != nil else { return false }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        tool.waitUntilExit()
-        return String(decoding: data, as: UTF8.self).contains("Indexing enabled")
+    /// What Spotlight says about a disk, `nil` if it doesn't say in time. Nothing else tells
+    /// without a privileged look.
+    private static func isIndexed(_ disk: URL) -> Bool? {
+        guard let result = Subprocess.run("/usr/bin/mdutil", ["-s", disk.path], within: spotlightPatience) else { return nil }
+        return result.output.contains("Indexing enabled")
     }
 
     /// Goes through whole places, leaving out what has no business being changed, and disks mounted
@@ -169,20 +196,40 @@ enum FolderSearch {
 /// Tells about icon files as Spotlight gets to know them, however long after a disk was connected
 /// that is. The first answer, everything it knows at the start, is the search's to give. It is
 /// kept for as long as the app runs.
+///
+/// The query lives on a queue of its own: starting it waits for Spotlight to take it, for as long
+/// as that takes, and the main thread mustn't wait for Spotlight.
 @MainActor
 public final class FolderSpotlightWatch {
-    private let query = NSMetadataQuery()
+    private let queue = OperationQueue()
+    private let query: Unchecked<NSMetadataQuery>
     private var observer: NSObjectProtocol?
 
     public init(found: @escaping @MainActor ([URL]) -> Void) {
+        queue.name = "com.narekmynell.PrettyFolder.spotlight-watch"
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .utility
+        let query = NSMetadataQuery()
         query.predicate = NSPredicate(format: "%K == %@", NSMetadataItemFSNameKey, "Icon\r")
         query.searchScopes = [NSMetadataQueryLocalComputerScope]
-        observer = NotificationCenter.default.addObserver(forName: .NSMetadataQueryDidUpdate, object: query, queue: .main) { note in
+        query.operationQueue = queue
+        self.query = Unchecked(query)
+        // Read on the query's queue, before it changes again; only the paths go on.
+        observer = NotificationCenter.default.addObserver(forName: .NSMetadataQueryDidUpdate, object: query, queue: nil) { note in
             let added = note.userInfo?[NSMetadataQueryUpdateAddedItemsKey] as? [NSMetadataItem] ?? []
             let files = added.compactMap { ($0.value(forAttribute: NSMetadataItemPathKey) as? String).map { URL(fileURLWithPath: $0) } }
             guard !files.isEmpty else { return }
-            MainActor.assumeIsolated { found(files) }
+            Task { @MainActor in found(files) }
         }
-        query.start()
+        queue.addOperation { [query = self.query] in query.value.start() }
+    }
+}
+
+/// Hands a value that isn't `Sendable` to the one queue that uses it from then on.
+struct Unchecked<Value>: @unchecked Sendable {
+    let value: Value
+
+    init(_ value: Value) {
+        self.value = value
     }
 }

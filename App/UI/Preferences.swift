@@ -50,7 +50,7 @@ struct PreferencesView: View {
                 .disabled(!permission.isGranted)
                 Section {
                     LabeledContent("Finder Menu") {
-                        SetupState(isOn: finderExtension.isEnabled, offTitle: "Turn On") { finderExtension.enable() }
+                        SetupState(isOn: finderExtension.needsTurningOn ? false : finderExtension.isEnabled, offTitle: "Turn On") { finderExtension.enable() }
                     }
                     LabeledContent("Accessibility") {
                         SetupState(isOn: permission.isGranted, offTitle: "Allow") { permission.request() }
@@ -101,20 +101,25 @@ struct PreferencesView: View {
     }
 
     private func countPictures() async {
-        await model.actions.manager.findFolders()
+        await model.actions.manager.findFolders(patience: EditorModel.searchPatience)
         await model.actions.manager.prune()
         pictureCount = await model.actions.manager.folderCountWithPictures()
     }
 }
 
-/// A checkmark when something is set up, a button to set it up otherwise.
+/// A checkmark when something is set up, a button to set it up otherwise, and a spinner while
+/// macOS hasn't said yet.
 private struct SetupState: View {
-    let isOn: Bool
+    let isOn: Bool?
     let offTitle: LocalizedStringKey
     let action: () -> Void
 
     var body: some View {
-        if isOn {
+        if isOn == nil {
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityLabel(Text("Checking"))
+        } else if isOn == true {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
                 .accessibilityLabel(Text("On"))

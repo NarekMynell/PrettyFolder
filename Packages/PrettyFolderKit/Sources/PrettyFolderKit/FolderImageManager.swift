@@ -100,6 +100,16 @@ public actor FolderImageManager {
     /// this one, and stays theirs.)
     private var strays = Set<URL>()
     private lazy var renderer = IconRenderer()
+    /// See `findFolders`: the reaches searched now, those to be searched (again) after that, and
+    /// who waits for which. Twelve searches once waited at the same time for a Spotlight that
+    /// never answered, one for each disk connected while the Mac was locked.
+    private var searchesUnderWay: Set<FolderSearchReach> = []
+    private var searchesAskedFor: Set<FolderSearchReach> = []
+    private var waitingForSearch: [FolderSearchReach: [Int: CheckedContinuation<Void, Never>]] = [:]
+    private var waitingForNextSearch: [FolderSearchReach: [Int: CheckedContinuation<Void, Never>]] = [:]
+    private var searchTickets = 0
+    /// Goes through the disks (`FolderSearch.markedFolders`); a test can stand in for it.
+    private let searcher: @Sendable (FolderSearchReach, [String]) -> [URL]
     public private(set) var defaultStyle: IconStyle
     private let unusedPictureAllowance: Int
 
@@ -107,10 +117,14 @@ public actor FolderImageManager {
         self.init(directory: directory, defaultStyle: defaultStyle, unusedPictureAllowance: Self.unusedPictureAllowance)
     }
 
-    init(directory: URL, defaultStyle: IconStyle, unusedPictureAllowance: Int) {
+    init(
+        directory: URL, defaultStyle: IconStyle, unusedPictureAllowance: Int,
+        searcher: @escaping @Sendable (FolderSearchReach, [String]) -> [URL] = { FolderSearch.markedFolders($0, knownPaths: $1) }
+    ) {
         self.library = FolderLibrary(directory: directory)
         self.defaultStyle = defaultStyle
         self.unusedPictureAllowance = unusedPictureAllowance
+        self.searcher = searcher
     }
 
     /// Called whenever a folder's icon changes. A new icon comes before Finder is told about
@@ -557,16 +571,51 @@ public actor FolderImageManager {
     /// where they can't be followed. From then on a new default look, Redraw All and Remove All
     /// reach them like any other. The disks are searched off this actor, unhurried unless someone
     /// is waiting for it.
-    public func findFolders(_ reach: FolderSearchReach = .spotlight) async {
-        let known = library.records.values.map(\.lastKnownPath)
-        let priority: TaskPriority = reach == .placesWithoutSpotlight ? .background : .utility
-        let found = await Task.detached(priority: priority) { FolderSearch.markedFolders(reach, knownPaths: known) }.value
-        await takeOn(found)
+    ///
+    /// Returns once a search that began after the call is done, or once `patience` is up: the
+    /// search goes on, and what it finds still comes on the list. A search of a reach goes on at
+    /// a time, and those asked for meanwhile are one search after it, however many there are.
+    public func findFolders(_ reach: FolderSearchReach = .spotlight, patience: Duration? = nil) async {
+        searchTickets += 1
+        let ticket = searchTickets
+        let givingUp = patience.map { patience in
+            Task {
+                guard (try? await Task.sleep(for: patience)) != nil else { return }
+                stopWaiting(ticket, for: reach)
+            }
+        }
+        await withCheckedContinuation { continuation in
+            waitingForNextSearch[reach, default: [:]][ticket] = continuation
+            searchesAskedFor.insert(reach)
+            if searchesUnderWay.insert(reach).inserted {
+                Task { await search(reach) }
+            }
+        }
+        givingUp?.cancel()
+    }
+
+    private func search(_ reach: FolderSearchReach) async {
+        while searchesAskedFor.remove(reach) != nil {
+            waitingForSearch[reach] = waitingForNextSearch.removeValue(forKey: reach)
+            let known = library.records.values.map(\.lastKnownPath)
+            let found = await FolderSearch.run(reach) { [searcher] in searcher(reach, known) }
+            await takeOn(found)
+            for waiting in (waitingForSearch.removeValue(forKey: reach) ?? [:]).values {
+                waiting.resume()
+            }
+        }
+        searchesUnderWay.remove(reach)
+    }
+
+    private func stopWaiting(_ ticket: Int, for reach: FolderSearchReach) {
+        let waiting = waitingForNextSearch[reach]?.removeValue(forKey: ticket)
+            ?? waitingForSearch[reach]?.removeValue(forKey: ticket)
+        waiting?.resume()
     }
 
     /// The same for icon files Spotlight has just got to know about.
     public func takeOn(iconFiles: [URL]) async {
-        let found = await Task.detached(priority: .utility) { FolderSearch.markedFolders(holding: iconFiles) }.value
+        let found = await FolderSearch.check { FolderSearch.markedFolders(holding: iconFiles) }
         await takeOn(found)
     }
 

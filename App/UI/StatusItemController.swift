@@ -41,7 +41,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
-    // Rebuilt every time it opens, so the setup items reflect the current state.
+    // Rebuilt every time it opens, from what is known already: nothing here may wait for the
+    // system. A menu that is opening has the keyboard of every app until it shows, and on
+    // 2026-11-06 this one kept it for an hour, waiting in `isExtensionEnabled`. The answers asked
+    // for here are for the next time it opens; they normally come long before that, since the
+    // app asks at launch and whenever it comes to the front.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let finderExtension = FinderExtensionStatus.shared
@@ -49,7 +53,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         finderExtension.refresh()
         permission.refresh()
 
-        if !finderExtension.isEnabled {
+        if finderExtension.needsTurningOn {
             menu.addItem(MenuActionItem.make(title: String(localized: "Turn On the Finder Menu…"), handler: { finderExtension.enable() }))
         }
         if !permission.isGranted {

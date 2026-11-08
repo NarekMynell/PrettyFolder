@@ -1,32 +1,53 @@
 import AppKit
 import FinderSync
 import Observation
+import PrettyFolderKit
 import os
 
 /// Whether the Finder extension (the right-click menu) is turned on, and how to turn it on.
+///
+/// The system is asked off the main thread (see `SystemQuestion`): `isExtensionEnabled` waits for
+/// a service of Finder's for as long as it takes to answer, and once that was for good.
 @Observable
 final class FinderExtensionStatus {
     static let shared = FinderExtensionStatus()
 
     nonisolated static let extensionIdentifier = "com.narekmynell.PrettyFolder.FinderExtension"
 
-    private(set) var isEnabled = FIFinderSyncController.isExtensionEnabled
+    /// `nil` until the system has said.
+    private(set) var isEnabled: Bool?
 
+    /// Whether to offer turning it on: it is off, or the system hasn't said for a while, which
+    /// leaves the user a way to System Settings. Not at once, which would flash the offer at launch.
+    var needsTurningOn: Bool { isEnabled == false || (isEnabled == nil && isSlowToSay) }
+
+    /// The system hasn't said for a few seconds after it was first asked.
+    private var isSlowToSay = false
+
+    @ObservationIgnored private var question: SystemQuestion!
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
     @ObservationIgnored private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Extension")
 
     private init() {
+        question = SystemQuestion("finder-extension", ask: { FIFinderSyncController.isExtensionEnabled }) { [weak self] enabled in
+            if self?.isEnabled != enabled { self?.isEnabled = enabled }
+        }
         // Coming back from System Settings is the usual moment the answer changes.
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
+        refresh()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self, isEnabled == nil else { return }
+            isSlowToSay = true
+        }
     }
 
-    func refresh() {
-        let enabled = FIFinderSyncController.isExtensionEnabled
-        if enabled != isEnabled { isEnabled = enabled }
+    /// Asks the system again; `then` gets its answer.
+    func refresh(then: ((Bool) -> Void)? = nil) {
+        question.refresh(then: then)
     }
 
     /// Registers the extension that ships inside this copy of the app and turns it on,
@@ -44,20 +65,32 @@ final class FinderExtensionStatus {
             return
         }
         let appex = Bundle.main.builtInPlugInsURL?.appendingPathComponent("PrettyFolderFinder.appex")
-        Task.detached(priority: .userInitiated) { [log] in
+        // pluginkit asks the same part of the system, so it can hang with it: off the main
+        // thread, on a thread of its own, and only for so long.
+        Thread { [log] in
             var ok = true
             if let appex {
                 ok = Self.runPluginKit(["-a", appex.path], log: log) && ok
             }
             ok = Self.runPluginKit(["-e", "use", "-i", Self.extensionIdentifier], log: log) && ok
-            await MainActor.run {
-                // pluginkit returns before Finder picks the change up.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                    self?.refresh()
-                    if !(self?.isEnabled ?? false) || !ok { FIFinderSyncController.showExtensionManagementInterface() }
-                }
+            // pluginkit returns before Finder picks the change up.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                MainActor.assumeIsolated { Self.shared.showSettingsUnlessOn(pluginKitWorked: ok) }
             }
+        }.start()
+    }
+
+    /// Opens the extension's page in System Settings if it is still off, or if the system
+    /// doesn't say so within a few seconds.
+    private func showSettingsUnlessOn(pluginKitWorked: Bool) {
+        let decision = Decision()
+        let decide = { (enabled: Bool) in
+            guard !decision.isMade else { return }
+            decision.isMade = true
+            if !enabled || !pluginKitWorked { FIFinderSyncController.showExtensionManagementInterface() }
         }
+        refresh(then: decide)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { decide(false) }
     }
 
     /// Whether this copy runs from somewhere it won't stay: the temporary place macOS uses for
@@ -70,18 +103,15 @@ final class FinderExtensionStatus {
     }
 
     private nonisolated static func runPluginKit(_ arguments: [String], log: Logger) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
-        process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            log.error("pluginkit \(arguments, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+        guard let result = Subprocess.run("/usr/bin/pluginkit", arguments, within: 15) else {
+            log.error("pluginkit \(arguments, privacy: .public) didn't finish")
             return false
         }
+        return result.status == 0
     }
+}
+
+/// Made once, by whichever comes first.
+private final class Decision {
+    var isMade = false
 }

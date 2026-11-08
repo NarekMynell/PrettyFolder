@@ -125,7 +125,7 @@ final class IconCover {
     /// The key Finder's icons are found by. It asks the disk, which may be a slow network
     /// disk, so not on the main thread.
     private static func key(for folder: URL) async -> String? {
-        await Task.detached(priority: .userInitiated) { ShownIcon.key(for: folder) }.value
+        await onOwnThread { ShownIcon.key(for: folder) }
     }
 
     // MARK: - Finder's windows and icons
@@ -198,9 +198,9 @@ final class IconCover {
     /// Whether each folder still has a picture from PrettyFolder; read off the main thread,
     /// since a folder may be on a slow network disk.
     private static func havePictures(_ folders: [URL]) async -> [Bool] {
-        await Task.detached(priority: .userInitiated) {
+        await onOwnThread {
             folders.map(FolderImageManager.appearsToHavePicture)
-        }.value
+        }
     }
 
     /// Where the covered icons are now; `nil` if Finder doesn't answer in time.

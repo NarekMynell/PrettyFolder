@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "App")
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        MainThreadWatchdog.start()
         NSApp.mainMenu = MainMenu.make()
     }
 
@@ -25,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quitOtherCopies()
         statusItem = StatusItemController(actions: actions, settings: settings)
         finderIntegration.start()
+        // Asks whether the Finder menu is on, off the main thread, so that the menu bar menu
+        // knows by the time it opens.
+        _ = FinderExtensionStatus.shared
         Task { [manager, actions, finderIntegration] in
             await manager.onIconChange { folder, change in
                 switch change {
@@ -40,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Find copies and moved folders that are new to the list, forget folders whose icon was
         // changed elsewhere, and pictures left over from a crash.
         Task {
-            await manager.findFolders()
+            await manager.findFolders(patience: .seconds(30))
             await manager.prune()
             await redrawOutdatedIcons()
             // Last: on a big disk without Spotlight this takes as long as it takes.
@@ -163,6 +167,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // A folder on a disk that stopped answering mustn't keep the app from quitting.
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { finished.reply() }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Subprocess.stopAll()
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {

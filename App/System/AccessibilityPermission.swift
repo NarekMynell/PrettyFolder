@@ -10,10 +10,14 @@ final class AccessibilityPermission {
 
     private(set) var isGranted = AXIsProcessTrusted()
 
+    @ObservationIgnored private var question: SystemQuestion!
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var pollTimer: Timer?
 
     private init() {
+        question = SystemQuestion("accessibility", ask: { AXIsProcessTrusted() }) { [weak self] granted in
+            self?.update(granted)
+        }
         // Posted whenever the list of trusted apps changes. The new state is applied a
         // moment later, so check again after a short delay.
         observers.append(DistributedNotificationCenter.default().addObserver(
@@ -37,8 +41,13 @@ final class AccessibilityPermission {
         })
     }
 
+    /// Asks again, off the main thread: the answer can come from the system's privacy service,
+    /// and the menu that asks while it opens mustn't wait for that (see `SystemQuestion`).
     func refresh() {
-        let granted = AXIsProcessTrusted()
+        question.refresh()
+    }
+
+    private func update(_ granted: Bool) {
         if granted != isGranted { isGranted = granted }
         if granted { stopPolling() }
     }

@@ -115,7 +115,7 @@ final class FolderActions {
         ) { url in
             guard let url else { return }
             Task {
-                let picture = await Task.detached(priority: .userInitiated) { PreviewPicture.load(url) }.value
+                let picture = await onOwnThread { PreviewPicture.load(url) }
                 if let picture { completion(picture) }
             }
         }
@@ -182,7 +182,7 @@ final class FolderActions {
     /// Validates folders up front and explains the ones that can't be used. The disk is asked
     /// off the main thread: a folder may be on a network disk that has stopped answering.
     private func checked(_ folders: [URL], explainingProblems: Bool = true) async -> [URL] {
-        let outcomes = await Task.detached(priority: .userInitiated) {
+        let outcomes = await onOwnThread {
             folders.map { folder in
                 do {
                     try FolderInspector.validate(folder)
@@ -191,7 +191,7 @@ final class FolderActions {
                     return FolderOutcome(folder: folder, failure: error.localizedDescription)
                 }
             }
-        }.value
+        }
         if explainingProblems { report(outcomes) }
         return outcomes.filter(\.succeeded).map(\.folder)
     }
@@ -237,10 +237,13 @@ final class FolderActions {
 
 /// Waits for a dragged file promise (from Photos, Safari, Mail…) to be written to disk.
 enum PromiseReceiving {
+    /// On a queue of its own, not the system's pool of threads: disk reads waiting on a dead
+    /// network disk can use that pool up (see `onOwnThread`).
+    private static let underlyingQueue = DispatchQueue(label: "com.narekmynell.PrettyFolder.promises", qos: .userInitiated)
     private static let queue: OperationQueue = {
         let queue = OperationQueue()
         queue.name = "com.narekmynell.PrettyFolder.promises"
-        queue.qualityOfService = .userInitiated
+        queue.underlyingQueue = underlyingQueue
         return queue
     }()
 
@@ -275,8 +278,9 @@ enum PromiseReceiving {
                     finish(nil)
                 }
             }
-            // The source app may never deliver; don't wait forever.
-            DispatchQueue.global().asyncAfter(deadline: .now() + 30) { finish(nil) }
+            // The source app may never deliver; don't wait forever. (Counted on the main queue,
+            // which nothing can use up.)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { finish(nil) }
         }
     }
 }
