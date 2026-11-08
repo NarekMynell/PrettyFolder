@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.7
+
+- Each time PrettyFolder started, and each time a disk was connected, it went through everything in your home folder looking for copies of folders, minutes of work for the processor on a Mac with a lot in it. It took macOS saying the Mac's own disk has a "read-only" Spotlight index for Spotlight not being there. Spotlight finds those copies, and PrettyFolder now leaves the rest to it again.
+
 ## 1.3.6
 
 - PrettyFolder could still keep the keyboard in rarer cases. It asked macOS about its Accessibility permission when it started, and about Open at Login when the settings opened, and waited for the answers on the thread that also runs its menu; it also read folders' names and icons there, and a network disk that has stopped answering takes as long as it likes. None of that happens on that thread any more, and a window or a panel that comes up after such a wait waits until no menu is open.
