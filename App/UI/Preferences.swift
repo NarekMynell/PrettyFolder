@@ -32,6 +32,7 @@ struct PreferencesView: View {
     @State private var finderExtension = FinderExtensionStatus.shared
     @State private var permission = AccessibilityPermission.shared
     @State private var pictureCount = 0
+    @State private var updates = UpdateChecker.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,6 +42,8 @@ struct PreferencesView: View {
                         .disabled(loginItem.isEnabled == nil)
                     Toggle("Show in Menu Bar", isOn: $settings.showsMenuBarIcon)
                         .help("Without it, open PrettyFolder from Applications or Spotlight to get here.")
+                    Toggle("Check for Updates", isOn: $settings.checksForUpdates)
+                        .help("Once a day, PrettyFolder asks GitHub for the number of its newest version. Nothing about you or your folders is sent.")
                 }
                 Section {
                     Toggle("Set as Icon While Dragging", isOn: $settings.showsDropTarget)
@@ -79,6 +82,10 @@ struct PreferencesView: View {
             HStack {
                 Link("PrettyFolder \(Self.version)", destination: URL(string: "https://github.com/NarekMynell/PrettyFolder")!)
                     .foregroundStyle(.secondary)
+                if let newer = updates.newer {
+                    Link("Download \(newer.description)", destination: UpdateCheck.releasePage)
+                        .help("A newer version of PrettyFolder is out. Quit this one before you open it.")
+                }
                 Spacer()
                 Button("Quit") { AppDelegate.quit() }
             }
@@ -89,6 +96,9 @@ struct PreferencesView: View {
         }
         .frame(width: 320)
         .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: settings.checksForUpdates) { _, isOn in
+            if isOn { updates.checkIfDue() }
+        }
         .task {
             loginItem.refresh()
             finderExtension.refresh()

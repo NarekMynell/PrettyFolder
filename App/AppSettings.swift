@@ -14,6 +14,7 @@ final class AppSettings {
         /// What the hover buttons' setting was called when there was a single tab button.
         static let opensPickerFromTab = "OpensPickerFromTab"
         static let showsMenuBarIcon = "ShowsMenuBarIcon"
+        static let checksForUpdates = "ChecksForUpdates"
         static let hasLaunchedBefore = "HasLaunchedBefore"
         static let lastPictureFolder = "LastPictureFolder"
     }
@@ -41,6 +42,11 @@ final class AppSettings {
         didSet { defaults.set(showsMenuBarIcon, forKey: Key.showsMenuBarIcon) }
     }
 
+    /// Once a day, ask GitHub whether there's a newer version (see `UpdateChecker`).
+    var checksForUpdates: Bool {
+        didSet { defaults.set(checksForUpdates, forKey: Key.checksForUpdates) }
+    }
+
     /// `false` only on the very first launch.
     var hasLaunchedBefore: Bool {
         didSet { defaults.set(hasLaunchedBefore, forKey: Key.hasLaunchedBefore) }
@@ -57,12 +63,14 @@ final class AppSettings {
             Key.showsDropTarget: true,
             Key.showsHoverButtons: defaults.object(forKey: Key.opensPickerFromTab) as? Bool ?? true,
             Key.showsMenuBarIcon: true,
+            Key.checksForUpdates: true,
         ])
         defaultStyle = defaults.data(forKey: Key.defaultStyle)
             .flatMap { try? JSONDecoder().decode(IconStyle.self, from: $0) } ?? .standard
         showsDropTarget = defaults.bool(forKey: Key.showsDropTarget)
         showsHoverButtons = defaults.bool(forKey: Key.showsHoverButtons)
         showsMenuBarIcon = defaults.bool(forKey: Key.showsMenuBarIcon)
+        checksForUpdates = defaults.bool(forKey: Key.checksForUpdates)
         hasLaunchedBefore = defaults.bool(forKey: Key.hasLaunchedBefore)
         lastPictureFolder = defaults.string(forKey: Key.lastPictureFolder).map { URL(fileURLWithPath: $0, isDirectory: true) }
     }

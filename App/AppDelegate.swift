@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Asks whether the Finder menu is on, off the main thread, so that the menu bar menu
         // knows by the time it opens.
         _ = FinderExtensionStatus.shared
+        UpdateChecker.shared.start()
         Task { [manager, actions, finderIntegration] in
             await manager.onIconChange { folder, change in
                 switch change {

@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import PrettyFolderKit
 
 /// The menu bar icon. Optional: it can be hidden in the settings.
 final class StatusItemController: NSObject, NSMenuDelegate {
@@ -18,6 +19,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func observe() {
         withObservationTracking {
             _ = settings.showsMenuBarIcon
+            _ = UpdateChecker.shared.newer
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.update()
@@ -29,8 +31,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func update() {
         if settings.showsMenuBarIcon, item == nil {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-            item.button?.image = NSImage(systemSymbolName: "photo.on.rectangle.angled", accessibilityDescription: "PrettyFolder")
-            item.button?.toolTip = "PrettyFolder"
             let menu = NSMenu()
             menu.delegate = self
             item.menu = menu
@@ -39,6 +39,33 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             NSStatusBar.system.removeStatusItem(item)
             self.item = nil
         }
+        if let button = item?.button {
+            let newer = UpdateChecker.shared.newer
+            button.image = Self.icon(withDot: newer != nil)
+            button.toolTip = newer.map { String(localized: "PrettyFolder \($0.description) is available") } ?? "PrettyFolder"
+        }
+    }
+
+    /// The menu bar icon, with a dot in its corner when there's a newer version, the way macOS
+    /// marks things that want a look.
+    static func icon(withDot: Bool) -> NSImage? {
+        guard let symbol = NSImage(systemSymbolName: "photo.on.rectangle.angled", accessibilityDescription: "PrettyFolder") else { return nil }
+        guard withDot else { return symbol }
+        let side = 5.5
+        let image = NSImage(size: symbol.size, flipped: false) { bounds in
+            symbol.draw(in: bounds)
+            let dot = NSRect(x: bounds.maxX - side, y: bounds.maxY - side, width: side, height: side)
+            // A gap around the dot keeps it apart from the picture's lines.
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(ovalIn: dot.insetBy(dx: -1.25, dy: -1.25)).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            NSColor.black.setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = String(localized: "PrettyFolder, update available")
+        return image
     }
 
     /// The menu is open, and what it offers to set up.
@@ -89,6 +116,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
         if offers.accessibility {
             menu.addItem(MenuActionItem.make(title: String(localized: "Allow Accessibility…"), handler: { permission.request() }))
+        }
+        if let newer = UpdateChecker.shared.newer {
+            menu.addItem(MenuActionItem.make(title: String(localized: "Download PrettyFolder \(newer.description)…")) { UpdateChecker.shared.openReleasePage() })
         }
         if menu.numberOfItems > 0 { menu.addItem(.separator()) }
 

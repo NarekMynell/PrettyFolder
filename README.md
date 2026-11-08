@@ -39,6 +39,7 @@ PrettyFolder starts with your Mac and lives in the menu bar. Needs macOS 14 Sono
 - **Picture:** Control-drag, or double-click and drag, moves it too, and so do ⌥ and the arrow keys. ⌘L and ⌘R make quarter turns. On the dial, ⇧ turns in steps of 15° and a double-click makes the picture upright.
 - **Default look:** the one new pictures get. Saving it asks whether the folders using it should change too.
 - **Behind the gear:** open at login, the menu bar icon, the buttons on folders, **Redraw All Pictures** and **Remove All Pictures…**. Backups and clones of a whole Mac are left alone.
+- **Updates:** once a day PrettyFolder asks GitHub for the number of its newest version (nothing else is sent; turn it off behind the gear). When there's a newer one, its menu bar icon gets a dot and its menu a **Download** item. Quit PrettyFolder from its menu, then install the new version the same way.
 
 ## Uninstall
 
