@@ -127,7 +127,16 @@ enum FolderSearch {
         // One stopped on the way (the app is quitting) says nothing either: not "not indexed", which
         // would have the whole disk walked.
         guard let result = Subprocess.run("/usr/bin/mdutil", ["-s", disk.path], within: spotlightPatience), result.status == 0 else { return nil }
-        return result.output.contains("Indexing enabled")
+        return isIndexed(mdutilSays: result.output)
+    }
+
+    /// Whether `mdutil -s` says Spotlight searches a disk. About the Mac's own disk it can say
+    /// "Index is read-only." (macOS 26 does, to a user who isn't root), and Spotlight searches it
+    /// all the same. Taking that for "not indexed" had the whole home folder gone through each
+    /// time the app started, minutes of work on a Mac with a lot in it. Anything else counts as
+    /// not indexed: a disk just connected is "transitioning" for a moment, and is gone through.
+    static func isIndexed(mdutilSays output: String) -> Bool {
+        output.contains("Indexing enabled") || output.contains("Index is read-only")
     }
 
     /// Goes through whole places, leaving out what has no business being changed, and disks mounted

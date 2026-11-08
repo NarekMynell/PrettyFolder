@@ -198,6 +198,20 @@ import os
         #expect(found.map(\.path).contains(copy.path))
     }
 
+    /// On macOS 26 `mdutil -s /` says "Index is read-only." to the user, and the whole home folder
+    /// was gone through at each start: three and a half minutes on the Mac it was found on.
+    @Test func theMacsOwnDiskCountsAsIndexedWhenSpotlightOnlyLetsTheUserRead() {
+        #expect(FolderSearch.isIndexed(mdutilSays: "/:\n\tIndex is read-only.\n") == true)
+        #expect(FolderSearch.isIndexed(mdutilSays: "/Volumes/A:\n\tIndexing enabled. \n") == true)
+        #expect(FolderSearch.isIndexed(mdutilSays: "/Volumes/A:\n\tIndexing disabled.\n") == false)
+        #expect(FolderSearch.isIndexed(mdutilSays: "/:\n\tIndexing and searching disabled.\n") == false)
+        #expect(FolderSearch.isIndexed(mdutilSays: "/Volumes/A:\n\tError: unexpected indexing state.  kMDConfigSearchLevelTransitioning\n") == false)
+        if let said = Subprocess.run("/usr/bin/mdutil", ["-s", "/"], within: 10), said.status == 0,
+           !said.output.contains("disabled") {
+            #expect(FolderSearch.isIndexed(mdutilSays: said.output) == true, "mdutil said \(said.output)")
+        }
+    }
+
     @MainActor @Test func theLiveWatchStartsOffTheMainThreadAndStillHearsAboutNewIconFiles() async throws {
         let disk = try RealDiskTests.Disk("APFS", inFinder: true)
         #expect(Subprocess.run("/usr/bin/mdutil", ["-i", "on", disk.mount.path], within: 30)?.status == 0)
