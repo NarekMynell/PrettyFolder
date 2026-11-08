@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.5
+
+- PrettyFolder could take the keyboard away from every app. Opening its menu in the menu bar asked macOS whether the Finder menu was on, and waited for the answer while the menu, which already had the keyboard, waited to show. Once macOS never answered, and nothing could be typed anywhere for an hour, until PrettyFolder was quit. The menu now opens at once with what PrettyFolder already knows, and such questions to macOS are asked in the background.
+- Should PrettyFolder ever stop answering for 15 seconds anyway, it quits, so that it can't keep the keyboard, and leaves a crash report that says where it was stuck.
+- Looking for folders no longer waits for Spotlight for good. One night Spotlight stopped answering while the Mac was locked, each disk connected meanwhile left a search waiting for it, and after twelve PrettyFolder couldn't start any more work in the background. Spotlight now gets 10 seconds, a search asked for while the same kind is going on waits for it instead of starting another, and the window waits for one for 15 seconds at most; what turns up later still counts.
+
 ## 1.3.4
 
 - **Remove All Pictures** now looks everywhere before it asks: every other disk, however big, and what Spotlight leaves out of your home folder, such as hidden folders and caches. It never stops to ask macOS for access to a folder it hasn't been in. If a big disk takes more than half a minute it asks about what it has found so far, and what turns up later goes the same way.
