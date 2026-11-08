@@ -458,7 +458,7 @@ import UniformTypeIdentifiers
         try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), placement: .natural, for: folder)
         #expect(Self.changeCount(folder) == 1)
         // As Get Info does it.
-        IconFile.setIcon(nil, on: folder, options: [])
+        _ = IconFile.setIcon(nil, on: folder, options: [])
         await manager.prune()
         #expect(Self.changeCount(folder) == 0)
         #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
