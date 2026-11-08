@@ -11,6 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController?
     private var isReady = false
     private var queuedCommands: [(FolderCommand, fromOurExtension: Bool)] = []
+    /// Asked for the window before the app was ready.
+    private var isEditorAskedFor = false
+    /// Held for as long as the app runs (see `LibraryLock`).
+    private var libraryLock: LibraryLock?
     private var mountObserver: NSObjectProtocol?
     private var spotlightWatch: FolderSpotlightWatch?
     /// Quitting was asked for and is waiting for an answer, or for the last writes.
@@ -24,6 +28,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         quitOtherCopies()
+        // A copy that was running looks after the folders until it has quit: it may be finishing
+        // a write, or asking whether to keep a new default look. Only then does this one start.
+        whenAlone { [weak self] in self?.start() }
+    }
+
+    /// Calls `start` once no other copy runs and the library's lock is this copy's. A copy that is
+    /// still there after a couple of minutes was kept by its user (they cancelled its question about
+    /// the default look) or can't quit: then this one quits instead, rather than turn up whenever
+    /// that one goes.
+    private func whenAlone(_ start: @escaping @MainActor () -> Void) {
+        if takeLibraryIfAlone() { return start() }
+        log.notice("Waiting for the other copy to quit")
+        Task { [weak self] in
+            let deadline = ContinuousClock.now + .seconds(120)
+            while ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let self else { return }
+                if self.takeLibraryIfAlone() { return start() }
+            }
+            self?.log.notice("The other copy is still running; this one quits")
+            NSApp.terminate(nil)
+        }
+    }
+
+    private func takeLibraryIfAlone() -> Bool {
+        guard otherCopies().isEmpty else { return false }
+        switch LibraryLock.take(in: FolderImageManager.standardDirectory) {
+        case .taken(let lock):
+            libraryLock = lock
+            return true
+        case .heldElsewhere:
+            return false
+        case .unavailable:
+            log.error("The library can't be locked; going ahead")
+            return true
+        }
+    }
+
+    private func start() {
         statusItem = StatusItemController(actions: actions, settings: settings)
         finderIntegration.start()
         // Asks whether the Finder menu is on, off the main thread, so that the menu bar menu
@@ -69,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             actions.handle(command, fromOurExtension: fromOurExtension)
         }
         queuedCommands.removeAll()
+        if isEditorAskedFor { actions.showEditor() }
 
         if !settings.hasLaunchedBefore {
             // A background helper is expected to start with the Mac; the switch is behind
@@ -120,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Opening the app again (from Finder, Spotlight, the Dock) shows the window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        actions.showEditor()
+        if isReady { actions.showEditor() } else { isEditorAskedFor = true }
         return false
     }
 
@@ -139,6 +183,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// last change to be written, and lets the folder being written finish: nothing is cut off
     /// halfway. Long runs (Redraw All, Remove All) stop at the next folder.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Still waiting for another copy: nothing started, nothing to finish.
+        guard isReady else { return .terminateNow }
         isQuitting = true
         let asking = actions.confirmQuit { [weak self] proceed in
             guard proceed else {
@@ -180,11 +226,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Two copies running would mean two sets of badges over Finder. The copy started
     /// last wins, which is what you want right after installing an update.
     private func quitOtherCopies() {
-        guard let identifier = Bundle.main.bundleIdentifier else { return }
-        for other in NSRunningApplication.runningApplications(withBundleIdentifier: identifier) where other != .current {
+        for other in otherCopies() {
             log.notice("Asking another running copy (pid \(other.processIdentifier)) to quit")
             other.terminate()
         }
+    }
+
+    private func otherCopies() -> [NSRunningApplication] {
+        guard let identifier = Bundle.main.bundleIdentifier else { return [] }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: identifier).filter { $0 != .current && !$0.isTerminated }
     }
 }
 

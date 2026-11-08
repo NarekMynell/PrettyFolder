@@ -52,6 +52,7 @@ public enum IconChange: Sendable {
 public enum FolderImageError: LocalizedError {
     case renderFailed
     case setIconFailed(String)
+    case diskFull(String)
     case notManaged(String)
     case cannotStorePicture
     case unreachable(String)
@@ -63,6 +64,7 @@ public enum FolderImageError: LocalizedError {
         switch self {
         case .renderFailed: return "The icon could not be drawn."
         case .setIconFailed(let name): return "macOS refused to change the icon of “\(name)”. Check that PrettyFolder may access this location in System Settings › Privacy & Security."
+        case .diskFull(let name): return "There isn't enough room on the disk of “\(name)” for its new icon. Make some room there and try again."
         case .notManaged(let name): return "“\(name)” doesn't have a picture from PrettyFolder."
         case .cannotStorePicture: return "The picture could not be saved."
         case .unreachable(let name): return "PrettyFolder couldn't reach “\(name)”. If it's on a disk that isn't connected, connect the disk and try again."
@@ -410,12 +412,13 @@ public actor FolderImageManager {
     /// Number of folders with a picture, for saying so: those known and not deleted, and those
     /// that can only have it taken off.
     public func folderCountWithPictures() -> Int {
-        library.records.values.filter { !isGone($0) }.count + currentStrays.count
+        library.records.values.filter { !isGone($0) }.count + currentStrays().count
     }
 
-    /// Those that are still what they were when they were found.
-    private var currentStrays: [URL] {
-        strays.filter { Self.appearsToHavePicture($0) && isStray($0) }
+    /// Those that are still what they were when they were found. `justRemoved`: records Remove All
+    /// has just let go of, which their copies still name.
+    private func currentStrays(justRemoved: Set<UUID> = []) -> [URL] {
+        strays.filter { Self.appearsToHavePicture($0) && isStray($0, justRemoved: justRemoved) }
     }
 
     /// Whether a record's folder has been deleted, as far as can be told: it can't be found, and
@@ -497,8 +500,12 @@ public actor FolderImageManager {
             let retried = Set(later.map(\.folder.path))
             outcomes = outcomes.filter { !retried.contains($0.folder.path) } + later
         }
-        library.collectGarbage()
-        persist()
+        // Stopped for quitting: whatever was done is saved already, and a copy starting meanwhile
+        // may be about to use a picture this would delete.
+        if !isStopped {
+            library.collectGarbage()
+            persist()
+        }
         return outcomes
     }
 
@@ -548,7 +555,7 @@ public actor FolderImageManager {
             await Task.yield()
         }
         if !isStopped {
-            let found = currentStrays
+            let found = currentStrays(justRemoved: handled)
             let done = await removeImage(from: found)
             // Those it didn't work for are still there to be told about, and tried again.
             strays = Set(done.filter { !$0.succeeded }.map(\.folder))
@@ -759,14 +766,32 @@ public actor FolderImageManager {
         let (written, oldFile) = FolderMetadata.keepingModificationDate(of: folder) {
             autoreleasepool { IconFile.write(image, to: folder) }
         }
-        guard written, let resource = FolderInspector.iconResource(of: folder) else {
+        // Whole, too: on a disk that is all but full, macOS can say it worked and leave an icon
+        // file with no picture in it.
+        guard written, let resource = FolderInspector.iconResource(of: folder), IconFile.isWhole(resource) else {
             oldFile?.discard()
-            // macOS may have got as far as the file before being refused the rest.
-            if !hadIconFile { removeIconFile(of: folder) }
-            throw FolderImageError.setIconFailed(displayName(folder))
+            // macOS may have got as far as the file before being refused the rest. A folder that
+            // had no icon of its own goes back to having none.
+            if !hadIconFile {
+                FolderMetadata.keepingModificationDate(of: folder) {
+                    _ = NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: [])
+                }
+                removeIconFile(of: folder)
+            }
+            throw Self.isAlmostFull(folder) ? FolderImageError.diskFull(displayName(folder)) : FolderImageError.setIconFailed(displayName(folder))
         }
+        library.noteWrittenIcon(resource.sha256)
         iconsWritten += 1
         return WrittenIcon(folder: folder, image: image, digest: resource.sha256, replaced: replacing, sequence: iconsWritten, oldFile: oldFile)
+    }
+
+    /// Whether the disk `folder` is on has too little room left for an icon (a megabyte or so, twice
+    /// while the new one is made beside the old).
+    private static func isAlmostFull(_ folder: URL) -> Bool {
+        var folder = folder
+        folder.removeAllCachedResourceValues()
+        guard let free = (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity else { return false }
+        return free < 8 << 20
     }
 
     /// Gets Finder to show an icon that was just written. A first icon shows by itself,
@@ -884,10 +909,26 @@ public actor FolderImageManager {
     /// Whether a folder without a record, and none to be had, is a copy from before folders carried
     /// their look. The marker is all there is to go by, unless it is the record's own folder, whose
     /// icon someone else has changed.
-    private func isStray(_ folder: URL) -> Bool {
-        guard let id = markerID(of: folder), FolderInspector.customIconFlag(folder) == true, CarriedLook.read(from: folder) == nil else { return false }
-        guard var record = library.record(id) else { return true }
+    private func isStray(_ folder: URL, justRemoved: Set<UUID> = []) -> Bool {
+        guard let id = markerID(of: folder), FolderInspector.customIconFlag(folder) == true, CarriedLook.read(from: folder) == nil,
+              let resource = FolderInspector.iconResource(of: folder)
+        else { return false }
+        let record = library.record(id)
+        // Only with an icon PrettyFolder drew. The marker goes on before the icon, so a write cut
+        // short (the app stopped in between) can leave it on a folder showing its owner's icon, or on
+        // an icon file with nothing in it that its owner replaces later; that marker names no record.
+        // An icon from before the list kept track of them counts on a copy of a folder it knows.
+        let namesAKnownFolder = record != nil || justRemoved.contains(id)
+        guard library.wroteIcon(resource.sha256)
+                || (namesAKnownFolder && (Self.iconFileDate(of: folder) ?? .distantFuture) < library.writtenIconsSince)
+        else { return false }
+        guard var record else { return true }
         return !describes(&record, folder)
+    }
+
+    /// When the folder's icon file was written.
+    private static func iconFileDate(of folder: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: FolderInspector.iconFileURL(for: folder).path))?[.modificationDate] as? Date
     }
 
     /// What `folder` says about its icon, if that is the icon it shows.

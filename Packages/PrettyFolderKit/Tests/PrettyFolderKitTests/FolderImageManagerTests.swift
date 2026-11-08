@@ -1563,17 +1563,14 @@ import UniformTypeIdentifiers
     }
 
     /// A folder with an icon from PrettyFolder, and nothing that says which picture it is.
-    private func orphan(named name: String, marker: String = UUID().uuidString) throws -> URL {
-        let folder = try temp.folder(name)
-        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 0, blue: 1), forFile: folder.path, options: []))
-        ExtendedAttributes.set(Data(marker.utf8), named: FolderImageManager.markerAttribute, at: folder)
-        return folder
+    private func orphan(named name: String, marker: String = UUID().uuidString) async throws -> URL {
+        try await oldCopy(named: name, in: temp, of: picture, drawnBy: manager, marker: marker)
     }
 
     @Test func aCopyWhosePictureIsGoneCanStillHaveItTakenOffWithTheRest() async throws {
         let original = try temp.folder("Original")
         _ = await manager.apply(imageAt: picture, to: [original])
-        let lost = try orphan(named: "Lost")
+        let lost = try await orphan(named: "Lost")
         await manager.takeOn([lost])
         #expect(await manager.look(for: lost) == nil)
         #expect(await manager.managedFolderCount() == 1)
@@ -1613,7 +1610,7 @@ import UniformTypeIdentifiers
     }
 
     @Test func aStrayThatLostItsIconMeanwhileIsNotCountedOrReported() async throws {
-        let lost = try orphan(named: "Lost")
+        let lost = try await orphan(named: "Lost")
         await manager.takeOn([lost])
         #expect(await manager.folderCountWithPictures() == 1)
         #expect(NSWorkspace.shared.setIcon(nil, forFile: lost.path, options: []))
@@ -1622,14 +1619,14 @@ import UniformTypeIdentifiers
     }
 
     @Test func aStrayThatGetsAPictureIsCountedOnce() async throws {
-        let lost = try orphan(named: "Lost")
+        let lost = try await orphan(named: "Lost")
         await manager.takeOn([lost])
         #expect(await manager.apply(imageAt: picture, to: [lost]).allSatisfy { $0.succeeded })
         #expect(await manager.folderCountWithPictures() == 1)
     }
 
     @Test func aStrayThatCouldNotBeChangedIsToldAboutAndTriedAgain() async throws {
-        let lost = try orphan(named: "Lost")
+        let lost = try await orphan(named: "Lost")
         await manager.takeOn([lost])
         let file = FolderInspector.iconFileURL(for: lost)
         try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: file.path)
@@ -1669,7 +1666,7 @@ import UniformTypeIdentifiers
         let original = try temp.folder("Original")
         _ = await manager.apply(imageAt: picture, to: [original])
         let late = try copy(original, as: "Late")
-        let lost = try orphan(named: "Lost")
+        let lost = try await orphan(named: "Lost")
         await manager.takeOn([lost])
         let manager = self.manager
         // It may turn up only once all the others are gone, and their picture with them.

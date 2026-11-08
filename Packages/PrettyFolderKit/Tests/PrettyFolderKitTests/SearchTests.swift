@@ -131,9 +131,9 @@ import os
         let searches = Searches()
         let manager = try manager(searchingWith: searches)
         defer { searches.open() }
-        let lost = try temp.folder("Lost")
-        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 0, blue: 1), forFile: lost.path, options: []))
-        ExtendedAttributes.set(Data(UUID().uuidString.utf8), named: FolderImageManager.markerAttribute, at: lost)
+        let picture = temp.file("photo.jpg")
+        TestImages.write(TestImages.solid(width: 64, height: 48, red: 0, green: 0, blue: 1), to: picture, type: .png)
+        let lost = try await oldCopy(named: "Lost", in: temp, of: picture, drawnBy: manager)
         searches.find([lost])
 
         await manager.findFolders(patience: .milliseconds(200))

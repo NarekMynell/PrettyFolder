@@ -1,6 +1,8 @@
 import AppKit
 import ImageIO
 import UniformTypeIdentifiers
+import Testing
+@testable import PrettyFolderKit
 
 /// A scratch directory that disappears when the test is done.
 final class TemporaryDirectory {
@@ -132,4 +134,20 @@ struct FolderSnapshot: Equatable {
         a.attributes == b.attributes && a.contents == b.contents
             && a.modified?.tv_sec == b.modified?.tv_sec && a.modified?.tv_nsec == b.modified?.tv_nsec
     }
+}
+
+/// A folder showing an icon `manager` drew, with nothing that says which picture it is: a copy made
+/// before folders carried their look, whose record is gone. (A custom icon PrettyFolder didn't
+/// draw, with a marker on it, is what a write cut short leaves on a folder with its owner's icon,
+/// and is never taken for one.)
+func oldCopy(named name: String, in temp: TemporaryDirectory, of picture: URL, drawnBy manager: FolderImageManager, marker: String = UUID().uuidString) async throws -> URL {
+    let source = try temp.folder("\(name) (source)")
+    #expect(await manager.apply(imageAt: picture, to: [source]).allSatisfy(\.succeeded))
+    let folder = temp.url.appendingPathComponent(name, isDirectory: true)
+    try FileManager.default.copyItem(at: source, to: folder)
+    #expect(await manager.removeImage(from: [source]).allSatisfy(\.succeeded))
+    try FileManager.default.removeItem(at: source)
+    CarriedLook.remove(from: folder)
+    ExtendedAttributes.set(Data(marker.utf8), named: FolderImageManager.markerAttribute, at: folder)
+    return folder
 }

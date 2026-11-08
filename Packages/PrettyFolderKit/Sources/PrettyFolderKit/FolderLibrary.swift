@@ -88,6 +88,10 @@ struct FolderLibrary {
         static let currentVersion = 2
         var version = currentVersion
         var records: [FolderRecord]
+        /// The icons written lately, by digest, oldest first, and since when they are kept track of.
+        /// Optional, so a list from before can be read, and one from now by an earlier PrettyFolder.
+        var writtenIcons: [String]?
+        var writtenIconsSince: Date?
     }
 
     /// Just the version, which every list has, whatever its records look like.
@@ -97,6 +101,16 @@ struct FolderLibrary {
 
     let directory: URL
     private(set) var records: [UUID: FolderRecord] = [:]
+    /// Digests of the icons PrettyFolder has written here, besides those the records still show,
+    /// oldest first: an icon with a marker but nothing else to go by is only PrettyFolder's if it
+    /// is one of them (see `wroteIcon`).
+    private var writtenIcons: [String] = []
+    private var writtenIconSet: Set<String> = []
+    /// Since when the icons written here are kept track of: the start for a new list, the first
+    /// time it was read by a PrettyFolder that does so for one from before.
+    private(set) var writtenIconsSince = Date.distantPast
+    /// How many are remembered: years of everyday use.
+    static let writtenIconsKept = 4096
 
     /// The list was written by a newer PrettyFolder: use what of it can be read, but never
     /// overwrite it or delete pictures it may need.
@@ -132,6 +146,9 @@ struct FolderLibrary {
             }
             let snapshot = try decoder.decode(Snapshot.self, from: data)
             records = Dictionary(snapshot.records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            writtenIcons = Array((snapshot.writtenIcons ?? []).suffix(Self.writtenIconsKept))
+            writtenIconSet = Set(writtenIcons)
+            writtenIconsSince = snapshot.writtenIcons == nil ? Date() : snapshot.writtenIconsSince ?? .distantPast
         } catch {
             // Don't let one bad file wipe everything: keep it next to the new one for a
             // closer look, and start over. The pictures it names stay.
@@ -163,6 +180,20 @@ struct FolderLibrary {
 
     func record(_ id: UUID) -> FolderRecord? { records[id] }
 
+    /// An icon with this digest has just been written.
+    mutating func noteWrittenIcon(_ digest: String) {
+        guard writtenIconSet.insert(digest).inserted else { return }
+        writtenIcons.append(digest)
+        if writtenIcons.count > Self.writtenIconsKept {
+            writtenIconSet.remove(writtenIcons.removeFirst())
+        }
+    }
+
+    /// Whether PrettyFolder wrote an icon with this digest: one a record shows, or one written lately.
+    func wroteIcon(_ digest: String) -> Bool {
+        writtenIconSet.contains(digest) || records.values.contains { $0.iconDigest == digest }
+    }
+
     mutating func upsert(_ record: FolderRecord) {
         records[record.id] = record
     }
@@ -179,7 +210,7 @@ struct FolderLibrary {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         let sorted = records.values.sorted { $0.created < $1.created }
-        try encoder.encode(Snapshot(records: sorted)).write(to: indexURL, options: .atomic)
+        try encoder.encode(Snapshot(records: sorted, writtenIcons: writtenIcons, writtenIconsSince: writtenIconsSince)).write(to: indexURL, options: .atomic)
     }
 
     func pictureURL(named name: String) -> URL {
