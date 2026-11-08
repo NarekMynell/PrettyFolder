@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.8
+
+- PrettyFolder now tells you when there's a newer version: a dot on its menu bar icon, and **Download PrettyFolder** in its menu and next to the version behind the gear, which open the release page. Once a day it asks GitHub for the number of the newest version, and nothing about you or your folders is sent. **Check for Updates** behind the gear turns that off. It doesn't update itself: download the new version and replace the old one, as the first time.
+
 ## 1.3.7
 
 - Each time PrettyFolder started, and each time a disk was connected, it went through everything in your home folder looking for copies of folders, minutes of work for the processor on a Mac with a lot in it. It took macOS saying the Mac's own disk has a "read-only" Spotlight index for Spotlight not being there. Spotlight finds those copies, and PrettyFolder now leaves the rest to it again.
