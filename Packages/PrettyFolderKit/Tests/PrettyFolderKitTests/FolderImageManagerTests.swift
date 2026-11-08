@@ -99,7 +99,7 @@ import UniformTypeIdentifiers
         try await manager.setStyle(IconStyle(x: 0.1, y: 0.1, width: 0.8, height: 0.8, mode: .fit), placement: .natural, for: folder)
 
         // Finder's Get Info takes the icon off; the next tidy-up notices.
-        #expect(NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: []))
+        #expect(IconFile.setIcon(nil, on: folder, options: []))
         await manager.prune()
         var after = FolderSnapshot(folder)
         after.modified = before.modified  // Finder changed the date, not PrettyFolder
@@ -181,7 +181,7 @@ import UniformTypeIdentifiers
             rect.fill()
             return true
         }
-        #expect(NSWorkspace.shared.setIcon(foreign, forFile: folder.path, options: []))
+        #expect(IconFile.setIcon(foreign, on: folder, options: []))
 
         let other = temp.file("other.png")
         TestImages.write(TestImages.solid(width: 120, height: 80, red: 0.2, green: 0.8, blue: 0.2), to: other, type: .png)
@@ -202,7 +202,7 @@ import UniformTypeIdentifiers
             rect.fill()
             return true
         }
-        #expect(NSWorkspace.shared.setIcon(foreign, forFile: folder.path, options: []))
+        #expect(IconFile.setIcon(foreign, on: folder, options: []))
         await manager.prune()
         #expect(Self.changeCount(folder) == 0)
         #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
@@ -260,7 +260,7 @@ import UniformTypeIdentifiers
             rect.fill()
             return true
         }
-        #expect(NSWorkspace.shared.setIcon(foreign, forFile: folder.path, options: []))
+        #expect(IconFile.setIcon(foreign, on: folder, options: []))
         #expect(FolderImageManager.appearsToHavePicture(folder), "the quick guess is fooled")
         #expect(await !manager.showsOwnPicture(folder))
     }
@@ -277,7 +277,7 @@ import UniformTypeIdentifiers
     @Test func sharesOnePictureBetweenFolders() async throws {
         let folders = try ["A", "B", "C"].map { try temp.folder($0) }
         let outcomes = await manager.apply(imageAt: picture, to: folders)
-        #expect(outcomes.count == 3 && outcomes.allSatisfy { $0.succeeded })
+        #expect(outcomes.count == 3 && outcomes.allSatisfy { $0.succeeded }, "\(outcomes.map { $0.failure ?? "ok" })")
         #expect(storedPictures().count == 1)
 
         _ = await manager.removeImage(from: [folders[0]])
@@ -458,7 +458,7 @@ import UniformTypeIdentifiers
         try await manager.setStyle(IconStyle(x: 0.2, y: 0.2, width: 0.5, height: 0.5, mode: .fill), placement: .natural, for: folder)
         #expect(Self.changeCount(folder) == 1)
         // As Get Info does it.
-        NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: [])
+        IconFile.setIcon(nil, on: folder, options: [])
         await manager.prune()
         #expect(Self.changeCount(folder) == 0)
         #expect(ExtendedAttributes.value(named: FolderImageManager.markerAttribute, at: folder) == nil)
@@ -573,7 +573,7 @@ import UniformTypeIdentifiers
             rect.fill()
             return true
         }
-        #expect(NSWorkspace.shared.setIcon(foreign, forFile: folder.path, options: []))
+        #expect(IconFile.setIcon(foreign, on: folder, options: []))
         let foreignResource = FolderInspector.iconResource(of: folder)
 
         #expect(await manager.look(for: folder) == nil)
@@ -1090,7 +1090,7 @@ import UniformTypeIdentifiers
             rect.fill()
             return true
         }
-        #expect(NSWorkspace.shared.setIcon(foreign, forFile: copy.path, options: []))
+        #expect(IconFile.setIcon(foreign, on: copy, options: []))
         #expect(await !manager.showsOwnPicture(copy))
         #expect(await manager.look(for: copy) == nil)
 
@@ -1180,7 +1180,7 @@ import UniformTypeIdentifiers
             rect.fill()
             return true
         }
-        #expect(NSWorkspace.shared.setIcon(foreign, forFile: app.path, options: []))
+        #expect(IconFile.setIcon(foreign, on: app, options: []))
         let outcomes = await manager.removeImage(from: [app])
         #expect(outcomes.count == 1 && !outcomes[0].succeeded)
         #expect(FolderInspector.hasCustomIcon(app), "the package was not touched")
@@ -1508,7 +1508,7 @@ import UniformTypeIdentifiers
         _ = await manager.apply(imageAt: picture, to: [folder])
         let copy = temp.url.appendingPathComponent("Copy", isDirectory: true)
         try FileManager.default.copyItem(at: folder, to: copy)
-        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), forFile: copy.path, options: []))
+        #expect(IconFile.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), on: copy, options: []))
         await manager.takeOn([copy])
         #expect(await manager.managedFolderCount() == 1)
     }
@@ -1602,7 +1602,7 @@ import UniformTypeIdentifiers
         let folder = try temp.folder("Theirs now")
         _ = await manager.apply(imageAt: picture, to: [folder])
         let copied = try copy(folder, as: "Copy")
-        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), forFile: copied.path, options: []))
+        #expect(IconFile.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), on: copied, options: []))
         await manager.takeOn([copied])
         #expect(await manager.folderCountWithPictures() == 1, "only the original")
         #expect(await manager.removeAll().allSatisfy { $0.succeeded })
@@ -1613,7 +1613,7 @@ import UniformTypeIdentifiers
         let lost = try await orphan(named: "Lost")
         await manager.takeOn([lost])
         #expect(await manager.folderCountWithPictures() == 1)
-        #expect(NSWorkspace.shared.setIcon(nil, forFile: lost.path, options: []))
+        #expect(IconFile.setIcon(nil, on: lost, options: []))
         #expect(await manager.folderCountWithPictures() == 0)
         #expect(await manager.removeAll().isEmpty)
     }
@@ -1708,7 +1708,7 @@ import UniformTypeIdentifiers
         _ = await manager.apply(imageAt: picture, to: [original])
         let copied = try copy(original, as: "Copy")
         let plain = try temp.folder("Plain")
-        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), forFile: plain.path, options: []))
+        #expect(IconFile.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), on: plain, options: []))
         await manager.takeOn(iconFiles: [copied, plain].map(FolderInspector.iconFileURL(for:)))
         #expect(await manager.managedFolderCount() == 2)
         #expect(await manager.look(for: plain) == nil)
@@ -1857,7 +1857,7 @@ import UniformTypeIdentifiers
 
     @Test func aFolderThatRefusesItsMarkerKeepsWhatItShows() async throws {
         let theirs = try temp.folder("Theirs")
-        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), forFile: theirs.path, options: []))
+        #expect(IconFile.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), on: theirs, options: []))
         let before = try #require(FolderInspector.iconResource(of: theirs))
         let tool = Process()
         tool.executableURL = URL(fileURLWithPath: "/bin/chmod")
@@ -1910,7 +1910,7 @@ import UniformTypeIdentifiers
         let folder = try temp.folder("Going away")
         _ = await manager.apply(imageAt: picture, to: [folder])
         let moved = try movedAcrossDisks(folder, as: "Over there")
-        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), forFile: moved.path, options: []))
+        #expect(IconFile.setIcon(TestImages.nsImage(red: 0, green: 1, blue: 0), on: moved, options: []))
 
         let second = temp.file("second.jpg")
         TestImages.write(TestImages.solid(width: 300, height: 200, red: 0, green: 0.5, blue: 1), to: second, type: .jpeg)
@@ -2022,11 +2022,11 @@ import UniformTypeIdentifiers
     @Test func removingEverythingForgetsIconsSomeoneElseChanged() async throws {
         let folder = try temp.folder("Theirs")
         _ = await manager.apply(imageAt: picture, to: [folder])
-        #expect(NSWorkspace.shared.setIcon(NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
+        #expect(IconFile.setIcon(NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
             NSColor.green.setFill()
             rect.fill()
             return true
-        }, forFile: folder.path, options: []))
+        }, on: folder))
 
         let outcomes = await manager.removeAll()
         #expect(outcomes.allSatisfy { $0.succeeded })

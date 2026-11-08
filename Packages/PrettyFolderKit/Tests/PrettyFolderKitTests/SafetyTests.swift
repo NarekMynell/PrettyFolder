@@ -20,7 +20,7 @@ import Testing
 
     /// What Get Info (paste) or another app does: a custom icon that isn't PrettyFolder's.
     private static func giveOwnIcon(_ folder: URL) -> String? {
-        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0.1, green: 0.2, blue: 0.9), forFile: folder.path, options: []))
+        #expect(IconFile.setIcon(TestImages.nsImage(red: 0.1, green: 0.2, blue: 0.9), on: folder, options: []))
         return digest(folder)
     }
 
@@ -170,7 +170,7 @@ import Testing
 
     @Test func aWholeIconIsToldFromOneWithNoPictureInIt() throws {
         let folder = try temp.folder("Icon")
-        #expect(NSWorkspace.shared.setIcon(TestImages.nsImage(red: 0.3, green: 0.6, blue: 0.2), forFile: folder.path, options: []))
+        #expect(IconFile.setIcon(TestImages.nsImage(red: 0.3, green: 0.6, blue: 0.2), on: folder, options: []))
         let resource = try #require(FolderInspector.iconResource(of: folder))
         #expect(IconFile.isWhole(resource))
         // Cut short anywhere, or with the picture's bytes gone.

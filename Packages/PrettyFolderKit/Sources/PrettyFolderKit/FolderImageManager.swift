@@ -308,7 +308,7 @@ public actor FolderImageManager {
                 || FileManager.default.fileExists(atPath: FolderInspector.iconFileURL(for: folder).path)
             if hadIcon {
                 let removed = FolderMetadata.keepingModificationDate(of: folder) {
-                    NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: [])
+                    IconFile.setIcon(nil, on: folder)
                 }
                 guard removed else {
                     outcomes.append(.failed(folder, FolderImageError.setIconFailed(displayName(folder))))
@@ -774,7 +774,7 @@ public actor FolderImageManager {
             // had no icon of its own goes back to having none.
             if !hadIconFile {
                 FolderMetadata.keepingModificationDate(of: folder) {
-                    _ = NSWorkspace.shared.setIcon(nil, forFile: folder.path, options: [])
+                    _ = IconFile.setIcon(nil, on: folder)
                 }
                 removeIconFile(of: folder)
             }

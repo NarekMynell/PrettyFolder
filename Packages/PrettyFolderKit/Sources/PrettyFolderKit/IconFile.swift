@@ -44,8 +44,17 @@ enum IconFile {
         }
         // A first icon shows only once the folder's custom icon flag goes on, after the file is
         // written. The caller checks what was written (see `isWhole`).
-        return (NSWorkspace.shared.setIcon(image, forFile: folder.path, options: options), nil)
+        return (setIcon(image, on: folder, options: options), nil)
     }
+
+    /// `NSWorkspace.setIcon(_:forFile:options:)`, one at a time across the app. It writes with a
+    /// part of macOS that keeps its state for the whole app: two at once can leave an icon file
+    /// with no picture in it while saying it worked, or crash.
+    static func setIcon(_ image: NSImage?, on folder: URL, options: NSWorkspace.IconCreationOptions = []) -> Bool {
+        oneAtATime.withLock { NSWorkspace.shared.setIcon(image, forFile: folder.path, options: options) }
+    }
+
+    private static let oneAtATime = NSLock()
 
     private enum Swap {
         case swapped(Replaced)
@@ -67,7 +76,7 @@ enum IconFile {
         let replaced = Replaced(directory: scratch)
         let staging = scratch.appendingPathComponent("Icon", isDirectory: true)
         guard (try? files.createDirectory(at: staging, withIntermediateDirectories: false)) != nil,
-              NSWorkspace.shared.setIcon(image, forFile: staging.path, options: options),
+              setIcon(image, on: staging, options: options),
               FolderInspector.iconResource(of: staging).map(isWhole) == true,
               move(FolderInspector.iconFileURL(for: staging), over: FolderInspector.iconFileURL(for: folder))
         else {
