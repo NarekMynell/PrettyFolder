@@ -96,9 +96,13 @@ enum FolderSearch {
     private static func otherDisks() -> [URL] {
         let keys: [URLResourceKey] = [.volumeIsLocalKey, .volumeIsReadOnlyKey]
         let disks = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
+        // Local first, from what the list already says: looking inside a network disk to see whether
+        // it holds a Mac could wait for as long as its server takes to answer, or for good.
         return disks.filter { disk in
-            guard disk.path.hasPrefix("/Volumes/"), !holdsWholeMac(disk), let values = try? disk.resourceValues(forKeys: Set(keys)) else { return false }
-            return values.volumeIsLocal == true && values.volumeIsReadOnly != true
+            guard disk.path.hasPrefix("/Volumes/"), let values = try? disk.resourceValues(forKeys: Set(keys)),
+                  values.volumeIsLocal == true, values.volumeIsReadOnly != true
+            else { return false }
+            return !holdsWholeMac(disk)
         }
     }
 
@@ -120,7 +124,9 @@ enum FolderSearch {
     /// What Spotlight says about a disk, `nil` if it doesn't say in time. Nothing else tells
     /// without a privileged look.
     private static func isIndexed(_ disk: URL) -> Bool? {
-        guard let result = Subprocess.run("/usr/bin/mdutil", ["-s", disk.path], within: spotlightPatience) else { return nil }
+        // One stopped on the way (the app is quitting) says nothing either: not "not indexed", which
+        // would have the whole disk walked.
+        guard let result = Subprocess.run("/usr/bin/mdutil", ["-s", disk.path], within: spotlightPatience), result.status == 0 else { return nil }
         return result.output.contains("Indexing enabled")
     }
 

@@ -70,7 +70,8 @@ final class IconCover {
 
     /// Puts `icon` over every place Finder shows `folder`, and returns once it's there.
     func cover(_ folder: URL, with icon: RenderedIcon) async {
-        guard AXIsProcessTrusted(), let pid = finder.pid else { return }
+        // The permission as last heard: asking macOS again could wait on its privacy service.
+        guard AccessibilityPermission.shared.isGranted == true, let pid = finder.pid else { return }
         // From here on a click or a scroll makes what Finder says out of date, and which icon
         // is newest must be remembered.
         placing += 1
@@ -429,29 +430,5 @@ private struct FinderWindow {
 private extension CGRect {
     func isClose(to other: CGRect) -> Bool {
         abs(minX - other.minX) < 1 && abs(minY - other.minY) < 1 && abs(width - other.width) < 1 && abs(height - other.height) < 1
-    }
-}
-
-/// Gives a continuation the first answer it gets, whichever side that comes from.
-private nonisolated final class OneAnswer<Value: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, Never>?
-
-    init(_ continuation: CheckedContinuation<Value, Never>) {
-        self.continuation = continuation
-    }
-
-    var isAnswered: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return continuation == nil
-    }
-
-    func give(_ value: Value) {
-        lock.lock()
-        let waiting = continuation
-        continuation = nil
-        lock.unlock()
-        waiting?.resume(returning: value)
     }
 }

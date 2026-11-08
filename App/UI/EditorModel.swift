@@ -46,6 +46,13 @@ final class EditorModel {
     private(set) var isPictureNatural = true
     /// Whether any of them has a custom icon at all, from PrettyFolder or not.
     private(set) var hasCustomIcon = false
+    /// The icon of the first of them that has a custom icon.
+    private var customIcon: NSImage?
+    /// The names Finder shows for them. Like everything else about them, read from the disk off the
+    /// main thread: they may be on a network disk that has stopped answering.
+    private var names: [String] = []
+    /// Which of them are on a disk of the Mac's own.
+    private var local: [Bool] = []
     /// Their picture, if they have one, is still being read: when the window opens, say.
     private(set) var isLoadingPicture = false
 
@@ -124,16 +131,23 @@ final class EditorModel {
     /// picture isn't on this Mac.
     var otherIcon: NSImage? {
         guard !hasPicture, hasCustomIcon else { return nil }
-        return folders.first(where: FolderInspector.hasCustomIcon).map { NSWorkspace.shared.icon(forFile: $0.path) }
+        return customIcon
     }
     var isDefaultDirty: Bool { defaultDraft != settings.defaultStyle }
 
     var title: String {
         switch folders.count {
         case 0: String(localized: "Default Look")
-        case 1: FileManager.default.displayName(atPath: folders[0].path)
+        case 1: names.first ?? folders[0].lastPathComponent
         default: String(localized: "\(folders.count) Folders")
         }
+    }
+
+    /// The folder the window's title bar shows the icon of. Only one on a disk of the Mac's own:
+    /// macOS reads the icon there from the disk on the main thread, which a network disk can keep
+    /// waiting for as long as its server takes (measured: for as long as it doesn't answer).
+    var representedFolder: URL? {
+        folders.count == 1 && local.first == true ? folders[0] : nil
     }
 
     /// The picture the editor shows. The default look is previewed with a picture chosen
@@ -170,9 +184,11 @@ final class EditorModel {
 
     // MARK: - Showing folders
 
-    func show(_ folders: [URL]) {
+    /// Shows `checked` folders, read from the disk off the main thread (see `FolderActions`).
+    func show(_ checked: [CheckedFolder]) {
         finishPendingChange()
-        let opened = folders.map(FolderInspector.Location.init(of:))
+        let folders = checked.map(\.url)
+        let opened = checked.map(\.location)
         // The same names may be other folders by now: a new one has taken a moved one's place.
         let sameFolders = folders == self.folders && places.count == opened.count && zip(places, opened).allSatisfy { was, now in
             if let was, let now { was.isSameFolder(as: now) } else { was == nil && now == nil }
@@ -187,11 +203,14 @@ final class EditorModel {
             folderPicture = nil
             folderPictureURL = nil
             hasCustomIcon = false
+            customIcon = nil
             followsDefault = true
             isPictureNatural = true
             folderStyle = settings.defaultStyle
             folderPlacement = .natural
         }
+        names = checked.map(\.name)
+        local = checked.map(\.isLocal)
         scope = folders.isEmpty ? .defaultLook : .folders
         isLoadingPicture = !folders.isEmpty && folderPicture == nil
         reload()
@@ -238,14 +257,23 @@ final class EditorModel {
         Task {
             // Read the folders as they are once the writes already on their way are done.
             await queuedWrites?.value
-            // Where they are now (renamed or moved since the window opened?) and whether any
-            // has a custom icon. The disk is asked off the main thread.
-            let (moved, anyCustomIcon) = await onOwnThread {
+            // Where they are now (renamed or moved since the window opened?), what they are called
+            // and whether any has a custom icon. The disk is asked off the main thread.
+            let (moved, names, local, icon) = await onOwnThread {
                 let moved = places.map { $0?.current }
                 let current = opened.enumerated().map { index, folder in index < moved.count ? moved[index] ?? folder : folder }
-                return (moved, current.contains(where: FolderInspector.hasCustomIcon))
+                let names = current.map { FileManager.default.displayName(atPath: $0.path) }
+                let local = current.map(CheckedFolder.isLocal)
+                let icon = current.first(where: FolderInspector.hasCustomIcon).map { folder in
+                    Self.inPixels((try? folder.resourceValues(forKeys: [.effectiveIconKey]))?.effectiveIcon as? NSImage)
+                }
+                return (moved, names, local, icon)
             }
             guard generation == loadGeneration else { return }
+            if names.count == folders.count {
+                self.names = names
+                self.local = local
+            }
             for (index, location) in moved.enumerated() where index < folders.count {
                 if let location, location.path != folders[index].path { follow(folders[index], to: location, at: index) }
             }
@@ -266,7 +294,8 @@ final class EditorModel {
             guard generation == loadGeneration else { return }
             isLoadingPicture = false
             managedFolders = found.map(\.folder)
-            hasCustomIcon = anyCustomIcon
+            hasCustomIcon = icon != nil
+            customIcon = icon
             if pictureURL != folderPictureURL, folderPictureURL != nil {
                 // Another picture, or none. What was being done to the old one, and undoing
                 // what was done to it, would put that onto this one. Something may still be held
@@ -294,6 +323,26 @@ final class EditorModel {
             }
             onFoldersChanged?()
         }
+    }
+
+    /// An icon drawn into pixels, here and not on the main thread: an icon from macOS gets its
+    /// pixels from its icon service when it is drawn, and that service reads them from the folder's
+    /// disk, which may have stopped answering.
+    nonisolated private static func inPixels(_ icon: NSImage?, side: Int = 1024) -> NSImage {
+        guard let icon,
+              let bitmap = NSBitmapImageRep(
+                  bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8, samplesPerPixel: 4,
+                  hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+              ),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap)
+        else { return NSImage() }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        icon.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: NSSize(width: side / 2, height: side / 2))
+        image.addRepresentation(bitmap)
+        return image
     }
 
     /// A folder was renamed or moved: it is the same one, with what is known about it.
@@ -410,7 +459,8 @@ final class EditorModel {
 
     /// Shows each folder's look and writes the parts that changed. Writes happen one after
     /// another, in the order they were asked for; if any fails, the folders are read again.
-    private func apply(_ newLooks: [URL: Look], writing parts: Parts) {
+    /// `undoing` passes over a folder that has left its disk since, for another one of its name.
+    private func apply(_ newLooks: [URL: Look], writing parts: Parts, undoing: Bool = false) {
         looks = newLooks
         let first = managedFolders.first.flatMap { newLooks[$0] }
         folderStyle = first?.style ?? settings.defaultStyle
@@ -424,11 +474,23 @@ final class EditorModel {
         writing = Task {
             await previous?.value
             // Where they are by now: one renamed since the window last looked still gets it.
-            let locations = await onOwnThread { places.map { $0?.current } }
+            let found = await onOwnThread {
+                places.enumerated().map { index, place in
+                    let location = place?.current
+                    let isThere = index >= folders.count || place?.isAt(location ?? folders[index]) != false
+                    return (location: location, isThere: isThere)
+                }
+            }
             var failures: [FolderOutcome] = []
+            var passedOver = false
             for (index, folder) in folders.enumerated() {
                 guard let look = newLooks[folder] else { continue }
-                let location = (index < locations.count ? locations[index] : nil) ?? folder
+                let (now, isThere) = index < found.count ? found[index] : (nil, true)
+                if undoing, !isThere {
+                    passedOver = true
+                    continue
+                }
+                let location = now ?? folder
                 do {
                     switch parts {
                     case .style: try await manager.setStyle(look.style, for: location)
@@ -444,7 +506,7 @@ final class EditorModel {
             // Undoing a change that never got there would only fail again.
             if !failures.isEmpty { undoManager?.removeAllActions(withTarget: self) }
             // What the window shows isn't what is on the folders, or a reload waited for this.
-            if !failures.isEmpty || reloadIsDue { reload() }
+            if !failures.isEmpty || passedOver || reloadIsDue { reload() }
         }
     }
 
@@ -455,18 +517,17 @@ final class EditorModel {
             guard model.opening == opening else { return }
             let current = model.looks
             var restored: [URL: Look] = [:]
-            // Under the names they have now.
-            for (index, (folder, now)) in zip(folders, model.folders).enumerated() where model.managedFolders.contains(now) {
-                // Another folder with its name, since this one left its disk.
-                let place = model.places[index]
-                guard place?.isAt(place?.current ?? now) != false, var look = looks[folder] else { continue }
+            // Under the names they have now. (One that has left its disk for another folder of its
+            // name is passed over when written: that takes the disk, not for the main thread.)
+            for (folder, now) in zip(folders, model.folders) where model.managedFolders.contains(now) {
+                guard var look = looks[folder] else { continue }
                 // It followed the default look then, but was left with the old one since: going
                 // back mustn't take it to the new one it was spared.
                 if look.style == nil, model.defaultsLeftBehind != defaultsLeftBehind { look.style = current[now]?.style }
                 restored[now] = look
             }
             model.scope = .folders
-            model.apply(restored, writing: .both)
+            model.apply(restored, writing: .both, undoing: true)
             model.registerUndo(restoring: current)
         }
     }

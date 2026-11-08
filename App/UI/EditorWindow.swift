@@ -31,7 +31,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
         window.setFrameAutosaveName("Editor")
         model.window = window
-        model.onFoldersChanged = { [weak self] in self?.updateTitle() }
+        // The title bar's icon comes from the folder's disk, read on the main thread by macOS.
+        model.onFoldersChanged = { [weak self] in outsideMenus { self?.updateTitle() } }
         model.undoManager = undoSteps
         undoSteps.finishChange = { [weak model] in model?.finishPendingChange() }
         undoSteps.isHolding = { [weak model] in model?.isHolding ?? false }
@@ -41,7 +42,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// Shows the window for `folders`; with none, as it was, or for the default look.
-    func show(folders: [URL]) {
+    func show(folders: [CheckedFolder]) {
         if !folders.isEmpty || (window?.isVisible != true && window?.isMiniaturized != true) {
             model.show(folders)
         }
@@ -52,7 +53,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func updateTitle() {
         guard let window else { return }
         window.title = model.title
-        let represented = model.folders.count == 1 ? model.folders[0] : nil
+        let represented = model.representedFolder
         // The icon comes from the folder: set again, it shows a removed picture is gone. A
         // new picture comes through `showIcon` instead.
         if window.representedURL != represented || !model.hasCustomIcon {
@@ -423,7 +424,7 @@ private struct SetupBar: View {
 
     var body: some View {
         Group {
-            if finderExtension.needsTurningOn || !permission.isGranted {
+            if finderExtension.needsTurningOn || permission.isGranted == false {
                 VStack(spacing: 0) {
                     Divider()
                     HStack(spacing: 8) {
@@ -433,7 +434,7 @@ private struct SetupBar: View {
                             }
                             .help("Adds Folder Picture… to the menu you get by right-clicking a folder.")
                         }
-                        if !permission.isGranted {
+                        if permission.isGranted == false {
                             Button { permission.request() } label: {
                                 Label("Allow Accessibility", systemImage: "hand.point.up.left")
                             }

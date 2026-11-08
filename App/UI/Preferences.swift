@@ -37,7 +37,8 @@ struct PreferencesView: View {
         VStack(spacing: 0) {
             Form {
                 Section {
-                    Toggle("Open at Login", isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.setEnabled($0) }))
+                    Toggle("Open at Login", isOn: Binding(get: { loginItem.isEnabled ?? false }, set: { loginItem.setEnabled($0) }))
+                        .disabled(loginItem.isEnabled == nil)
                     Toggle("Show in Menu Bar", isOn: $settings.showsMenuBarIcon)
                         .help("Without it, open PrettyFolder from Applications or Spotlight to get here.")
                 }
@@ -47,7 +48,7 @@ struct PreferencesView: View {
                     Toggle("Buttons on Folders", isOn: $settings.showsHoverButtons)
                         .help("Point at a folder to choose its picture, remove it or open this window.")
                 }
-                .disabled(!permission.isGranted)
+                .disabled(permission.isGranted != true)
                 Section {
                     LabeledContent("Finder Menu") {
                         SetupState(isOn: finderExtension.needsTurningOn ? false : finderExtension.isEnabled, offTitle: "Turn On") { finderExtension.enable() }

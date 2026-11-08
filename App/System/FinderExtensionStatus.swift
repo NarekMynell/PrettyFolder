@@ -25,19 +25,21 @@ final class FinderExtensionStatus {
     private var isSlowToSay = false
 
     @ObservationIgnored private var question: SystemQuestion!
-    @ObservationIgnored private var activationObserver: NSObjectProtocol?
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private let log = Logger(subsystem: "com.narekmynell.PrettyFolder", category: "Extension")
 
     private init() {
         question = SystemQuestion("finder-extension", ask: { FIFinderSyncController.isExtensionEnabled }) { [weak self] enabled in
             if self?.isEnabled != enabled { self?.isEnabled = enabled }
         }
-        // Coming back from System Settings is the usual moment the answer changes.
-        activationObserver = NotificationCenter.default.addObserver(
+        // Coming back from System Settings is the usual moment the answer changes, whether to this
+        // app or, through the menu bar, to another.
+        observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
-        }
+        })
+        observers.append(contentsOf: SystemSettings.whenLeft { [weak self] in self?.refresh() })
         refresh()
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             guard let self, isEnabled == nil else { return }

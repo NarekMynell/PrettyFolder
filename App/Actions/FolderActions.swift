@@ -42,10 +42,12 @@ final class FolderActions {
         }
     }
 
-    private func presentEditor(for folders: [URL]) {
-        let controller = editor ?? EditorWindowController(actions: self)
-        editor = controller
-        controller.show(folders: folders)
+    private func presentEditor(for folders: [CheckedFolder]) {
+        outsideMenus { [self] in
+            let controller = editor ?? EditorWindowController(actions: self)
+            editor = controller
+            controller.show(folders: folders)
+        }
     }
 
     /// A folder's new icon is on disk; the window shows it in its title bar straight away.
@@ -85,10 +87,11 @@ final class FolderActions {
         }
     }
 
-    private func pick(for eligible: [URL], attachedTo window: NSWindow?, returningTo returnTo: NSRunningApplication?) {
-        let message = eligible.count == 1
-            ? String(localized: "Choose a picture for “\(FileManager.default.displayName(atPath: eligible[0].path))”.")
-            : String(localized: "Choose a picture for \(eligible.count) folders.")
+    private func pick(for checked: [CheckedFolder], attachedTo window: NSWindow?, returningTo returnTo: NSRunningApplication?) {
+        let message = checked.count == 1
+            ? String(localized: "Choose a picture for “\(checked[0].name)”.")
+            : String(localized: "Choose a picture for \(checked.count) folders.")
+        let eligible = checked.map(\.url)
         picker.pick(message: message, prompt: String(localized: "Use Picture"), startingIn: settings.lastPictureFolder, attachedTo: window) { [weak self] url in
             guard let self else { return }
             guard let url else {
@@ -179,21 +182,22 @@ final class FolderActions {
         }
     }
 
-    /// Validates folders up front and explains the ones that can't be used. The disk is asked
-    /// off the main thread: a folder may be on a network disk that has stopped answering.
-    private func checked(_ folders: [URL], explainingProblems: Bool = true) async -> [URL] {
-        let outcomes = await onOwnThread {
-            folders.map { folder in
+    /// Validates folders up front, explains the ones that can't be used, and reads what the
+    /// window shows about the others. The disk is asked off the main thread: a folder may be on a
+    /// network disk that has stopped answering.
+    private func checked(_ folders: [URL], explainingProblems: Bool = true) async -> [CheckedFolder] {
+        let results = await onOwnThread {
+            folders.map { folder -> (checked: CheckedFolder?, outcome: FolderOutcome) in
                 do {
                     try FolderInspector.validate(folder)
-                    return FolderOutcome(folder: folder, failure: nil)
+                    return (CheckedFolder(reading: folder), FolderOutcome(folder: folder, failure: nil))
                 } catch {
-                    return FolderOutcome(folder: folder, failure: error.localizedDescription)
+                    return (nil, FolderOutcome(folder: folder, failure: error.localizedDescription))
                 }
             }
         }
-        if explainingProblems { report(outcomes) }
-        return outcomes.filter(\.succeeded).map(\.folder)
+        if explainingProblems { report(results.map(\.outcome)) }
+        return results.compactMap(\.checked)
     }
 
     /// Explains what went wrong, if anything did. Never in the middle of a drag in the
@@ -204,16 +208,24 @@ final class FolderActions {
         for failure in failures {
             log.error("\(failure.folder.path, privacy: .private): \(failure.failure ?? "", privacy: .public)")
         }
-        RunLoop.main.perform(inModes: [.default]) { [weak self] in
-            MainActor.assumeIsolated { self?.explain(failures) }
+        Task {
+            // The name Finder shows, read off the main thread and not waited for long: a folder
+            // that couldn't be changed may well be on a disk that has stopped answering.
+            let folder = failures[0].folder
+            let name = failures.count > 1 ? nil : await onOwnThread(within: 1, otherwise: folder.lastPathComponent) {
+                FileManager.default.displayName(atPath: folder.path)
+            }
+            RunLoop.main.perform(inModes: [.default]) { [weak self] in
+                MainActor.assumeIsolated { self?.explain(failures, name: name) }
+            }
         }
     }
 
-    private func explain(_ failures: [FolderOutcome]) {
+    private func explain(_ failures: [FolderOutcome], name: String?) {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = failures.count == 1
-            ? String(localized: "Couldn't change “\(FileManager.default.displayName(atPath: failures[0].folder.path))”")
+            ? String(localized: "Couldn't change “\(name ?? failures[0].folder.lastPathComponent)”")
             : String(localized: "Couldn't change \(failures.count) folders")
         var details = failures.prefix(4).compactMap(\.failure)
         if failures.count > 4 { details.append(String(localized: "…and \(failures.count - 4) more.")) }
@@ -232,6 +244,29 @@ final class FolderActions {
     private func giveFocusBack(to app: NSRunningApplication?) {
         guard let app, !app.isTerminated else { return }
         app.activate(from: .current, options: [])
+    }
+}
+
+/// A folder that can be changed, with what the window shows about it.
+nonisolated struct CheckedFolder: Sendable {
+    let url: URL
+    /// The name Finder shows for it.
+    let name: String
+    /// Where it is on its disk, to find it after a rename or a move.
+    let location: FolderInspector.Location?
+    /// On a disk of this Mac's own, not a network disk.
+    let isLocal: Bool
+
+    /// Reads it from the disk, which takes as long as the disk does: never on the main thread.
+    init(reading url: URL) {
+        self.url = url
+        name = FileManager.default.displayName(atPath: url.path)
+        location = FolderInspector.Location(of: url)
+        isLocal = Self.isLocal(url)
+    }
+
+    static func isLocal(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal == true
     }
 }
 

@@ -267,7 +267,7 @@ extension Studio {
         let folder = try await makeFolder(name, picture: chosen)
         let controller = EditorWindowController(actions: actions)
         let window = controller.window!
-        controller.model.show([folder])
+        controller.model.show([CheckedFolder(reading: folder)])
         park(window)
         try await settleUntilShown(controller.model, in: window)
         let windowImage = snapshot(window)
@@ -509,7 +509,7 @@ extension Studio {
         let controller = EditorWindowController(actions: actions)
         let model = controller.model
         let window = controller.window!
-        model.show(folders)
+        model.show(folders.map(CheckedFolder.init(reading:)))
         park(window)
         if pictureName != nil {
             try await settleUntilShown(model, in: window)

@@ -52,7 +52,7 @@ final class FinderIntegration {
     }
 
     private func apply() {
-        let allowed = permission.isGranted
+        let allowed = permission.isGranted == true
         log.debug("Accessibility granted: \(allowed); drop badge \(self.settings.showsDropTarget), buttons on folders \(self.settings.showsHoverButtons)")
         if allowed && settings.showsDropTarget { dragWatcher.start() } else { dragWatcher.stop() }
         if allowed && settings.showsHoverButtons { hoverWatcher.start() } else { hoverWatcher.stop() }

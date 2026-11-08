@@ -4,15 +4,22 @@ import Observation
 
 /// Tracks whether PrettyFolder may use the Accessibility API, which it needs to see
 /// which folder is under the pointer. Nothing else in the app depends on it.
+///
+/// macOS is never asked on the main thread. The first answer in a run, and the first after the
+/// list of trusted apps changes, comes from the system's privacy service and takes as long as that
+/// does (see `SystemQuestion`); everything on the main thread reads `isGranted` instead.
 @Observable
 final class AccessibilityPermission {
     static let shared = AccessibilityPermission()
 
-    private(set) var isGranted = AXIsProcessTrusted()
+    /// `nil` until macOS has said.
+    private(set) var isGranted: Bool?
 
     @ObservationIgnored private var question: SystemQuestion!
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var pollTimer: Timer?
+    @ObservationIgnored private var pollDeadline = Date.distantPast
+    @ObservationIgnored private var isRequesting = false
 
     private init() {
         question = SystemQuestion("accessibility", ask: { AXIsProcessTrusted() }) { [weak self] granted in
@@ -36,15 +43,17 @@ final class AccessibilityPermission {
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             guard app?.bundleIdentifier == "com.apple.finder" else { return }
             MainActor.assumeIsolated {
-                if self?.isGranted == false { self?.refresh() }
+                if self?.isGranted != true { self?.refresh() }
             }
         })
+        // Where it is turned on or off.
+        observers.append(contentsOf: SystemSettings.whenLeft { [weak self] in self?.refresh() })
+        refresh()
     }
 
-    /// Asks again, off the main thread: the answer can come from the system's privacy service,
-    /// and the menu that asks while it opens mustn't wait for that (see `SystemQuestion`).
-    func refresh() {
-        question.refresh()
+    /// Asks again; `then` gets the answer, a moment later.
+    func refresh(then: ((Bool) -> Void)? = nil) {
+        question.refresh(then: then)
     }
 
     private func update(_ granted: Bool) {
@@ -52,11 +61,22 @@ final class AccessibilityPermission {
         if granted { stopPolling() }
     }
 
-    /// Shows the system prompt that leads to System Settings.
+    /// Shows the system prompt that leads to System Settings. On a thread of its own like every
+    /// other question: the prompt goes through the same privacy service.
     func request() {
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        isGranted = AXIsProcessTrustedWithOptions(options)
-        if !isGranted { startPolling() }
+        guard !isRequesting else { return }
+        isRequesting = true
+        Thread {
+            let granted = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let permission = AccessibilityPermission.shared
+                    permission.isRequesting = false
+                    if !granted { permission.startPolling() }
+                    permission.refresh()
+                }
+            }
+        }.start()
     }
 
     /// The notification is not always delivered, so poll while the user is on their way to grant it.
@@ -71,8 +91,6 @@ final class AccessibilityPermission {
             }
         }
     }
-
-    @ObservationIgnored private var pollDeadline = Date.distantPast
 
     private func stopPolling() {
         pollTimer?.invalidate()

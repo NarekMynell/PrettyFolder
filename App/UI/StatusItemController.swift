@@ -41,22 +41,53 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
+    /// The menu is open, and what it offers to set up.
+    private var isOpen = false
+    private var offered: (finderMenu: Bool, accessibility: Bool)?
+
     // Rebuilt every time it opens, from what is known already: nothing here may wait for the
     // system. A menu that is opening has the keyboard of every app until it shows, and on
     // 2026-11-06 this one kept it for an hour, waiting in `isExtensionEnabled`. The answers asked
-    // for here are for the next time it opens; they normally come long before that, since the
-    // app asks at launch and whenever it comes to the front.
+    // for here usually come while the menu is open, which then changes to show them; the app also
+    // asks at launch, when it comes to the front and when the user leaves System Settings.
     func menuNeedsUpdate(_ menu: NSMenu) {
+        MainThreadWatchdog.menuOpening()
+        fill(menu)
+        FinderExtensionStatus.shared.refresh { [weak self, weak menu] _ in self?.update(menu) }
+        AccessibilityPermission.shared.refresh { [weak self, weak menu] _ in self?.update(menu) }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        isOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isOpen = false
+        MainThreadWatchdog.menuClosed()
+    }
+
+    /// A newer answer came while the menu is open: it changes if that changes what it offers.
+    private func update(_ menu: NSMenu?) {
+        guard isOpen, let menu, offered.map({ $0 != Self.setUpOffers() }) ?? true else { return }
+        fill(menu)
+    }
+
+    /// What there is to set up: the Finder menu, Accessibility.
+    private static func setUpOffers() -> (finderMenu: Bool, accessibility: Bool) {
+        (FinderExtensionStatus.shared.needsTurningOn, AccessibilityPermission.shared.isGranted == false)
+    }
+
+    private func fill(_ menu: NSMenu) {
         menu.removeAllItems()
         let finderExtension = FinderExtensionStatus.shared
         let permission = AccessibilityPermission.shared
-        finderExtension.refresh()
-        permission.refresh()
+        let offers = Self.setUpOffers()
+        offered = offers
 
-        if finderExtension.needsTurningOn {
+        if offers.finderMenu {
             menu.addItem(MenuActionItem.make(title: String(localized: "Turn On the Finder Menu…"), handler: { finderExtension.enable() }))
         }
-        if !permission.isGranted {
+        if offers.accessibility {
             menu.addItem(MenuActionItem.make(title: String(localized: "Allow Accessibility…"), handler: { permission.request() }))
         }
         if menu.numberOfItems > 0 { menu.addItem(.separator()) }

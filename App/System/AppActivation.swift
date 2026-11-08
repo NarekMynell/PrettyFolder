@@ -26,7 +26,9 @@ enum AppActivation {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak window] in
             guard !NSApp.isActive, !forWindow || window?.isVisible == true else { return }
             log.info("Not in front after asking; trying harder")
-            if AXIsProcessTrusted() {
+            // The permission as last heard: asking macOS again could wait on its privacy service.
+            // (Asking the app's own element, as below, is answered in the app and doesn't wait.)
+            if AccessibilityPermission.shared.isGranted == true {
                 let app = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
                 AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
                 window?.makeKeyAndOrderFront(nil)

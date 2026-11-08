@@ -11,9 +11,10 @@ import os
 /// typed anywhere for an hour.
 ///
 /// One question is out at a time. One out for longer than `retryAfter` is asked again, in case that
-/// part of the system is back, and keeps its thread until it comes back. Each time that happens the
-/// next one waits twice as long before it is asked again, so it is never given up on, and a day of
-/// no answers leaves about a dozen threads waiting, not thousands.
+/// part of the system is back, and keeps its thread until it comes back, which may be never. After
+/// a few of those, the next waits twice as long each time, up to 10 minutes: a day of no answers
+/// leaves a few dozen threads waiting, not thousands, and once the system answers again the app
+/// hears it within minutes, not hours. An answer starts the waits over.
 ///
 /// The questions asked are yes-or-no ones. (Made generic, Swift 6.3 crashes optimizing it.)
 final class SystemQuestion {
@@ -29,7 +30,13 @@ final class SystemQuestion {
     private var out: (id: Int, time: TimeInterval)?
     private var asked = 0
     private var lastAnswered = 0
-    private var stuck = 0
+    /// Questions asked again while they were out, whose threads still wait.
+    private var leftBehind = 0
+    /// Times the question has been asked again since an answer last came.
+    private var retries = 0
+    /// The longest wait before asking again, and the most threads ever left waiting.
+    private static let longestWait: TimeInterval = 600
+    private static let mostLeftBehind = 64
     private var isAskedAgain = false
     /// Those waiting for the answer to the question out, and for the one after it.
     private var waiting: [(Answer) -> Void] = []
@@ -58,8 +65,10 @@ final class SystemQuestion {
         guard isAskedAgain else { return }
         if let out {
             let outFor = Self.uptime() - out.time
-            guard outFor > retryAfter * pow(2, Double(stuck)) else { return }
-            stuck += 1
+            let wait = min(retryAfter * pow(2, Double(max(0, retries - 3))), Self.longestWait)
+            guard outFor > wait, leftBehind < Self.mostLeftBehind else { return }
+            leftBehind += 1
+            retries += 1
             log.error("\(self.label, privacy: .public) hasn't been answered for \(Int(outFor), privacy: .public) s; asking again")
         }
         isAskedAgain = false
@@ -85,8 +94,10 @@ final class SystemQuestion {
         if out?.id == id {
             out = nil
         } else {
-            stuck -= 1
+            leftBehind -= 1
         }
+        // That part of the system answers again.
+        retries = 0
         // One left behind may come back after a newer one: then it says nothing new.
         if id > lastAnswered {
             lastAnswered = id
